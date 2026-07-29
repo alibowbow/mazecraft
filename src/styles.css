@@ -826,12 +826,20 @@ svg {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(12px);
 }
 
+.canvas-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
 .toolbar-group {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -843,6 +851,7 @@ svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   gap: 7px;
   padding: 0 10px;
   border-radius: 7px;
@@ -850,6 +859,7 @@ svg {
   background: transparent;
   font-size: 0.74rem;
   font-weight: 720;
+  white-space: nowrap;
 }
 
 .toolbar-button:hover,
@@ -1608,10 +1618,100 @@ svg {
   color: var(--danger);
 }
 
-@media (max-width: 1080px) {
-  .studio-header,
+/*
+ * The editor needs substantially more room than a regular three-column page.
+ * Foldables and Android's "desktop site" mode commonly expose a 980px layout
+ * viewport even when the physical screen is much narrower. Collapse the rails
+ * before the canvas is squeezed, then expose settings as an overlay.
+ */
+@media (max-width: 1180px) {
+  .studio-header {
+    grid-template-columns: 176px minmax(0, 1fr) auto;
+  }
+
+  .studio-header-actions .button {
+    width: 44px;
+    padding: 0;
+  }
+
+  .studio-header-actions .button span {
+    display: none;
+  }
+
   .studio-layout {
-    grid-template-columns: 210px minmax(0, 1fr) 286px;
+    position: relative;
+    height: calc(100dvh - 62px);
+    display: block;
+  }
+
+  .left-rail {
+    display: none;
+  }
+
+  .canvas-workspace {
+    width: 100%;
+    height: calc(100% - 64px);
+  }
+
+  .inspector {
+    position: fixed;
+    z-index: 50;
+    top: 62px;
+    right: 0;
+    bottom: 64px;
+    width: min(400px, calc(100vw - 40px));
+    max-height: none;
+    border: 1px solid var(--line);
+    border-radius: 14px 0 0 14px;
+    box-shadow: -12px 0 40px rgba(20, 25, 21, 0.18);
+    transform: translateX(105%);
+    transition: transform 220ms ease;
+  }
+
+  .inspector.open {
+    transform: translateX(0);
+  }
+
+  .sheet-close {
+    display: inline-flex;
+  }
+
+  .mobile-sheet-scrim {
+    position: fixed;
+    z-index: 45;
+    inset: 62px 0 64px;
+    display: block;
+    background: rgba(18, 23, 19, 0.36);
+  }
+
+  .mobile-tabs {
+    position: absolute;
+    z-index: 30;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 64px;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .mobile-tabs button {
+    min-width: 0;
+    min-height: 58px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 3px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 0.59rem;
+  }
+
+  .mobile-tabs button.active {
+    color: var(--primary);
   }
 
   .project-grid {
@@ -1736,12 +1836,6 @@ svg {
 
   .canvas-toolbar {
     padding: 4px 6px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .canvas-toolbar::-webkit-scrollbar {
-    display: none;
   }
 
   .toolbar-button {
@@ -1773,18 +1867,16 @@ svg {
   }
 
   .inspector {
-    position: fixed;
-    z-index: 50;
+    top: auto;
     right: 0;
     bottom: 0;
     left: 0;
     width: 100%;
+    height: auto;
     max-height: min(72dvh, 620px);
-    border: 1px solid var(--line);
     border-radius: 18px 18px 0 0;
     box-shadow: 0 -12px 40px rgba(20, 25, 21, 0.18);
     transform: translateY(105%);
-    transition: transform 220ms ease;
   }
 
   .inspector.open {
@@ -1804,51 +1896,13 @@ svg {
     background: var(--line-strong);
   }
 
-  .sheet-close {
-    display: inline-flex;
-  }
-
   .inspector-heading {
     min-height: 58px;
     padding-top: 7px;
   }
 
   .mobile-sheet-scrim {
-    display: block;
-    position: fixed;
-    z-index: 45;
     inset: 54px 0 64px;
-    background: rgba(18, 23, 19, 0.36);
-  }
-
-  .mobile-tabs {
-    position: absolute;
-    z-index: 30;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    height: 64px;
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    padding-bottom: env(safe-area-inset-bottom);
-    border-top: 1px solid var(--line);
-    background: var(--surface);
-  }
-
-  .mobile-tabs button {
-    min-width: 0;
-    min-height: 58px;
-    display: grid;
-    place-items: center;
-    align-content: center;
-    gap: 3px;
-    color: var(--muted);
-    background: transparent;
-    font-size: 0.59rem;
-  }
-
-  .mobile-tabs button.active {
-    color: var(--primary);
   }
 
   .player-stage {

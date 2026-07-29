@@ -905,8 +905,8 @@ export function StudioScreen({
         </div>
         <div className="studio-header-actions">
           <button className="icon-button" aria-label={dark ? '라이트 모드' : '다크 모드'} onClick={onThemeToggle}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
-          <button className="button secondary desktop-only" onClick={() => onPlay(false)}><Play size={16} /><span>테스트</span></button>
-          <button className="button" onClick={onShare}><Share2 size={16} /><span>공유</span></button>
+          <button className="button secondary desktop-only" aria-label="테스트" onClick={() => onPlay(false)}><Play size={16} /><span>테스트</span></button>
+          <button className="button" aria-label="공유" onClick={onShare}><Share2 size={16} /><span>공유</span></button>
         </div>
       </header>
 
@@ -947,6 +947,7 @@ export function StudioScreen({
             <div className="toolbar-group">
               <button
                 className={`toolbar-button ${editorEnabled ? 'active' : ''}`}
+                aria-label="미로 편집"
                 onClick={() => {
                   if (!editorEnabled) editBaselineRef.current = project
                   setEditorEnabled((value) => !value)
@@ -963,8 +964,8 @@ export function StudioScreen({
               <button className="toolbar-button" aria-label="화면 맞춤" onClick={() => canvasRef.current?.fit()}><Scan size={17} /><span>맞춤</span></button>
               <button className="toolbar-button" aria-label="확대" onClick={() => canvasRef.current?.zoomIn()}><Plus size={17} /></button>
               <span className="toolbar-separator" />
-              <button className={`toolbar-button ${showSolution ? 'active' : ''}`} onClick={() => setShowSolution((value) => !value)}><Lightbulb size={17} /><span>정답 경로</span></button>
-              <button className="toolbar-button" onClick={() => selectStep(5, true)}><ShieldCheck size={17} /><span>검증</span></button>
+              <button className={`toolbar-button ${showSolution ? 'active' : ''}`} aria-label="정답 경로" onClick={() => setShowSolution((value) => !value)}><Lightbulb size={17} /><span>정답 경로</span></button>
+              <button className="toolbar-button" aria-label="검증" onClick={() => selectStep(5, true)}><ShieldCheck size={17} /><span>검증</span></button>
             </div>
           </div>
           <div className="canvas-viewport">
