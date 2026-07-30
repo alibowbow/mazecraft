@@ -21,7 +21,11 @@ vi.mock('../../components/MazeCanvas', () => ({
       getRenderer: () => null,
     }))
     return (
-      <div data-testid="maze-canvas" data-solution-count={frame?.solution?.length ?? 0}>
+      <div
+        data-testid="maze-canvas"
+        data-solution-count={frame?.solution?.length ?? 0}
+        data-solution-progress={frame?.solutionProgress ?? 0}
+      >
         {(['right', 'down', 'left'] as const).map((direction) => (
           <button key={direction} onClick={() => onSwipe?.(direction)}>
             mock-{direction}
@@ -74,6 +78,38 @@ describe('PlayerScreen solution visibility', () => {
     render(<PlayerScreen {...props} />)
 
     expect(screen.queryByRole('button', { name: '정답 경로 보기' })).not.toBeInTheDocument()
+  })
+
+  it('animates the permitted solution from zero progress and replays it after hiding', async () => {
+    vi.useFakeTimers()
+    render(
+      <PlayerScreen
+        project={createTestProject()}
+        allowSolution
+        onExit={vi.fn()}
+      />,
+    )
+
+    const canvas = screen.getByTestId('maze-canvas')
+    fireEvent.click(screen.getByRole('button', { name: '정답 경로 보기' }))
+    expect(canvas).toHaveAttribute('data-solution-progress', '0')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400)
+    })
+    const midProgress = Number(canvas.getAttribute('data-solution-progress'))
+    expect(midProgress).toBeGreaterThan(0)
+    expect(midProgress).toBeLessThan(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700)
+    })
+    expect(canvas).toHaveAttribute('data-solution-progress', '1')
+
+    fireEvent.click(screen.getByRole('button', { name: '정답 경로 숨기기' }))
+    expect(canvas).toHaveAttribute('data-solution-count', '0')
+    fireEvent.click(screen.getByRole('button', { name: '정답 경로 보기' }))
+    expect(canvas).toHaveAttribute('data-solution-progress', '0')
   })
 
   it('ends a time attack when its configured limit expires', async () => {

@@ -93,6 +93,42 @@ const drawPathLine = (
 }
 
 /**
+ * Returns the visible prefix of a path at a normalized progress value.
+ * The final point is interpolated inside the active segment so solution
+ * reveals remain smooth instead of advancing one whole cell per frame.
+ */
+export const interpolatePathProgress = (
+  points: ReadonlyArray<MazePoint>,
+  progress: number,
+): MazePoint[] => {
+  if (points.length === 0) return []
+  if (points.length === 1) return [{ ...points[0] }]
+
+  const safeProgress = clamp(Number.isFinite(progress) ? progress : 0, 0, 1)
+  const segmentProgress = safeProgress * (points.length - 1)
+  const completedSegments = Math.floor(segmentProgress)
+  const visible = points
+    .slice(0, Math.min(points.length, completedSegments + 1))
+    .map((point) => ({ ...point }))
+
+  if (completedSegments >= points.length - 1) {
+    return points.map((point) => ({ ...point }))
+  }
+
+  const partialProgress = segmentProgress - completedSegments
+  if (partialProgress > 0) {
+    const from = points[completedSegments]
+    const to = points[completedSegments + 1]
+    visible.push({
+      row: from.row + (to.row - from.row) * partialProgress,
+      col: from.col + (to.col - from.col) * partialProgress,
+    })
+  }
+
+  return visible
+}
+
+/**
  * Imperative Canvas 2D renderer. The graph is never mutated here: resize,
  * viewport gestures and animation frames only change presentation state.
  */
@@ -478,16 +514,27 @@ export class MazeCanvasRenderer {
   }
 
   private drawSolution(solution: ReadonlyArray<MazePoint>, progress = 1): void {
-    if (!this.model || solution.length === 0 || progress <= 0) return
+    if (!this.model || solution.length === 0 || progress < 0) return
     const safePoints = solution.filter((point) => isPointInMaze(point, this.model!))
-    const pointCount = clamp(Math.ceil(safePoints.length * clamp(progress, 0, 1)), 1, safePoints.length)
-    drawPathLine(
-      this.context,
-      safePoints.slice(0, pointCount),
-      this.theme.solution,
-      0.15,
-      0.82,
-    )
+    if (safePoints.length === 0) return
+
+    const visiblePoints = interpolatePathProgress(safePoints, progress)
+    const head = cellCenter(visiblePoints.at(-1)!)
+    const context = this.context
+
+    if (visiblePoints.length > 1) {
+      drawPathLine(context, visiblePoints, this.theme.solution, 0.3, 0.16)
+      drawPathLine(context, visiblePoints, this.theme.solution, 0.15, 0.92)
+    }
+
+    context.save()
+    context.fillStyle = this.theme.solution
+    context.shadowColor = this.theme.solution
+    context.shadowBlur = 0.24
+    context.beginPath()
+    context.arc(head.x, head.y, progress >= 1 ? 0.09 : 0.12, 0, Math.PI * 2)
+    context.fill()
+    context.restore()
   }
 
   private drawWater(frame: MazeRenderFrame): void {

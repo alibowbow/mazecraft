@@ -19,6 +19,10 @@ import { MazeCanvas, type MazeCanvasHandle } from '../../components/MazeCanvas'
 import { DPad } from '../../components/DPad'
 import { solveMaze } from '../../core/maze/solver'
 import type { CreatorReplay, MazeProject, MoveDirection } from '../../core/maze/types'
+import {
+  MazeAnimationController,
+  type MazeAnimationSnapshot,
+} from '../../renderer/animationController'
 import { renderModelFromProject } from '../../renderer/types'
 import { createResultCardPng } from '../export/resultCard'
 import { downloadBlob } from '../export/download'
@@ -96,6 +100,8 @@ export function PlayerScreen({
   const [now, setNow] = useState(performance.now())
   const [hintCells, setHintCells] = useState<Array<{ row: number; col: number }>>([])
   const [showSolution, setShowSolution] = useState(false)
+  const [solutionAnimation, setSolutionAnimation] =
+    useState<MazeAnimationSnapshot | null>(null)
   const [timedOut, setTimedOut] = useState(false)
   const [personalBest, setPersonalBest] = useState<number | null>(() => {
     const value = localStorage.getItem(personalBestKey(project))
@@ -103,6 +109,7 @@ export function PlayerScreen({
   })
   const completionHandled = useRef(false)
   const timeoutHandled = useRef(false)
+  const solutionControllerRef = useRef<MazeAnimationController | null>(null)
   const solution = useMemo(
     () => solveMaze(project.mazeGraph, project.startCell, project.endCell).path,
     [project],
@@ -125,6 +132,19 @@ export function PlayerScreen({
     session.completed,
   )
   const creatorDifference = compareReplayTimes(session.elapsedMs, project.creatorReplay)
+
+  useEffect(() => {
+    solutionControllerRef.current = new MazeAnimationController({
+      onFrame: setSolutionAnimation,
+    })
+    return () => solutionControllerRef.current?.dispose()
+  }, [])
+
+  useEffect(() => {
+    solutionControllerRef.current?.cancel()
+    setShowSolution(false)
+    setSolutionAnimation(null)
+  }, [project.id, project.seed])
 
   useEffect(() => {
     if (!started || timedOut || session.completed || session.pausedAt !== null) return
@@ -262,6 +282,9 @@ export function PlayerScreen({
   )
 
   const begin = (ghostMode: boolean) => {
+    solutionControllerRef.current?.cancel()
+    setShowSolution(false)
+    setSolutionAnimation(null)
     completionHandled.current = false
     timeoutHandled.current = false
     setTimedOut(false)
@@ -276,6 +299,9 @@ export function PlayerScreen({
 
   const showHint = () => {
     if (timedOut || session.stats.hintsUsed >= project.gameRules.allowedHints) return
+    solutionControllerRef.current?.cancel()
+    setShowSolution(false)
+    setSolutionAnimation(null)
     const route = solveMaze(project.mazeGraph, session.position, project.endCell).path
     if (!route.length) return
     setSession((current) => usePlayerHint(current, project.gameRules.allowedHints))
@@ -301,6 +327,24 @@ export function PlayerScreen({
     await navigator.clipboard.writeText(link.url)
   }
 
+  const toggleSolutionPath = () => {
+    if (showSolution) {
+      solutionControllerRef.current?.cancel()
+      setShowSolution(false)
+      setSolutionAnimation(null)
+      return
+    }
+
+    setHintCells([])
+    setShowSolution(true)
+    setSolutionAnimation(null)
+    void solutionControllerRef.current?.play({
+      mode: 'path',
+      path: solution,
+      color: project.visualTheme.accentColor,
+    })
+  }
+
   const secret = project.secretReveal.content
   const secretImage =
     secret.kind === 'image' || secret.kind === 'image-message' ? secret.imageDataUrl : null
@@ -320,7 +364,11 @@ export function PlayerScreen({
             ghostTrail: withGhost ? project.creatorReplay?.frames.slice(0, ghost?.frameIndex ?? 0) : undefined,
             visited: parseVisited(session.visited),
             solution: showSolution ? solution : hintCells,
-            solutionProgress: showSolution || hintCells.length ? 1 : 0,
+            solutionProgress: showSolution
+              ? (solutionAnimation?.solutionProgress ?? 0)
+              : hintCells.length
+                ? 1
+                : 0,
             activeCheckpointIds: new Set(session.stats.checkpoints),
             collectedItemIds: new Set(session.stats.collectibles),
           }}
@@ -356,7 +404,8 @@ export function PlayerScreen({
             <button
               aria-label={showSolution ? '정답 경로 숨기기' : '정답 경로 보기'}
               aria-pressed={showSolution}
-              onClick={() => setShowSolution((value) => !value)}
+              disabled={solution.length === 0}
+              onClick={toggleSolutionPath}
             >
               <Route size={17} />
             </button>
