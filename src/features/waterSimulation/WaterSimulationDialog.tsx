@@ -733,6 +733,7 @@ export default function WaterSimulationDialog({
   onClose,
 }: WaterSimulationDialogProps) {
   const stageRef = useRef<HTMLDivElement>(null)
+  const canvasMountRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<WaterSceneRuntime | null>(null)
   const [status, setStatus] = useState<WaterPlaybackStatus>(EMPTY_STATUS)
   const [paused, setPaused] = useState(false)
@@ -763,8 +764,8 @@ export default function WaterSimulationDialog({
   )
 
   useEffect(() => {
-    if (!open || !stageRef.current) return
-    const mount = stageRef.current
+    if (!open || !canvasMountRef.current) return
+    const mount = canvasMountRef.current
     setStatus({ ...EMPTY_STATUS, totalCells: reachableCellCount })
     setPaused(false)
     setRenderState('initializing')
@@ -878,6 +879,11 @@ export default function WaterSimulationDialog({
           role="img"
           aria-label={`${project.title}의 3D 물 흐름. 물이 최상단 시작점에서 최하단 종료점으로 흐릅니다.`}
         >
+          <div
+            ref={canvasMountRef}
+            className="water-simulation-canvas-host"
+            aria-hidden="true"
+          />
           <div className="water-direction-badge inlet" aria-hidden="true">
             <strong>S · 입구</strong>
             <span>위에서 물 주입</span>

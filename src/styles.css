@@ -1666,6 +1666,11 @@ svg {
     linear-gradient(180deg, #0a1b2b, #06101b);
 }
 
+.water-simulation-canvas-host {
+  position: absolute;
+  inset: 0;
+}
+
 .water-simulation-canvas {
   width: 100%;
   height: 100%;
