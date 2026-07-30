@@ -102,8 +102,8 @@ export function getVisualOpeningDirection(
 
   const outerPriority: WallDirection[] = []
   if (position.row === 0) outerPriority.push('top')
-  if (position.col === graph.cols - 1) outerPriority.push('right')
   if (position.row === graph.rows - 1) outerPriority.push('bottom')
+  if (position.col === graph.cols - 1) outerPriority.push('right')
   if (position.col === 0) outerPriority.push('left')
   return outerPriority.find((direction) => available.includes(direction)) ?? available[0]
 }

@@ -1618,6 +1618,240 @@ svg {
   color: var(--danger);
 }
 
+/* Three.js water simulation */
+
+.water-simulation-modal {
+  max-height: min(94dvh, 960px) !important;
+  border-radius: 20px !important;
+}
+
+.water-loading-overlay {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 20px;
+  color: #e7f7ff;
+  background: rgba(4, 13, 23, 0.84);
+  backdrop-filter: blur(12px);
+  text-align: center;
+}
+
+.water-simulation-modal .mc-modal__body {
+  padding: 0 18px 18px !important;
+  overflow: hidden !important;
+}
+
+.water-simulation-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(300px, 62dvh) 5px auto auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 75%, #5daee4);
+  border-radius: 14px;
+  background: #07131f;
+}
+
+.water-simulation-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  background:
+    radial-gradient(circle at 50% 15%, rgba(40, 132, 190, 0.2), transparent 43%),
+    linear-gradient(180deg, #0a1b2b, #06101b);
+}
+
+.water-simulation-canvas-host {
+  position: absolute;
+  inset: 0;
+}
+
+.water-simulation-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.water-direction-badge {
+  position: absolute;
+  z-index: 4;
+  left: 13px;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 1px 8px;
+  padding: 7px 9px;
+  pointer-events: none;
+  color: #eaf7ff;
+  border: 1px solid rgba(166, 221, 255, 0.22);
+  border-radius: 9px;
+  background: rgba(5, 18, 30, 0.68);
+  backdrop-filter: blur(10px);
+}
+
+.water-direction-badge.inlet {
+  top: 13px;
+}
+
+.water-direction-badge.outlet {
+  bottom: 13px;
+}
+
+.water-direction-badge strong {
+  grid-row: 1 / 3;
+  font-size: 0.76rem;
+}
+
+.water-direction-badge span {
+  color: #9fc1d5;
+  font-size: 0.62rem;
+}
+
+.water-direction-badge svg {
+  grid-column: 2;
+  color: #43b7ff;
+}
+
+.water-stage-message {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  padding: 24px;
+  color: #dff4ff;
+  background: #07131f;
+  text-align: center;
+}
+
+.water-stage-message span {
+  max-width: 480px;
+  color: #a8c5d5;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.water-stage-message.error {
+  color: #ffc0bd;
+}
+
+.water-simulation-progress {
+  overflow: hidden;
+  background: #0b2538;
+}
+
+.water-simulation-progress span {
+  height: 100%;
+  display: block;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(90deg, #0879cf, #35bcff);
+  box-shadow: 0 0 18px rgba(48, 183, 255, 0.6);
+  transition: width 100ms linear;
+}
+
+.water-simulation-status {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 11px 12px;
+  color: #edf8ff;
+  border-top: 1px solid rgba(169, 219, 245, 0.12);
+  background: #0a1824;
+}
+
+.water-status-copy {
+  min-width: 150px;
+  display: grid;
+  gap: 4px;
+}
+
+.water-status-copy > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #ccefff;
+  font-size: 0.76rem;
+  font-weight: 780;
+}
+
+.water-status-copy > span.reached {
+  color: #62d4ff;
+}
+
+.water-status-copy small {
+  color: #89a9ba;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.63rem;
+}
+
+.water-simulation-controls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.water-simulation-controls .button.secondary {
+  min-height: 44px;
+  color: #eaf7ff;
+  border-color: rgba(173, 221, 246, 0.22);
+  background: rgba(255, 255, 255, 0.07);
+  white-space: nowrap;
+}
+
+.water-simulation-controls .button.secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.water-speed-control {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px 0 11px;
+  color: #a9c6d6;
+  border: 1px solid rgba(173, 221, 246, 0.22);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.7rem;
+  font-weight: 740;
+}
+
+.water-speed-control select {
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 7px;
+  color: #f1f9ff;
+  border: 0;
+  border-radius: 6px;
+  background: #112b3d;
+}
+
+.water-simulation-legend {
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 6px 11px;
+  color: #7895a5;
+  border-top: 1px solid rgba(169, 219, 245, 0.1);
+  background: #07131f;
+  font-size: 0.59rem;
+}
+
 /*
  * The editor needs substantially more room than a regular three-column page.
  * Foldables and Android's "desktop site" mode commonly expose a 980px layout
@@ -1930,6 +2164,74 @@ svg {
   .completion-card {
     padding: 20px;
   }
+
+  .water-simulation-modal {
+    width: calc(100vw - 12px) !important;
+    max-height: calc(100dvh - 12px) !important;
+    border-radius: 15px !important;
+  }
+
+  .water-simulation-modal .mc-modal__header {
+    padding: 12px 8px 8px 14px !important;
+  }
+
+  .water-simulation-modal .mc-modal__header h2 {
+    font-size: 1rem !important;
+  }
+
+  .water-simulation-modal .mc-modal__header > div > div {
+    font-size: 0.7rem !important;
+    line-height: 1.4 !important;
+  }
+
+  .water-simulation-modal .mc-modal__body {
+    padding: 0 6px 6px !important;
+  }
+
+  .water-simulation-shell {
+    grid-template-rows: minmax(270px, 57dvh) 5px auto auto;
+    border-radius: 11px;
+  }
+
+  .water-simulation-status {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+    padding: 9px;
+  }
+
+  .water-status-copy {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .water-simulation-controls {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .water-simulation-controls .button.secondary {
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 0.66rem;
+  }
+
+  .water-speed-control {
+    min-width: 0;
+    justify-content: center;
+    padding: 0 4px;
+  }
+
+  .water-speed-control > span,
+  .water-simulation-controls .button.secondary:nth-of-type(2) {
+    font-size: 0;
+  }
+
+  .water-simulation-controls .button.secondary:nth-of-type(2) svg {
+    margin: 0;
+  }
 }
 
 @media (max-width: 420px) {
@@ -1997,6 +2299,36 @@ svg {
 
   .completion-stats {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .water-simulation-shell {
+    grid-template-rows: minmax(240px, 52dvh) 5px auto auto;
+  }
+
+  .water-direction-badge {
+    left: 7px;
+    padding: 6px 7px;
+  }
+
+  .water-direction-badge.inlet {
+    top: 7px;
+  }
+
+  .water-direction-badge.outlet {
+    bottom: 7px;
+  }
+
+  .water-simulation-controls .button.secondary {
+    gap: 4px;
+    font-size: 0;
+  }
+
+  .water-simulation-controls .button.secondary:first-child {
+    font-size: 0.62rem;
+  }
+
+  .water-simulation-legend {
+    gap: 4px 10px;
   }
 }
 

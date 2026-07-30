@@ -4,6 +4,7 @@ import {
   createEmptyGraph,
   findConnectedComponents,
   generateMaze,
+  getVisualOpeningDirection,
   optimizeEndpoints,
   repairMaze,
   rotateMaze90,
@@ -11,7 +12,7 @@ import {
 } from './index'
 
 describe('maze analysis and repair', () => {
-  it('chooses endpoints on the largest connected component using graph distance', () => {
+  it('chooses top and bottom endpoints on the largest connected component using graph distance', () => {
     const generated = generateMaze({
       rows: 15,
       cols: 17,
@@ -23,18 +24,14 @@ describe('maze analysis and repair', () => {
     expect(endpoints.componentSize).toBe(15 * 17)
     expect(endpoints.distance).toBe(solution.distance)
     expect(solution.distance).toBeGreaterThan(30)
-    for (const endpoint of [endpoints.start, endpoints.end]) {
-      expect(
-        endpoint.row === 0 ||
-          endpoint.row === generated.graph.rows - 1 ||
-          endpoint.col === 0 ||
-          endpoint.col === generated.graph.cols - 1,
-      ).toBe(true)
-    }
+    expect(endpoints.start.row).toBe(0)
+    expect(endpoints.end.row).toBe(generated.graph.rows - 1)
+    expect(getVisualOpeningDirection(generated.graph, endpoints.start)).toBe('top')
+    expect(getVisualOpeningDirection(generated.graph, endpoints.end)).toBe('bottom')
   })
 
   it.each(['dfs', 'kruskal', 'prim'] as const)(
-    'prefers two visual boundary endpoints for %s',
+    'uses a top entrance and bottom exit for %s',
     (algorithm) => {
       for (let seed = 0; seed < 12; seed += 1) {
         const generated = generateMaze({
@@ -43,14 +40,10 @@ describe('maze analysis and repair', () => {
           seed: `boundary-endpoints-${seed}`,
           algorithm,
         })
-        for (const endpoint of [generated.start, generated.end]) {
-          expect(
-            endpoint.row === 0 ||
-              endpoint.row === generated.graph.rows - 1 ||
-              endpoint.col === 0 ||
-              endpoint.col === generated.graph.cols - 1,
-          ).toBe(true)
-        }
+        expect(generated.start.row).toBe(0)
+        expect(generated.end.row).toBe(generated.graph.rows - 1)
+        expect(getVisualOpeningDirection(generated.graph, generated.start)).toBe('top')
+        expect(getVisualOpeningDirection(generated.graph, generated.end)).toBe('bottom')
       }
     },
   )

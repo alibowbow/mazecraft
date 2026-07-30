@@ -286,3 +286,57 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
   const replayStart = await image()
   expect(replayStart).not.toBe(complete)
 })
+
+test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른다', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 })
+  const consoleErrors: string[] = []
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  await importFixture(page)
+
+  await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
+  const stage = page.getByTestId('water-simulation-stage')
+  await expect(stage).toBeVisible()
+  await expect(stage).toHaveAttribute('data-start-edge', 'top')
+  await expect(stage).toHaveAttribute('data-end-edge', 'bottom')
+  await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 15_000 })
+  await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
+
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true)
+  expect(
+    await page
+      .locator('.water-simulation-controls button, .water-simulation-controls select')
+      .evaluateAll(
+        (elements) =>
+          elements.filter((element) => {
+            const bounds = element.getBoundingClientRect()
+            return bounds.width < 44 || bounds.height < 44
+          }).length,
+      ),
+  ).toBe(0)
+
+  await page.getByLabel('물 흐름 속도').selectOption('4')
+  await expect
+    .poll(async () => Number(await stage.getAttribute('data-filled-cells')))
+    .toBeGreaterThan(1)
+
+  await page.getByRole('button', { name: '물 시뮬레이션 일시정지' }).click()
+  await expect(stage).toHaveAttribute('data-phase', 'paused')
+  const pausedCount = Number(await stage.getAttribute('data-filled-cells'))
+  await page.waitForTimeout(320)
+  expect(Number(await stage.getAttribute('data-filled-cells'))).toBe(pausedCount)
+
+  await page.getByRole('button', { name: '처음부터', exact: true }).click()
+  await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
+    timeout: 15_000,
+  })
+
+  await page.getByRole('button', { name: '3D 물 시뮬레이션 닫기' }).click()
+  await expect(stage).toHaveCount(0)
+  expect(consoleErrors).toEqual([])
+})
