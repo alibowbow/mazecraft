@@ -7,6 +7,7 @@ import {
   Crown,
   Diamond,
   Download,
+  Droplets,
   Eraser,
   FileImage,
   Flower2,
@@ -49,9 +50,11 @@ import {
 import {
   useCallback,
   useEffect,
+  lazy,
   useMemo,
   useRef,
   useState,
+  Suspense,
   type PointerEvent,
   type ReactNode,
 } from 'react'
@@ -62,6 +65,7 @@ import {
   calculateMazeMetrics,
   cloneMazeGraph,
   graphToMask,
+  optimizeEndpoints,
   repairMaze,
   setWall,
   solveMaze,
@@ -85,6 +89,10 @@ import { renderModelFromProject } from '../../renderer/types'
 import { difficultyLabel, scoreLabel } from '../../app/projectFactory'
 import type { AutosaveStatus } from '../../storage'
 import { type EditorTool } from '../editor/editor'
+
+const WaterSimulationDialog = lazy(
+  () => import('../waterSimulation/WaterSimulationDialog'),
+)
 
 export type StudioStep = 1 | 2 | 3 | 4 | 5 | 6
 
@@ -275,6 +283,9 @@ export function StudioScreen({
   const [generationTraceProgress, setGenerationTraceProgress] = useState<number | null>(null)
   const [particleDensity, setParticleDensity] = useState(4)
   const [animation, setAnimation] = useState<MazeAnimationSnapshot | null>(null)
+  const [waterSimulationOpen, setWaterSimulationOpen] = useState(false)
+  const [waterSimulationProject, setWaterSimulationProject] =
+    useState<MazeProject | null>(null)
   const canvasRef = useRef<MazeCanvasHandle>(null)
   const historyRef = useRef(new UndoRedoHistory(project, 100))
   const editBaselineRef = useRef(project)
@@ -346,6 +357,8 @@ export function StudioScreen({
     controllerRef.current?.cancel()
     setShowSolution(false)
     setAnimation(null)
+    setWaterSimulationOpen(false)
+    setWaterSimulationProject(null)
   }, [state])
 
   useEffect(() => {
@@ -355,6 +368,8 @@ export function StudioScreen({
     setSource(inputSource(project))
     setShowSolution(false)
     setAnimation(null)
+    setWaterSimulationOpen(false)
+    setWaterSimulationProject(null)
   }, [project.id, project.seed])
 
   useEffect(() => {
@@ -581,6 +596,36 @@ export function StudioScreen({
       return
     }
     void playSolveAnimation('path')
+  }
+
+  const openWaterSimulation = () => {
+    controllerRef.current?.cancel()
+    setShowSolution(false)
+    setAnimation(null)
+    setSheetOpen(false)
+
+    const endpoints = optimizeEndpoints(project.mazeGraph)
+    const reoriented =
+      endpoints.start.row !== project.startCell.row ||
+      endpoints.start.col !== project.startCell.col ||
+      endpoints.end.row !== project.endCell.row ||
+      endpoints.end.col !== project.endCell.col
+    const simulationProject = reoriented
+      ? projectWithMetrics({
+          ...project,
+          startCell: endpoints.start,
+          endCell: endpoints.end,
+          creatorReplay: null,
+        })
+      : project
+
+    if (reoriented) {
+      historyRef.current.push(simulationProject)
+      onChange(simulationProject)
+      onToast('물 흐름에 맞춰 입구를 최상단, 출구를 최하단으로 재배치했습니다.')
+    }
+    setWaterSimulationProject(simulationProject)
+    setWaterSimulationOpen(true)
   }
 
   const history = historyRef.current.state
@@ -892,9 +937,10 @@ export function StudioScreen({
           <QualityCard project={project} validation={validation} onRepair={autoRepair} />
           <div className="inspector-section settings-stack">
             <p className="panel-label">풀이 애니메이션</p>
-            <label className="field"><span>표현 방식</span><select value={animationMode} onChange={(event) => setAnimationMode(event.target.value as typeof animationMode)}><option value="path">정답 경로 표시</option><option value="water">물 채우기</option><option value="particle">파티클 채우기</option></select></label>
+            <label className="field"><span>표현 방식</span><select value={animationMode} onChange={(event) => setAnimationMode(event.target.value as typeof animationMode)}><option value="path">정답 경로 표시</option><option value="water">2D 물 채우기</option><option value="particle">파티클 채우기</option></select></label>
             <label className="field"><span>효과 품질</span><select value={effectQuality} onChange={(event) => setEffectQuality(event.target.value as typeof effectQuality)}><option value="auto">기기 성능에 맞춤</option><option value="low">낮음</option><option value="high">높음</option></select></label>
             {animationMode === 'particle' && <label className="field"><span>파티클 밀도 {particleDensity}</span><input type="range" min="1" max="10" value={particleDensity} onChange={(event) => setParticleDensity(Number(event.target.value))} /></label>}
+            <button className="button" onClick={openWaterSimulation} disabled={!validation.valid}><Droplets size={17} />3D 물 시뮬레이션</button>
             <button className="button secondary" onClick={() => void playSolveAnimation()}><Lightbulb size={17} />풀이 애니메이션</button>
             <button className="button" onClick={() => onPlay(false)}><Play size={17} />직접 플레이 테스트</button>
             <button className="button secondary" onClick={() => onPlay(true)}><FlagIcon size={17} />제작자 고스트 기록</button>
@@ -919,6 +965,7 @@ export function StudioScreen({
   })()
 
   return (
+    <>
     <main className="studio-root">
       <header className="studio-header no-print">
         <button className="brand" onClick={onHome} aria-label="홈으로">
@@ -988,6 +1035,15 @@ export function StudioScreen({
               <button className="toolbar-button" disabled={!history.canRedo} aria-label="다시 실행" onClick={() => onChange(historyRef.current.redo())}><Redo2 size={17} /></button>
             </div>
             <div className="toolbar-group">
+              <button
+                className="toolbar-button"
+                aria-label="3D 물 시뮬레이션 열기"
+                disabled={!validation.valid}
+                onClick={openWaterSimulation}
+              >
+                <Droplets size={17} /><span>3D 물</span>
+              </button>
+              <span className="toolbar-separator" />
               <button className="toolbar-button" aria-label="축소" onClick={() => canvasRef.current?.zoomOut()}><Minus size={17} /></button>
               <button className="toolbar-button" aria-label="화면 맞춤" onClick={() => canvasRef.current?.fit()}><Scan size={17} /><span>맞춤</span></button>
               <button className="toolbar-button" aria-label="확대" onClick={() => canvasRef.current?.zoomIn()}><Plus size={17} /></button>
@@ -1075,6 +1131,27 @@ export function StudioScreen({
         </nav>
       </div>
     </main>
+    {waterSimulationOpen && waterSimulationProject && (
+      <Suspense
+        fallback={
+          <div className="water-loading-overlay" role="status" aria-live="polite">
+            <Droplets size={28} />
+            <strong>3D 물 시뮬레이션을 준비하는 중…</strong>
+          </div>
+        }
+      >
+        <WaterSimulationDialog
+          open
+          project={waterSimulationProject}
+          quality={effectQuality}
+          onClose={() => {
+            setWaterSimulationOpen(false)
+            setWaterSimulationProject(null)
+          }}
+        />
+      </Suspense>
+    )}
+    </>
   )
 }
 
