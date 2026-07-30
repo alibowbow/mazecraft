@@ -1622,7 +1622,11 @@ svg {
 
 .water-simulation-modal {
   max-height: min(94dvh, 960px) !important;
-  border-radius: 20px !important;
+  border-radius: 22px !important;
+  background: #f4f6f3 !important;
+  box-shadow:
+    0 30px 90px rgba(16, 35, 40, 0.34),
+    0 1px 0 rgba(255, 255, 255, 0.92) inset !important;
 }
 
 .water-loading-overlay {
@@ -1648,22 +1652,38 @@ svg {
 .water-simulation-shell {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(300px, 62dvh) 5px auto auto;
+  grid-template-rows: minmax(360px, 66dvh) 5px auto auto;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--line) 75%, #5daee4);
-  border-radius: 14px;
-  background: #07131f;
+  border: 1px solid rgba(30, 57, 64, 0.2);
+  border-radius: 16px;
+  background: #dfeaec;
+  box-shadow:
+    0 12px 34px rgba(24, 52, 58, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.8) inset;
 }
 
 .water-simulation-stage {
   position: relative;
+  isolation: isolate;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   touch-action: none;
   background:
-    radial-gradient(circle at 50% 15%, rgba(40, 132, 190, 0.2), transparent 43%),
-    linear-gradient(180deg, #0a1b2b, #06101b);
+    radial-gradient(circle at 46% 10%, rgba(255, 255, 255, 0.96), transparent 42%),
+    linear-gradient(180deg, #f5f8f7, #bfd2d6);
+}
+
+.water-simulation-stage::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(90deg, rgba(16, 38, 43, 0.12), transparent 8%, transparent 92%, rgba(16, 38, 43, 0.12)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 16%, transparent 84%, rgba(12, 36, 42, 0.1));
+  box-shadow: inset 0 0 90px rgba(22, 48, 55, 0.13);
 }
 
 .water-simulation-canvas-host {
@@ -1678,63 +1698,107 @@ svg {
   touch-action: none;
 }
 
-.water-direction-badge {
+.water-film-grain {
   position: absolute;
-  z-index: 4;
-  left: 13px;
-  display: grid;
-  grid-template-columns: auto auto;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: multiply;
+  background-image:
+    radial-gradient(circle at 20% 35%, #45636b 0 0.45px, transparent 0.7px),
+    radial-gradient(circle at 75% 65%, #45636b 0 0.4px, transparent 0.7px);
+  background-position: 0 0, 3px 5px;
+  background-size: 7px 7px, 9px 9px;
+}
+
+.water-shot-label {
+  position: absolute;
+  z-index: 5;
+  top: 13px;
+  right: 13px;
+  display: flex;
   align-items: center;
-  gap: 1px 8px;
+  gap: 8px;
   padding: 7px 9px;
   pointer-events: none;
-  color: #eaf7ff;
-  border: 1px solid rgba(166, 221, 255, 0.22);
-  border-radius: 9px;
-  background: rgba(5, 18, 30, 0.68);
+  color: rgba(19, 46, 53, 0.72);
+  border: 1px solid rgba(35, 65, 72, 0.16);
+  border-radius: 999px;
+  background: rgba(248, 251, 249, 0.7);
+  box-shadow: 0 5px 18px rgba(28, 55, 61, 0.12);
   backdrop-filter: blur(10px);
+  font-size: 0.55rem;
+  font-weight: 820;
+  letter-spacing: 0.09em;
 }
 
-.water-direction-badge.inlet {
-  top: 13px;
+.water-shot-label i {
+  width: 18px;
+  height: 1px;
+  display: block;
+  background: linear-gradient(90deg, #f0671f, #12aeea);
 }
 
-.water-direction-badge.outlet {
-  bottom: 13px;
+.water-success-cue {
+  position: absolute;
+  z-index: 6;
+  right: 15px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  pointer-events: none;
+  color: #155c3f;
+  border: 1px solid rgba(31, 139, 91, 0.24);
+  border-radius: 999px;
+  background: rgba(233, 255, 244, 0.84);
+  box-shadow: 0 8px 24px rgba(21, 92, 63, 0.14);
+  backdrop-filter: blur(10px);
+  font-size: 0.68rem;
+  font-weight: 820;
+  animation: water-success-in 420ms cubic-bezier(.2, .8, .2, 1) both;
 }
 
-.water-direction-badge strong {
-  grid-row: 1 / 3;
-  font-size: 0.76rem;
+.water-success-cue span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #21ad6c;
+  box-shadow: 0 0 0 4px rgba(33, 173, 108, 0.12);
 }
 
-.water-direction-badge span {
-  color: #9fc1d5;
-  font-size: 0.62rem;
-}
-
-.water-direction-badge svg {
-  grid-column: 2;
-  color: #43b7ff;
+@keyframes water-success-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .water-stage-message {
   position: absolute;
-  z-index: 5;
+  z-index: 8;
   inset: 0;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 9px;
   padding: 24px;
-  color: #dff4ff;
-  background: #07131f;
+  color: #153a44;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.96), transparent 56%),
+    #dfeaec;
   text-align: center;
 }
 
 .water-stage-message span {
   max-width: 480px;
-  color: #a8c5d5;
+  color: #58747b;
   font-size: 0.78rem;
   line-height: 1.5;
 }
@@ -1745,15 +1809,15 @@ svg {
 
 .water-simulation-progress {
   overflow: hidden;
-  background: #0b2538;
+  background: #183039;
 }
 
 .water-simulation-progress span {
   height: 100%;
   display: block;
   border-radius: 0 999px 999px 0;
-  background: linear-gradient(90deg, #0879cf, #35bcff);
-  box-shadow: 0 0 18px rgba(48, 183, 255, 0.6);
+  background: linear-gradient(90deg, #078bd4, #5ee6ff);
+  box-shadow: 0 0 18px rgba(58, 210, 255, 0.7);
   transition: width 100ms linear;
 }
 
@@ -1764,9 +1828,10 @@ svg {
   justify-content: space-between;
   gap: 15px;
   padding: 11px 12px;
-  color: #edf8ff;
-  border-top: 1px solid rgba(169, 219, 245, 0.12);
-  background: #0a1824;
+  color: #f2f8f8;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(90deg, rgba(24, 43, 49, 0.98), rgba(13, 28, 33, 0.98));
 }
 
 .water-status-copy {
@@ -1779,17 +1844,17 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #ccefff;
+  color: #dff6f8;
   font-size: 0.76rem;
   font-weight: 780;
 }
 
 .water-status-copy > span.reached {
-  color: #62d4ff;
+  color: #74edba;
 }
 
 .water-status-copy small {
-  color: #89a9ba;
+  color: #8faab0;
   font-variant-numeric: tabular-nums;
   font-size: 0.63rem;
 }
@@ -1804,9 +1869,9 @@ svg {
 
 .water-simulation-controls .button.secondary {
   min-height: 44px;
-  color: #eaf7ff;
-  border-color: rgba(173, 221, 246, 0.22);
-  background: rgba(255, 255, 255, 0.07);
+  color: #eff8f8;
+  border-color: rgba(213, 238, 240, 0.18);
+  background: rgba(255, 255, 255, 0.075);
   white-space: nowrap;
 }
 
@@ -1820,10 +1885,10 @@ svg {
   align-items: center;
   gap: 6px;
   padding: 0 7px 0 11px;
-  color: #a9c6d6;
-  border: 1px solid rgba(173, 221, 246, 0.22);
+  color: #adc3c8;
+  border: 1px solid rgba(213, 238, 240, 0.18);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.075);
   font-size: 0.7rem;
   font-weight: 740;
 }
@@ -1835,7 +1900,7 @@ svg {
   color: #f1f9ff;
   border: 0;
   border-radius: 6px;
-  background: #112b3d;
+  background: #20373d;
 }
 
 .water-simulation-legend {
@@ -1846,9 +1911,9 @@ svg {
   flex-wrap: wrap;
   gap: 6px 18px;
   padding: 6px 11px;
-  color: #7895a5;
-  border-top: 1px solid rgba(169, 219, 245, 0.1);
-  background: #07131f;
+  color: #7f999f;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: #111f23;
   font-size: 0.59rem;
 }
 
@@ -2189,7 +2254,7 @@ svg {
   }
 
   .water-simulation-shell {
-    grid-template-rows: minmax(270px, 57dvh) 5px auto auto;
+    grid-template-rows: minmax(290px, 62dvh) 5px auto auto;
     border-radius: 11px;
   }
 
@@ -2302,20 +2367,23 @@ svg {
   }
 
   .water-simulation-shell {
-    grid-template-rows: minmax(240px, 52dvh) 5px auto auto;
+    grid-template-rows: minmax(260px, 59dvh) 5px auto auto;
   }
 
-  .water-direction-badge {
-    left: 7px;
-    padding: 6px 7px;
+  .water-simulation-modal .mc-modal__header > div > div {
+    display: none;
   }
 
-  .water-direction-badge.inlet {
+  .water-shot-label {
     top: 7px;
+    right: 7px;
+    padding: 6px 8px;
+    font-size: 0.49rem;
   }
 
-  .water-direction-badge.outlet {
-    bottom: 7px;
+  .water-success-cue {
+    right: 8px;
+    bottom: 8px;
   }
 
   .water-simulation-controls .button.secondary {

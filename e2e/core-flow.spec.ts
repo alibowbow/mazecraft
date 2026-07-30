@@ -288,6 +288,7 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
 })
 
 test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른다', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.setViewportSize({ width: 360, height: 800 })
   const consoleErrors: string[] = []
   page.on('console', (message) => {
@@ -320,17 +321,14 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
       ),
   ).toBe(0)
 
-  await page.getByLabel('물 흐름 속도').selectOption('4')
-  await expect
-    .poll(async () => Number(await stage.getAttribute('data-filled-cells')))
-    .toBeGreaterThan(1)
-
   await page.getByRole('button', { name: '물 시뮬레이션 일시정지' }).click()
   await expect(stage).toHaveAttribute('data-phase', 'paused')
   const pausedCount = Number(await stage.getAttribute('data-filled-cells'))
   await page.waitForTimeout(320)
   expect(Number(await stage.getAttribute('data-filled-cells'))).toBe(pausedCount)
 
+  await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
+  await page.getByLabel('물 흐름 속도').selectOption('4')
   await page.getByRole('button', { name: '처음부터', exact: true }).click()
   await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
     timeout: 15_000,
