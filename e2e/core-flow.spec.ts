@@ -254,3 +254,35 @@ test('13. 주요 화면 크기와 폴더블 회전에서 상태와 가로 폭을
     ).toBe(true)
   }
 })
+
+test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재생한다', async ({ page }) => {
+  await importFixture(page)
+  const canvas = page.locator('canvas')
+  const image = () => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())
+  const hidden = await image()
+
+  const solutionButton = page.getByRole('button', { name: '정답 경로 그리기' })
+  await solutionButton.click()
+  await expect(page.getByRole('button', { name: '정답 경로 숨기기' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+
+  await page.waitForTimeout(40)
+  const start = await image()
+  await page.waitForTimeout(360)
+  const middle = await image()
+  await page.waitForTimeout(900)
+  const complete = await image()
+
+  expect(start).not.toBe(hidden)
+  expect(middle).not.toBe(start)
+  expect(complete).not.toBe(middle)
+
+  await page.getByRole('button', { name: '정답 경로 숨기기' }).click()
+  await expect(solutionButton).toHaveAttribute('aria-pressed', 'false')
+  await solutionButton.click()
+  await page.waitForTimeout(40)
+  const replayStart = await image()
+  expect(replayStart).not.toBe(complete)
+})

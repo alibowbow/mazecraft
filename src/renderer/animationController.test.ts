@@ -66,6 +66,56 @@ describe('MazeAnimationController', () => {
     expect(high.overlap).toBeGreaterThan(low.overlap)
   })
 
+  it('keeps the complete route hidden behind progress while a path grows from its start', async () => {
+    let now = 0
+    let nextId = 1
+    const callbacks = new Map<number, FrameRequestCallback>()
+    const snapshots: MazeAnimationSnapshot[] = []
+    const path = [
+      { row: 0, col: 0 },
+      { row: 0, col: 1 },
+      { row: 1, col: 1 },
+      { row: 1, col: 2 },
+    ]
+    const controller = new MazeAnimationController({
+      onFrame: (snapshot) => snapshots.push(snapshot),
+      reducedMotion: false,
+      now: () => now,
+      requestFrame: (callback) => {
+        const id = nextId++
+        callbacks.set(id, callback)
+        return id
+      },
+      cancelFrame: (id) => callbacks.delete(id),
+    })
+
+    const completion = controller.play({
+      mode: 'path',
+      path,
+      revealDurationMs: 220,
+    })
+    const advance = (time: number): void => {
+      now = time
+      const [entry] = callbacks.entries()
+      expect(entry).toBeTruthy()
+      callbacks.delete(entry[0])
+      entry[1](time)
+    }
+
+    advance(0)
+    expect(snapshots.at(-1)?.solutionProgress).toBe(0)
+    expect(snapshots.at(-1)?.revealedCells).toEqual(path)
+
+    advance(100)
+    expect(snapshots.at(-1)?.solutionProgress).toBeGreaterThan(0)
+    expect(snapshots.at(-1)?.solutionProgress).toBeLessThan(1)
+    expect(snapshots.at(-1)?.revealedCells).toEqual(path)
+
+    advance(400)
+    await expect(completion).resolves.toBe('complete')
+    expect(snapshots.at(-1)?.solutionProgress).toBe(1)
+  })
+
   it('cancels the managed animation frame when disposed', () => {
     const cancelFrame = vi.fn()
     const controller = new MazeAnimationController({
@@ -83,6 +133,31 @@ describe('MazeAnimationController', () => {
     })
     controller.dispose()
     expect(cancelFrame).toHaveBeenCalledWith(73)
+    expect(controller.isRunning()).toBe(false)
+  })
+
+  it('reveals the complete path immediately when reduced motion is requested', async () => {
+    const onFrame = vi.fn()
+    const requestFrame = vi.fn()
+    const path = [
+      { row: 0, col: 0 },
+      { row: 0, col: 1 },
+    ]
+    const controller = new MazeAnimationController({
+      onFrame,
+      requestFrame,
+      reducedMotion: true,
+    })
+
+    await expect(controller.play({ mode: 'path', path })).resolves.toBe('complete')
+    expect(requestFrame).not.toHaveBeenCalled()
+    expect(onFrame).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'complete',
+        solutionProgress: 1,
+        revealedCells: path,
+      }),
+    )
     expect(controller.isRunning()).toBe(false)
   })
 

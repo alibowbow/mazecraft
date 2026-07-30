@@ -21,6 +21,10 @@ export interface MazeAnimationSnapshot {
   phase: MazeAnimationPhase
   elapsedMs: number
   solutionProgress: number
+  /**
+   * Path mode keeps the full route here and reveals it through
+   * solutionProgress. Water and particle modes use the visited prefix.
+   */
   revealedCells: ReadonlyArray<MazePoint>
   waterOpacity: number
   particles: ReadonlyArray<MazeParticle>
@@ -176,9 +180,11 @@ export class MazeAnimationController {
       220,
       request.revealDurationMs ?? clamp(path.length * 24, 550, 5500),
     )
-    const searchingDuration = request.mode === 'water' ? 260 : 80
-    const foundDuration = 140
-    const drainingDuration = request.mode === 'water' ? 520 : 180
+    const searchingDuration =
+      request.mode === 'water' ? 260 : request.mode === 'path' ? 0 : 80
+    const foundDuration = request.mode === 'path' ? 0 : 140
+    const drainingDuration =
+      request.mode === 'water' ? 520 : request.mode === 'path' ? 120 : 180
     const totalDuration =
       searchingDuration + foundDuration + revealDuration + drainingDuration
     const startedAt = this.now()
@@ -236,7 +242,8 @@ export class MazeAnimationController {
             : phase === 'found'
               ? 1
               : Math.max(1, Math.ceil(path.length * progress))
-        const revealedCells = path.slice(0, revealedCount)
+        const revealedCells =
+          request.mode === 'path' ? path : path.slice(0, revealedCount)
 
         if (request.mode === 'particle') {
           this.updateParticles({

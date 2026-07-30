@@ -336,6 +336,20 @@ export function StudioScreen({
   }, [project.id])
 
   useEffect(() => {
+    controllerRef.current?.cancel()
+    setShowSolution(false)
+    setAnimation(null)
+  }, [solution])
+
+  useEffect(() => {
+    if (state !== 'generating') return
+    controllerRef.current?.cancel()
+    setShowSolution(false)
+    setAnimation(null)
+  }, [state])
+
+  useEffect(() => {
+    controllerRef.current?.cancel()
     historyRef.current = new UndoRedoHistory(project, 100)
     editBaselineRef.current = project
     setSource(inputSource(project))
@@ -543,25 +557,39 @@ export function StudioScreen({
     }
   }
 
-  const playSolveAnimation = async () => {
-    setShowSolution(false)
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setShowSolution(true)
-      return
-    }
+  const playSolveAnimation = async (
+    mode: 'path' | 'water' | 'particle' = animationMode,
+  ) => {
+    controllerRef.current?.cancel()
+    setAnimation(null)
+    setShowSolution(mode === 'path')
     const reduceEffects =
       effectQuality === 'low' || (effectQuality === 'auto' && lowPowerDevice)
     await controllerRef.current?.play({
-      mode: animationMode,
+      mode,
       path: solution,
       density: reduceEffects ? Math.min(3, particleDensity) : particleDensity,
       color: project.visualTheme.accentColor,
     })
   }
 
+  const toggleSolutionPath = () => {
+    if (showSolution) {
+      controllerRef.current?.cancel()
+      setShowSolution(false)
+      setAnimation(null)
+      return
+    }
+    void playSolveAnimation('path')
+  }
+
   const history = historyRef.current.state
   const rendererFrame = showSolution
-    ? { solution, solutionProgress: 1 }
+    ? {
+        solution,
+        solutionProgress:
+          animation?.mode === 'path' ? animation.solutionProgress : 0,
+      }
     : animation
       ? animationSnapshotToRenderFrame(animation)
       : generationTraceProgress !== null
@@ -964,7 +992,15 @@ export function StudioScreen({
               <button className="toolbar-button" aria-label="화면 맞춤" onClick={() => canvasRef.current?.fit()}><Scan size={17} /><span>맞춤</span></button>
               <button className="toolbar-button" aria-label="확대" onClick={() => canvasRef.current?.zoomIn()}><Plus size={17} /></button>
               <span className="toolbar-separator" />
-              <button className={`toolbar-button ${showSolution ? 'active' : ''}`} aria-label="정답 경로" onClick={() => setShowSolution((value) => !value)}><Lightbulb size={17} /><span>정답 경로</span></button>
+              <button
+                className={`toolbar-button ${showSolution ? 'active' : ''}`}
+                aria-label={showSolution ? '정답 경로 숨기기' : '정답 경로 그리기'}
+                aria-pressed={showSolution}
+                disabled={solution.length === 0}
+                onClick={toggleSolutionPath}
+              >
+                <Lightbulb size={17} /><span>정답 경로</span>
+              </button>
               <button className="toolbar-button" aria-label="검증" onClick={() => selectStep(5, true)}><ShieldCheck size={17} /><span>검증</span></button>
             </div>
           </div>
