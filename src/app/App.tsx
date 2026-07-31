@@ -398,6 +398,8 @@ export function App() {
           onDelete={(source) => void remove(source)}
           onExport={(source) => setExportProject(source)}
           onImport={(file) => void importProject(file)}
+          onThemeToggle={toggleTheme}
+          dark={dark}
         />
       )}
       {route === 'studio' && project && (
