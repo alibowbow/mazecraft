@@ -19,7 +19,7 @@ export interface WaterSurfaceTimeline {
   pixelsPerCell: number
   maxTimeMs: number
   /**
-   * RGBA float atlas: arrival time, full time, retained water level, noise seed.
+   * RGBA float atlas: arrival time, full time, retained water level, validity.
    */
   schedule: Float32Array
   /**
@@ -200,7 +200,6 @@ export function buildWaterSurfaceTimeline(
       const texelIndex = y * width + x
       const offset = texelIndex * 4
       const seed = hashTexel(graphSeed, x, y) / 0xffffffff
-      schedule[offset + 3] = seed
       field[offset + 1] = encodeFlowComponent(0)
       field[offset + 2] = encodeFlowComponent(0)
       field[offset + 3] = Math.round(seed * 255)
@@ -288,6 +287,48 @@ export function buildWaterSurfaceTimeline(
         schedule[offset + 2] =
           fromSample.retainedLevel +
           (toSample.retainedLevel - fromSample.retainedLevel) * projection
+        schedule[offset + 3] = 1
+        field[offset + 1] = encodedFlowX
+        field[offset + 2] = encodedFlowY
+      }
+    }
+  }
+
+  const paintDisk = (
+    center: SurfacePoint,
+    sample: SurfaceSample,
+    flow: FlowVector,
+    radius: number,
+  ): void => {
+    latestScheduledTime = Math.max(
+      latestScheduledTime,
+      sample.arrivalMs,
+      sample.fullMs,
+    )
+    const edge = radius + 0.5
+    const minimumX = Math.max(0, Math.floor(center.x - edge))
+    const maximumX = Math.min(width - 1, Math.ceil(center.x + edge))
+    const minimumY = Math.max(0, Math.floor(center.y - edge))
+    const maximumY = Math.min(height - 1, Math.ceil(center.y + edge))
+    const encodedFlowX = encodeFlowComponent(flow.x)
+    const encodedFlowY = encodeFlowComponent(flow.y)
+
+    for (let y = minimumY; y <= maximumY; y += 1) {
+      for (let x = minimumX; x <= maximumX; x += 1) {
+        const distance = Math.hypot(x - center.x, y - center.y)
+        const coverage = clamp(edge - distance, 0, 1)
+        if (coverage <= 0) continue
+        const texelIndex = y * width + x
+        const offset = texelIndex * 4
+        field[offset] = Math.max(field[offset], Math.round(coverage * 255))
+        if (distance >= closestDistance[texelIndex] - DISTANCE_EPSILON) {
+          continue
+        }
+        closestDistance[texelIndex] = distance
+        schedule[offset] = sample.arrivalMs
+        schedule[offset + 1] = sample.fullMs
+        schedule[offset + 2] = sample.retainedLevel
+        schedule[offset + 3] = 1
         field[offset + 1] = encodedFlowX
         field[offset + 2] = encodedFlowY
       }
@@ -344,12 +385,31 @@ export function buildWaterSurfaceTimeline(
       sourceSchedule.position.row,
       sourceSchedule.position.col,
     )
+    const sourceSegment = model.segments.find(
+      (segment) => segment.fromIndex === model.sourceIndex,
+    )
+    const sourceFlow = sourceSegment
+      ? vectorForDirection(sourceSegment.direction)
+      : { x: 0, y: -1 }
+    const sourcePortalY = Math.min(
+      height - 1,
+      sourcePoint.y + Math.ceil(pixelsPerCell / 2),
+    )
     paintCapsule(
-      { x: sourcePoint.x, y: height - 1 },
+      { x: sourcePoint.x, y: sourcePortalY },
       sourcePoint,
       sourceSample,
       sourceSample,
       { x: 0, y: -1 },
+    )
+    // The falling jet feeds a shallow basin inside the source cell. Painting
+    // that basin into the same atlas as the passages removes the hard seam
+    // between a separate impact disc and the first channel.
+    paintDisk(
+      sourcePoint,
+      sourceSample,
+      sourceFlow,
+      pixelsPerCell * 0.405,
     )
   }
 
@@ -375,7 +435,10 @@ export function buildWaterSurfaceTimeline(
     }
     paintCapsule(
       exitPoint,
-      { x: exitPoint.x, y: 0 },
+      {
+        x: exitPoint.x,
+        y: Math.max(0, exitPoint.y - Math.ceil(pixelsPerCell / 2)),
+      },
       exitSample,
       outletSample,
       { x: 0, y: -1 },

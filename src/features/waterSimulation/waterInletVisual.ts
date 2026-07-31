@@ -1,5 +1,6 @@
 export const WATER_INLET_IMPACT_MS = 820
 export const WATER_INLET_IMPACT_BURST_MS = 620
+export const WATER_SURFACE_COUPLING_MS = 105
 
 export type WaterInletState =
   | 'off'
@@ -21,6 +22,10 @@ export interface WaterInletSample {
   strength: number
   frontProgress: number
   impactStrength: number
+}
+
+export interface WaterHandoffSample extends WaterInletSample {
+  surfaceGate: number
 }
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
@@ -104,4 +109,19 @@ export function sampleWaterInlet(
 
 export function getWaterFlowElapsedMs(elapsedMs: number): number {
   return Math.max(0, elapsedMs - WATER_INLET_IMPACT_MS)
+}
+
+export function sampleWaterHandoff(
+  elapsedMs: number,
+  completeAtMs: number,
+): WaterHandoffSample {
+  const inlet = sampleWaterInlet(elapsedMs, completeAtMs)
+  return {
+    ...inlet,
+    surfaceGate: smoothstep(
+      WATER_INLET_IMPACT_MS,
+      WATER_INLET_IMPACT_MS + WATER_SURFACE_COUPLING_MS,
+      Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0),
+    ),
+  }
 }

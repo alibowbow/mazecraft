@@ -165,6 +165,54 @@ describe('buildWaterSurfaceTimeline', () => {
     expect(timeline.field[offset + 2]).toBe(0)
   })
 
+  it('stops masked inlet and outlet water at their active cell portals', () => {
+    const graph = createEmptyGraph(5, 3, {
+      seed: 'masked-water-portals',
+      mask: [
+        false, false, false,
+        false, true, false,
+        false, true, false,
+        false, true, false,
+        false, false, false,
+      ],
+    })
+    expect(
+      openPassage(graph, { row: 1, col: 1 }, { row: 2, col: 1 }),
+    ).toBe(true)
+    expect(
+      openPassage(graph, { row: 2, col: 1 }, { row: 3, col: 1 }),
+    ).toBe(true)
+    const model = buildWaterSimulation(
+      graph,
+      { row: 1, col: 1 },
+      { row: 3, col: 1 },
+    )
+    const timeline = buildWaterSurfaceTimeline(graph, model, {
+      pixelsPerCell: 8,
+    })
+    const inactiveTop = texelForCell(timeline, graph, 0, 1)
+    const source = texelForCell(timeline, graph, 1, 1)
+    const exit = texelForCell(timeline, graph, 3, 1)
+    const inactiveBottom = texelForCell(timeline, graph, 4, 1)
+
+    expect(timeline.field[offsetAt(timeline, inactiveTop.x, inactiveTop.y)])
+      .toBe(0)
+    expect(
+      timeline.schedule[
+        offsetAt(timeline, inactiveTop.x, inactiveTop.y) + 3
+      ],
+    ).toBe(0)
+    expect(timeline.field[offsetAt(timeline, source.x, source.y + 4)])
+      .toBeGreaterThan(0)
+    expect(timeline.field[offsetAt(timeline, exit.x, exit.y - 4)])
+      .toBeGreaterThan(0)
+    expect(
+      timeline.field[
+        offsetAt(timeline, inactiveBottom.x, inactiveBottom.y)
+      ],
+    ).toBe(0)
+  })
+
   it('stores the retained water level at a pooled dead end', () => {
     const graph = createGraph(4, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
