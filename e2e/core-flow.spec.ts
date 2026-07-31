@@ -120,9 +120,9 @@ test('7. 공유 링크는 곧바로 플레이 화면으로 열린다', async ({ 
   await expect(shared.getByRole('button', { name: /혼자 플레이/ })).toBeVisible()
 })
 
-test('8. 공유 미로 리믹스는 다른 프로젝트 ID를 만든다', async ({ page }) => {
+test('8. 공유 미로 리믹스는 다른 프로젝트 ID를 만든다', async ({ page, baseURL }) => {
   const project = createFixture({ id: 'original-browser-id', remixAllowed: true })
-  const link = createShareLink(createSharePayload(project), 'http://127.0.0.1:4173/')
+  const link = createShareLink(createSharePayload(project), baseURL ?? 'http://127.0.0.1:4173/')
   expect(link.ok).toBe(true)
   if (!link.ok) return
   await page.goto(link.url)
@@ -288,21 +288,33 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
 })
 
 test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른다', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(90_000)
   await page.setViewportSize({ width: 360, height: 800 })
   const consoleErrors: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
   await importFixture(page)
+  await page.locator('.mobile-tabs button').filter({ hasText: '테스트' }).click()
+  await page.getByLabel('효과 품질').selectOption('low')
 
-  await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
+  await page
+    .getByRole('button', { name: '3D 물 시뮬레이션', exact: true })
+    .click()
   const stage = page.getByTestId('water-simulation-stage')
   await expect(stage).toBeVisible()
   await expect(stage).toHaveAttribute('data-start-edge', 'top')
   await expect(stage).toHaveAttribute('data-end-edge', 'bottom')
+  await expect(stage).toHaveAttribute('data-quality', 'low')
+  await expect(stage).toHaveAttribute(
+    'data-inlet-renderer',
+    'segmented-gravity-jet',
+  )
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 15_000 })
   await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
+  expect(
+    Number(await stage.getAttribute('data-inlet-drop-height')),
+  ).toBeGreaterThan(2)
 
   expect(
     await page.evaluate(

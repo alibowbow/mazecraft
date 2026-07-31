@@ -39,6 +39,8 @@ const EMPTY_STATUS: WaterPlaybackStatus = {
   totalCells: 0,
   reachedExit: false,
   complete: false,
+  inletState: 'off',
+  inletVisible: false,
 }
 
 const EMPTY_METRICS: WaterRuntimeMetrics = {
@@ -46,6 +48,7 @@ const EMPTY_METRICS: WaterRuntimeMetrics = {
   atlasHeight: 0,
   drawCalls: 0,
   triangles: 0,
+  inletDropHeight: 0,
 }
 
 const resolveQuality = (
@@ -166,6 +169,19 @@ export default function WaterSimulationDialog({
       runtimeRef.current = runtime
       setRenderState('ready')
     } catch (error) {
+      // If Three.js throws part-way through construction, its runtime instance
+      // is not available to dispose. Explicitly lose the orphaned context so a
+      // repeated open does not consume the browser's WebGL context budget.
+      const failedCanvas = mount.querySelector('canvas')
+      try {
+        const context =
+          failedCanvas?.getContext('webgl2') ??
+          failedCanvas?.getContext('webgl')
+        context?.getExtension('WEBGL_lose_context')?.loseContext()
+      } catch {
+        // Context creation itself can be the failing operation.
+      }
+      mount.replaceChildren()
       setRenderState('error')
       setErrorMessage(
         error instanceof Error
@@ -256,8 +272,17 @@ export default function WaterSimulationDialog({
           data-atlas-height={metrics.atlasHeight}
           data-draw-calls={metrics.drawCalls}
           data-triangles={metrics.triangles}
-          role="img"
-          aria-label={`${project.title}의 물 미로 실험. 청록색 물이 상단 저장조에서 연속된 통로를 따라 최하단 출구로 흐릅니다.`}
+          data-inlet-renderer="segmented-gravity-jet"
+          data-inlet-state={status.inletState}
+          data-inlet-visible={status.inletVisible}
+          data-inlet-drop-height={metrics.inletDropHeight.toFixed(2)}
+          data-elapsed-ms={Math.round(status.elapsedMs)}
+          role={renderState === 'error' ? undefined : 'img'}
+          aria-label={
+            renderState === 'error'
+              ? undefined
+              : `${project.title}의 물 미로 실험. 청록색 물이 상단 저장조에서 연속된 통로를 따라 최하단 출구로 흐릅니다.`
+          }
         >
           <div
             ref={canvasMountRef}
@@ -349,8 +374,10 @@ export default function WaterSimulationDialog({
               <select
                 aria-label="물 흐름 속도"
                 value={speed}
+                disabled={renderState !== 'ready'}
                 onChange={(event) => setSpeed(Number(event.target.value))}
               >
+                <option value={0.1}>0.1×</option>
                 <option value={0.5}>0.5×</option>
                 <option value={1}>1×</option>
                 <option value={2}>2×</option>
