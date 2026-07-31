@@ -3,6 +3,9 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  // GitHub runners use software WebGL. Serializing there prevents the two 3D
+  // quality scenarios from starving each other's lazy-loaded renderers.
+  workers: process.env.CI ? 1 : undefined,
   retries: 0,
   reporter: 'list',
   use: {
