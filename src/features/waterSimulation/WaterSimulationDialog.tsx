@@ -49,6 +49,7 @@ const EMPTY_METRICS: WaterRuntimeMetrics = {
   drawCalls: 0,
   triangles: 0,
   inletDropHeight: 0,
+  inletContactGap: 0,
 }
 
 const resolveQuality = (
@@ -261,7 +262,8 @@ export default function WaterSimulationDialog({
           className="water-simulation-stage"
           data-testid="water-simulation-stage"
           data-renderer={renderState}
-          data-fluid-renderer="timeline-surface"
+          data-fluid-renderer="displaced-timeline-surface"
+          data-water-continuity="coupled-source-surface"
           data-phase={phase}
           data-quality={resolvedQuality}
           data-start-edge="top"
@@ -272,10 +274,11 @@ export default function WaterSimulationDialog({
           data-atlas-height={metrics.atlasHeight}
           data-draw-calls={metrics.drawCalls}
           data-triangles={metrics.triangles}
-          data-inlet-renderer="segmented-gravity-jet"
+          data-inlet-renderer="coupled-gravity-jet"
           data-inlet-state={status.inletState}
           data-inlet-visible={status.inletVisible}
           data-inlet-drop-height={metrics.inletDropHeight.toFixed(2)}
+          data-inlet-contact-gap={metrics.inletContactGap.toFixed(3)}
           data-elapsed-ms={Math.round(status.elapsedMs)}
           role={renderState === 'error' ? undefined : 'img'}
           aria-label={

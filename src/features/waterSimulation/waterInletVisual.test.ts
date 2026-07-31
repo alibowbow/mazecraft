@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getWaterFlowElapsedMs,
   resolveWaterInletLayout,
+  sampleWaterHandoff,
   sampleWaterInlet,
   WATER_INLET_IMPACT_MS,
 } from './waterInletVisual'
@@ -46,6 +47,22 @@ describe('water inlet visual timing', () => {
       expect(sample.impactStrength).toBeLessThanOrEqual(1)
     }
     expect(samples.at(-1)?.state).toBe('off')
+  })
+
+  it('couples the jet, impact energy, and channel surface in one handoff', () => {
+    expect(
+      sampleWaterHandoff(WATER_INLET_IMPACT_MS - 1, 10_000).surfaceGate,
+    ).toBe(0)
+
+    for (let offset = 4; offset <= 240; offset += 4) {
+      const handoff = sampleWaterHandoff(
+        WATER_INLET_IMPACT_MS + offset,
+        10_000,
+      )
+      expect(handoff.strength).toBeGreaterThan(0.8)
+      expect(handoff.impactStrength).toBeGreaterThan(0)
+      expect(handoff.surfaceGate).toBeGreaterThan(0)
+    }
   })
 
   it('rejects invalid scene dimensions', () => {

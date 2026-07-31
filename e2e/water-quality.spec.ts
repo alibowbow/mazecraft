@@ -35,11 +35,15 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   })
   await expect(stage).toHaveAttribute(
     'data-fluid-renderer',
-    'timeline-surface',
+    'displaced-timeline-surface',
   )
   await expect(stage).toHaveAttribute(
     'data-inlet-renderer',
-    'segmented-gravity-jet',
+    'coupled-gravity-jet',
+  )
+  await expect(stage).toHaveAttribute(
+    'data-water-continuity',
+    'coupled-source-surface',
   )
   await expect(stage).toHaveAttribute('data-quality', 'high')
   await expect(canvas).toBeVisible()
@@ -84,6 +88,8 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
       let maximumY = -1
       const left = Math.floor(bitmap.width * 0.3)
       const right = Math.ceil(bitmap.width * 0.7)
+      const boardTop = Math.floor(bitmap.height * 0.27)
+      const waterMask = new Uint8Array(bitmap.width * bitmap.height)
       for (let y = 0; y < bitmap.height; y += 1) {
         for (let x = left; x < right; x += 1) {
           const offset = (y * bitmap.width + x) * 4
@@ -94,13 +100,73 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
             cyanPixels += 1
             minimumY = Math.min(minimumY, y)
             maximumY = Math.max(maximumY, y)
+            if (y >= boardTop) waterMask[y * bitmap.width + x] = 1
           }
+        }
+      }
+      // Close one-pixel antialiasing gaps, then reject cyan islands that have
+      // visually jumped ahead of the connected channel front.
+      for (let pass = 0; pass < 2; pass += 1) {
+        const next = waterMask.slice()
+        for (let y = boardTop + 1; y < bitmap.height - 1; y += 1) {
+          for (let x = left + 1; x < right - 1; x += 1) {
+            const index = y * bitmap.width + x
+            if (waterMask[index]) continue
+            if (
+              (waterMask[index - 1] && waterMask[index + 1]) ||
+              (waterMask[index - bitmap.width] &&
+                waterMask[index + bitmap.width])
+            ) {
+              next[index] = 1
+            }
+          }
+        }
+        waterMask.set(next)
+      }
+      const visited = new Uint8Array(waterMask.length)
+      const queue = new Int32Array(waterMask.length)
+      const componentSizes: number[] = []
+      for (let y = boardTop; y < bitmap.height; y += 1) {
+        for (let x = left; x < right; x += 1) {
+          const start = y * bitmap.width + x
+          if (!waterMask[start] || visited[start]) continue
+          let queueStart = 0
+          let queueEnd = 0
+          let size = 0
+          queue[queueEnd++] = start
+          visited[start] = 1
+          while (queueStart < queueEnd) {
+            const index = queue[queueStart++]
+            size += 1
+            const pointX = index % bitmap.width
+            const pointY = Math.floor(index / bitmap.width)
+            const neighbors = [
+              pointX > left ? index - 1 : -1,
+              pointX + 1 < right ? index + 1 : -1,
+              pointY > boardTop ? index - bitmap.width : -1,
+              pointY + 1 < bitmap.height ? index + bitmap.width : -1,
+            ]
+            for (const neighbor of neighbors) {
+              if (
+                neighbor >= 0 &&
+                waterMask[neighbor] &&
+                !visited[neighbor]
+              ) {
+                visited[neighbor] = 1
+                queue[queueEnd++] = neighbor
+              }
+            }
+          }
+          componentSizes.push(size)
         }
       }
       return {
         cyanPixels,
         verticalSpan: maximumY < 0 ? 0 : maximumY - minimumY,
         height: bitmap.height,
+        significantBoardComponents: componentSizes.filter(
+          (size) => size >= 12,
+        ).length,
       }
     }, frame.toString('base64'))
   await page.getByLabel('물 흐름 속도').selectOption('0.1')
@@ -109,6 +175,9 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   expect(
     Number(await stage.getAttribute('data-inlet-drop-height')),
   ).toBeGreaterThan(2)
+  expect(
+    Number(await stage.getAttribute('data-inlet-contact-gap')),
+  ).toBeLessThanOrEqual(0.001)
 
   await expect
     .poll(async () => Number(await stage.getAttribute('data-elapsed-ms')), {
@@ -128,6 +197,7 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   const waterPixels = await analyzeCyanWater(impactFrame)
   expect(waterPixels.cyanPixels).toBeGreaterThan(1_000)
   expect(waterPixels.verticalSpan).toBeGreaterThan(waterPixels.height * 0.3)
+  expect(waterPixels.significantBoardComponents).toBe(1)
   await page.waitForTimeout(320)
   const pausedFrame = await captureStage()
   expect(pausedFrame.equals(impactFrame)).toBe(true)

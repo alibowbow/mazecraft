@@ -308,13 +308,20 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
   await expect(stage).toHaveAttribute('data-quality', 'low')
   await expect(stage).toHaveAttribute(
     'data-inlet-renderer',
-    'segmented-gravity-jet',
+    'coupled-gravity-jet',
+  )
+  await expect(stage).toHaveAttribute(
+    'data-water-continuity',
+    'coupled-source-surface',
   )
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 15_000 })
   await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
   expect(
     Number(await stage.getAttribute('data-inlet-drop-height')),
   ).toBeGreaterThan(2)
+  expect(
+    Number(await stage.getAttribute('data-inlet-contact-gap')),
+  ).toBeLessThanOrEqual(0.001)
 
   expect(
     await page.evaluate(
