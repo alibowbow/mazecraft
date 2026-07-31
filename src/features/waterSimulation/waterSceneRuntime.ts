@@ -18,6 +18,14 @@ import type {
   WaterCellSchedule,
   WaterSimulationModel,
 } from './waterModel'
+import {
+  getWaterFlowElapsedMs,
+  resolveWaterInletLayout,
+  sampleWaterInlet,
+  WATER_INLET_IMPACT_MS,
+  type WaterInletLayout,
+  type WaterInletState,
+} from './waterInletVisual'
 
 export interface WaterPlaybackStatus {
   elapsedMs: number
@@ -25,6 +33,8 @@ export interface WaterPlaybackStatus {
   totalCells: number
   reachedExit: boolean
   complete: boolean
+  inletState: WaterInletState
+  inletVisible: boolean
 }
 
 export interface WaterRuntimeMetrics {
@@ -32,6 +42,7 @@ export interface WaterRuntimeMetrics {
   atlasHeight: number
   drawCalls: number
   triangles: number
+  inletDropHeight: number
 }
 
 export type ResolvedWaterQuality = 'low' | 'high'
@@ -77,6 +88,9 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
   uniform float uDrainStart;
   uniform float uDrainDuration;
   uniform vec2 uBoardSize;
+  uniform vec2 uImpactCenter;
+  uniform float uImpactStrength;
+  uniform float uFlowGate;
   uniform vec3 uCameraPosition;
   varying vec2 vUv;
   varying vec3 vWorldPosition;
@@ -109,18 +123,18 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
     float retained = clamp(schedule.b, 0.0, 1.0);
     vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
     vec2 channelUv = vUv * uBoardSize;
-    float frontNoise = valueNoise(
-      channelUv * 3.7 + flow * uTime * 0.00012
-    );
+    float frontNoise =
+      valueNoise(channelUv * 1.55 + flow * uTime * 0.00016) * 0.68 +
+      valueNoise(channelUv * 0.42 - flow * uTime * 0.00009) * 0.32;
     float frontRipple = sin(
-      dot(channelUv, vec2(-flow.y, flow.x) * 15.0) +
-      schedule.a * 6.283
-    ) * 22.0;
+      dot(channelUv, vec2(-flow.y, flow.x) * 4.8) +
+      valueNoise(channelUv * 0.31) * 3.4
+    ) * 38.0;
     float frontTime =
-      uTime + (frontNoise - 0.5) * 105.0 + frontRipple;
+      uTime + (frontNoise - 0.5) * 210.0 + frontRipple;
 
-    float wet = smoothstep(arrival - 18.0, arrival + 92.0, frontTime);
-    float fill = smoothstep(arrival, fullAt, frontTime);
+    float wet = smoothstep(arrival - 48.0, arrival + 145.0, frontTime);
+    float fill = smoothstep(arrival + 20.0, fullAt + 90.0, frontTime);
     float localDrainStart = max(fullAt, uDrainStart);
     float draining = smoothstep(
       localDrainStart,
@@ -132,21 +146,47 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
 
     float frontAge = max(0.0, frontTime - arrival);
     float leadingFoam =
-      exp(-pow(frontAge / 82.0, 2.0)) *
+      exp(-pow(frontAge / 108.0, 2.0)) *
       step(arrival, uTime) *
       (1.0 - draining);
 
     float directionalWave = sin(
       dot(channelUv, flow * 11.0) -
       uTime * 0.0085 +
-      schedule.a * 8.0
+      valueNoise(channelUv * 0.22) * 4.0
     );
     float crossWave = sin(
       dot(channelUv, vec2(-flow.y, flow.x) * 17.0) +
       uTime * 0.005
     );
-    float noise = valueNoise(channelUv * 3.1 + flow * uTime * 0.00075);
-    float surface = directionalWave * 0.46 + crossWave * 0.22 + noise * 0.74;
+    float broadNoise = valueNoise(
+      channelUv * 0.58 + flow * uTime * 0.00022
+    );
+    float fineNoise = valueNoise(
+      channelUv * 2.25 - flow * uTime * 0.00072
+    );
+    float flowStreak = pow(
+      max(
+        0.0,
+        sin(
+          dot(channelUv, flow * 5.2) - uTime * 0.008 +
+          broadNoise * 4.6
+        ) * 0.5 + 0.5
+      ),
+      6.0
+    );
+    float impactDistance = length((vUv - uImpactCenter) * uBoardSize);
+    float impactPhase = fract(uTime * 0.00128);
+    float impactRing = exp(-pow(
+      (impactDistance - (0.08 + impactPhase * 0.42)) / 0.045,
+      2.0
+    )) * (1.0 - impactPhase) * uImpactStrength;
+    float impactChurn = sin(
+      impactDistance * 34.0 - uTime * 0.022
+    ) * exp(-impactDistance * 5.4) * uImpactStrength;
+    float surface = directionalWave * 0.44 + crossWave * 0.2 +
+      (broadNoise - 0.5) * 1.15 + (fineNoise - 0.5) * 0.32 +
+      impactChurn * 0.52;
     vec3 normal = normalize(vec3(
       dFdx(surface) * 1.8,
       dFdy(surface) * 1.8,
@@ -156,7 +196,7 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
     float fresnel = pow(1.0 - clamp(dot(normal, viewDirection), 0.0, 1.0), 2.5);
     float studioHighlight = pow(
       max(dot(normal, normalize(vec3(-0.35, 0.58, 0.74))), 0.0),
-      18.0
+      11.0
     );
 
     vec3 shallowCyan = vec3(0.06, 0.82, 0.93);
@@ -164,18 +204,24 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
     vec3 bodyColor = mix(
       shallowCyan,
       deepCyan,
-      clamp(0.36 + level * 0.42 + noise * 0.12, 0.0, 1.0)
+      clamp(0.33 + level * 0.4 + broadNoise * 0.18, 0.0, 1.0)
     );
+    bodyColor += vec3(0.05, 0.31, 0.39) * (broadNoise - 0.5) * 0.72;
+    bodyColor += vec3(0.55, 0.93, 1.0) * flowStreak * 0.2;
     bodyColor += vec3(0.18, 0.50, 0.66) * fresnel;
-    bodyColor += vec3(0.78, 0.96, 1.0) * studioHighlight * 0.72;
+    bodyColor += vec3(0.78, 0.96, 1.0) * studioHighlight * 0.46;
     bodyColor = mix(bodyColor, vec3(0.82, 0.985, 1.0), leadingFoam * 0.82);
+    bodyColor = mix(bodyColor, vec3(0.28, 0.88, 0.96), impactRing * 0.38);
 
     float contactRim = smoothstep(0.08, 0.5, mask) -
       smoothstep(0.54, 0.96, mask);
     bodyColor += vec3(0.03, 0.26, 0.46) * contactRim * 0.7;
 
     float alpha = mask * visibleWater * mix(0.18, 0.91, level);
+    alpha *= mix(0.88, 1.04, broadNoise);
     alpha = max(alpha, leadingFoam * mask * 0.9);
+    alpha = max(alpha, impactRing * mask * 0.94);
+    alpha *= uFlowGate;
     if (alpha < 0.018) discard;
     gl_FragColor = vec4(bodyColor, alpha);
   }
@@ -321,8 +367,8 @@ function createWaterSurfaceMaterial(timeline: WaterSurfaceTimeline) {
     THREE.RGBAFormat,
     THREE.FloatType,
   )
-  schedule.minFilter = THREE.NearestFilter
-  schedule.magFilter = THREE.NearestFilter
+  schedule.minFilter = THREE.LinearFilter
+  schedule.magFilter = THREE.LinearFilter
   schedule.generateMipmaps = false
   schedule.flipY = false
   schedule.needsUpdate = true
@@ -348,6 +394,9 @@ function createWaterSurfaceMaterial(timeline: WaterSurfaceTimeline) {
       uDrainStart: { value: Number.MAX_SAFE_INTEGER },
       uDrainDuration: { value: 1 },
       uBoardSize: { value: new THREE.Vector2(1, 1) },
+      uImpactCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uImpactStrength: { value: 0 },
+      uFlowGate: { value: 0 },
       uCameraPosition: { value: new THREE.Vector3() },
     },
     vertexShader: WATER_VERTEX_SHADER,
@@ -358,6 +407,114 @@ function createWaterSurfaceMaterial(timeline: WaterSurfaceTimeline) {
     toneMapped: true,
   })
   return { material, schedule, field }
+}
+
+interface FallingJetGeometryData {
+  ringCount: number
+  radialSegments: number
+}
+
+function createFallingJetGeometry(
+  ringCount: number,
+  radialSegments: number,
+): THREE.BufferGeometry {
+  const vertexCount = ringCount * radialSegments
+  const positions = new Float32Array(vertexCount * 3)
+  const normals = new Float32Array(vertexCount * 3)
+  const uvs = new Float32Array(vertexCount * 2)
+  const indices: number[] = []
+
+  for (let ring = 0; ring < ringCount; ring += 1) {
+    const verticalUv = ring / Math.max(1, ringCount - 1)
+    for (let segment = 0; segment < radialSegments; segment += 1) {
+      const vertexIndex = ring * radialSegments + segment
+      uvs[vertexIndex * 2] = segment / radialSegments
+      uvs[vertexIndex * 2 + 1] = verticalUv
+      if (ring < ringCount - 1) {
+        const nextSegment = (segment + 1) % radialSegments
+        const nextRing = vertexIndex + radialSegments
+        const nextRingSegment = ring * radialSegments + nextSegment + radialSegments
+        indices.push(
+          vertexIndex,
+          nextRing,
+          ring * radialSegments + nextSegment,
+          ring * radialSegments + nextSegment,
+          nextRing,
+          nextRingSegment,
+        )
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  const positionAttribute = new THREE.BufferAttribute(positions, 3)
+  const normalAttribute = new THREE.BufferAttribute(normals, 3)
+  positionAttribute.setUsage(THREE.DynamicDrawUsage)
+  normalAttribute.setUsage(THREE.DynamicDrawUsage)
+  geometry.setAttribute('position', positionAttribute)
+  geometry.setAttribute('normal', normalAttribute)
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geometry.setIndex(indices)
+  geometry.userData.fallingJet = { ringCount, radialSegments }
+  return geometry
+}
+
+function updateFallingJetGeometry(
+  geometry: THREE.BufferGeometry,
+  dropHeight: number,
+  elapsedMs: number,
+  frontProgress: number,
+  strength: number,
+  radiusScale = 1,
+) {
+  const data = geometry.userData.fallingJet as FallingJetGeometryData
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute
+  const normal = geometry.getAttribute('normal') as THREE.BufferAttribute
+  const time = elapsedMs / 1_000
+  const visibleFront = Math.max(0.001, frontProgress)
+
+  for (let ring = 0; ring < data.ringCount; ring += 1) {
+    const streamProgress = ring / Math.max(1, data.ringCount - 1)
+    const isAheadOfFront = streamProgress > visibleFront
+    const renderedProgress = isAheadOfFront ? visibleFront : streamProgress
+    const lowerBreakup = smoothstep(0.66, 1, renderedProgress)
+    const centerX =
+      Math.sin(time * 7.7 - renderedProgress * 10.8) *
+        (0.016 + renderedProgress * 0.024) +
+      Math.sin(time * 13.1 - renderedProgress * 19.4) * 0.009
+    const centerZ =
+      Math.sin(time * 8.9 - renderedProgress * 8.2) *
+      (0.009 + renderedProgress * 0.008)
+    const radiusNoise =
+      Math.sin(time * 9.8 - renderedProgress * 15.2) * 0.065 +
+      Math.sin(time * 16.7 + renderedProgress * 21.0) * 0.032
+    const baseRadius = THREE.MathUtils.lerp(0.145, 0.098, renderedProgress)
+    const pinch = 1 - lowerBreakup * (0.08 + Math.sin(time * 12 + ring) * 0.05)
+    const radius = isAheadOfFront
+      ? 0.0008
+      : baseRadius *
+        radiusScale *
+        (1 + radiusNoise) *
+        pinch *
+        (0.8 + strength * 0.2)
+    const y = -dropHeight * renderedProgress
+
+    for (let segment = 0; segment < data.radialSegments; segment += 1) {
+      const vertexIndex = ring * data.radialSegments + segment
+      const angle = (segment / data.radialSegments) * Math.PI * 2
+      const cosine = Math.cos(angle)
+      const sine = Math.sin(angle)
+      position.setXYZ(
+        vertexIndex,
+        centerX + cosine * radius,
+        y,
+        centerZ + sine * radius,
+      )
+      normal.setXYZ(vertexIndex, cosine, 0.08 * lowerBreakup, sine)
+    }
+  }
+  position.needsUpdate = true
+  normal.needsUpdate = true
 }
 
 export class WaterSceneRuntime {
@@ -372,8 +529,11 @@ export class WaterSceneRuntime {
   private readonly scheduleTexture: THREE.DataTexture
   private readonly fieldTexture: THREE.DataTexture
   private readonly inletJet: THREE.Mesh
+  private readonly inletHighlight: THREE.Mesh
   private readonly outletJet: THREE.Mesh
   private readonly reservoirWater: THREE.Mesh
+  private readonly impactPool: THREE.Mesh
+  private readonly impactRings: THREE.Mesh[]
   private readonly inletDroplets: THREE.InstancedMesh
   private readonly outletDroplets: THREE.InstancedMesh
   private readonly splashDroplets: THREE.InstancedMesh
@@ -387,10 +547,13 @@ export class WaterSceneRuntime {
   private readonly initialTarget = new THREE.Vector3()
   private readonly sourcePosition: { x: number; y: number }
   private readonly exitPosition: { x: number; y: number }
+  private readonly inletLayout: WaterInletLayout
   private readonly reachableCells: WaterCellSchedule[]
   private readonly environmentTarget: THREE.WebGLRenderTarget
   private readonly pmremGenerator: THREE.PMREMGenerator
   private readonly completeAt: number
+  private readonly introCameraPosition = new THREE.Vector3()
+  private readonly introTarget = new THREE.Vector3()
   private frameId = 0
   private elapsedMs = 0
   private speed = 1
@@ -403,6 +566,10 @@ export class WaterSceneRuntime {
   private lastParticleAt = -Infinity
   private lastCameraInteractionAt = 0
   private metricsEmitted = false
+  private cameraIntroCancelled = false
+  private lastVisualElapsedMs = -1
+  private needsRender = true
+  private lastStatusSignature = ''
 
   constructor(
     private readonly mount: HTMLDivElement,
@@ -451,8 +618,12 @@ export class WaterSceneRuntime {
       project.startCell,
     )
     this.exitPosition = cellScenePosition(project.mazeGraph, project.endCell)
+    this.inletLayout = resolveWaterInletLayout(
+      project.mazeGraph.rows,
+      this.sourcePosition.y,
+    )
     this.timeline = buildWaterSurfaceTimeline(project.mazeGraph, model, {
-      pixelsPerCell: quality === 'high' ? 12 : 5,
+      pixelsPerCell: quality === 'high' ? 16 : 5,
       maxTextureSize: 1_024,
     })
     const waterSurface = createWaterSurfaceMaterial(this.timeline)
@@ -462,6 +633,12 @@ export class WaterSceneRuntime {
     this.waterSurfaceMaterial.uniforms.uBoardSize.value.set(
       project.mazeGraph.cols,
       project.mazeGraph.rows,
+    )
+    this.waterSurfaceMaterial.uniforms.uImpactCenter.value.set(
+      (this.sourcePosition.x + project.mazeGraph.cols / 2) /
+        project.mazeGraph.cols,
+      (this.sourcePosition.y + project.mazeGraph.rows / 2) /
+        project.mazeGraph.rows,
     )
     this.waterSurfaceMaterial.uniforms.uDrainStart.value =
       model.exitArrivalMs === null
@@ -483,8 +660,8 @@ export class WaterSceneRuntime {
           left.index - right.index,
       )
     this.completeAt = Math.max(
-      model.totalDurationMs,
-      (model.exitArrivalMs ?? 0) + 1_450,
+      model.totalDurationMs + WATER_INLET_IMPACT_MS,
+      (model.exitArrivalMs ?? 0) + WATER_INLET_IMPACT_MS + 1_450,
     )
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
@@ -502,6 +679,7 @@ export class WaterSceneRuntime {
     this.controls.maxPolarAngle = Math.PI / 2 + 0.14
     this.controls.addEventListener('start', () => {
       this.lastCameraInteractionAt = performance.now()
+      this.cameraIntroCancelled = true
     })
 
     this.addEnvironment()
@@ -509,8 +687,11 @@ export class WaterSceneRuntime {
     this.addWaterSurface()
     const streams = this.addReservoirAndStreams()
     this.inletJet = streams.inletJet
+    this.inletHighlight = streams.inletHighlight
     this.outletJet = streams.outletJet
     this.reservoirWater = streams.reservoirWater
+    this.impactPool = streams.impactPool
+    this.impactRings = streams.impactRings
 
     const particleSystems = this.addParticleSystems()
     this.inletDroplets = particleSystems.inletDroplets
@@ -535,6 +716,7 @@ export class WaterSceneRuntime {
     this.requestedPaused = paused
     this.paused = paused || document.hidden
     this.clock.getDelta()
+    this.needsRender = true
   }
 
   setSpeed(speed: number) {
@@ -547,20 +729,29 @@ export class WaterSceneRuntime {
     this.paused = false
     this.requestedPaused = false
     this.waterSurfaceMaterial.uniforms.uTime.value = 0
+    this.lastVisualElapsedMs = -1
+    this.lastStatusAt = -Infinity
+    this.lastStatusSignature = ''
+    this.cameraIntroCancelled = this.reducedMotion
     this.resetEffects()
+    this.fitCamera()
     this.onStatus({
       elapsedMs: 0,
       filledCells: 0,
       totalCells: this.reachableCells.length,
       reachedExit: false,
       complete: false,
+      inletState: 'off',
+      inletVisible: false,
     })
   }
 
   resetCamera() {
+    this.cameraIntroCancelled = true
     this.camera.position.copy(this.initialCameraPosition)
     this.controls.target.copy(this.initialTarget)
     this.controls.update()
+    this.needsRender = true
   }
 
   dispose() {
@@ -770,7 +961,7 @@ export class WaterSceneRuntime {
         new THREE.MeshPhysicalMaterial({
           color: 0xf4fdff,
           transparent: true,
-          opacity: 0.14,
+          opacity: 0.085,
           transmission: 0.92,
           ior: 1.49,
           thickness: 0.06,
@@ -791,9 +982,19 @@ export class WaterSceneRuntime {
       'S',
       this.project.visualTheme.startColor,
     )
-    startLabel.position.set(this.sourcePosition.x, this.sourcePosition.y, 0.76)
+    startLabel.scale.set(0.42, 0.42, 1)
+    startLabel.position.set(
+      this.sourcePosition.x - 0.3,
+      this.sourcePosition.y + 0.27,
+      0.76,
+    )
     const endLabel = createLabelSprite('E', this.project.visualTheme.endColor)
-    endLabel.position.set(this.exitPosition.x, this.exitPosition.y, 0.76)
+    endLabel.scale.set(0.42, 0.42, 1)
+    endLabel.position.set(
+      this.exitPosition.x + 0.3,
+      this.exitPosition.y - 0.27,
+      0.76,
+    )
     this.scene.add(startLabel, endLabel)
   }
 
@@ -810,16 +1011,18 @@ export class WaterSceneRuntime {
 
   private createWaterParticleMaterial() {
     return new THREE.MeshPhysicalMaterial({
-      color: 0x23baf2,
+      color: 0x08baf2,
+      emissive: 0x0088b8,
+      emissiveIntensity: 0.18,
       roughness: 0.05,
       metalness: 0,
-      transmission: this.quality === 'high' ? 0.26 : 0,
+      transmission: this.quality === 'high' ? 0.12 : 0,
       ior: 1.333,
       thickness: 0.14,
       clearcoat: 1,
       clearcoatRoughness: 0.03,
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.95,
       depthWrite: false,
       envMapIntensity: 1.3,
     })
@@ -827,8 +1030,7 @@ export class WaterSceneRuntime {
 
   private addReservoirAndStreams() {
     const graph = this.project.mazeGraph
-    const topEdge = graph.rows / 2
-    const reservoirY = topEdge + 0.72
+    const { nozzleY, reservoirY, impactY, dropHeight } = this.inletLayout
     const glassMaterial = new THREE.MeshPhysicalMaterial({
       color: 0xf6fdff,
       transparent: true,
@@ -842,7 +1044,7 @@ export class WaterSceneRuntime {
       envMapIntensity: 1.25,
     })
     const reservoir = new THREE.Mesh(
-      new RoundedBoxGeometry(1.5, 0.72, 0.5, 4, 0.12),
+      new RoundedBoxGeometry(1.72, 0.88, 0.56, 4, 0.13),
       glassMaterial,
     )
     reservoir.position.set(this.sourcePosition.x, reservoirY, 0.23)
@@ -851,12 +1053,12 @@ export class WaterSceneRuntime {
 
     const waterMaterial = this.createWaterParticleMaterial()
     const reservoirWater = new THREE.Mesh(
-      new RoundedBoxGeometry(1.25, 0.4, 0.3, 4, 0.09),
+      new RoundedBoxGeometry(1.46, 0.48, 0.34, 4, 0.09),
       waterMaterial,
     )
     reservoirWater.position.set(
       this.sourcePosition.x,
-      reservoirY - 0.06,
+      reservoirY - 0.08,
       0.24,
     )
     reservoirWater.renderOrder = 6
@@ -871,28 +1073,53 @@ export class WaterSceneRuntime {
     })
     const nozzle = new THREE.Mesh(
       new THREE.CylinderGeometry(
-        0.095,
-        0.12,
-        0.38,
+        0.11,
+        0.14,
+        0.44,
         this.quality === 'high' ? 20 : 10,
       ),
       nozzleMaterial,
     )
-    nozzle.position.set(this.sourcePosition.x, topEdge + 0.2, 0.29)
+    nozzle.position.set(this.sourcePosition.x, nozzleY + 0.2, 0.34)
     nozzle.castShadow = this.quality === 'high'
     this.scene.add(nozzle)
 
+    const inletJetMaterial = new THREE.MeshStandardMaterial({
+      color: 0x18bfe3,
+      roughness: 0.42,
+      metalness: 0,
+      emissive: 0x006a80,
+      emissiveIntensity: 0.1,
+      envMapIntensity: 0.22,
+      depthWrite: true,
+    })
     const inletJet = new THREE.Mesh(
-      new THREE.CylinderGeometry(
-        0.055,
-        0.095,
-        1,
-        this.quality === 'high' ? 18 : 8,
+      createFallingJetGeometry(
+        this.quality === 'high' ? 28 : 18,
+        this.quality === 'high' ? 14 : 8,
       ),
-      waterMaterial.clone(),
+      inletJetMaterial,
     )
+    inletJet.position.set(this.sourcePosition.x, nozzleY, 0.36)
+    inletJet.frustumCulled = false
     inletJet.renderOrder = 8
     this.scene.add(inletJet)
+
+    const inletHighlight = new THREE.Mesh(
+      inletJet.geometry.clone(),
+      new THREE.MeshBasicMaterial({
+        color: 0xd6faff,
+        transparent: true,
+        opacity: 0.11,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    )
+    inletHighlight.position.copy(inletJet.position)
+    inletHighlight.frustumCulled = false
+    inletHighlight.renderOrder = 9
+    this.scene.add(inletHighlight)
 
     const outletJet = new THREE.Mesh(
       new THREE.CylinderGeometry(
@@ -904,7 +1131,49 @@ export class WaterSceneRuntime {
       waterMaterial.clone(),
     )
     outletJet.renderOrder = 8
+    outletJet.frustumCulled = false
     this.scene.add(outletJet)
+
+    const impactPool = new THREE.Mesh(
+      new THREE.CircleGeometry(0.34, this.quality === 'high' ? 40 : 20),
+      new THREE.MeshStandardMaterial({
+        color: 0x1bbfdf,
+        roughness: 0.38,
+        emissive: 0x006a80,
+        emissiveIntensity: 0.08,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }),
+    )
+    impactPool.position.set(this.sourcePosition.x, impactY, 0.205)
+    impactPool.renderOrder = 7
+    this.scene.add(impactPool)
+
+    const impactRings = Array.from({ length: 3 }, (_, index) => {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(
+          0.15,
+          0.018 + index * 0.004,
+          this.quality === 'high' ? 8 : 5,
+          this.quality === 'high' ? 40 : 20,
+        ),
+        new THREE.MeshBasicMaterial({
+          color: index === 0 ? 0x8cecff : 0x36c9e6,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+        }),
+      )
+      ring.position.set(this.sourcePosition.x, impactY, 0.235 + index * 0.003)
+      ring.renderOrder = 10
+      this.scene.add(ring)
+      return ring
+    })
+
+    updateFallingJetGeometry(inletJet.geometry, dropHeight, 0, 0, 0)
+    updateFallingJetGeometry(inletHighlight.geometry, dropHeight, 0, 0, 0, 0.34)
 
     const tray = new THREE.Mesh(
       new RoundedBoxGeometry(1.25, 0.23, 0.5, 4, 0.08),
@@ -923,7 +1192,14 @@ export class WaterSceneRuntime {
     tray.castShadow = this.quality === 'high'
     this.scene.add(tray)
 
-    return { inletJet, outletJet, reservoirWater }
+    return {
+      inletJet,
+      inletHighlight,
+      outletJet,
+      reservoirWater,
+      impactPool,
+      impactRings,
+    }
   }
 
   private addParticleSystems() {
@@ -933,12 +1209,12 @@ export class WaterSceneRuntime {
       this.quality === 'high' ? 9 : 5,
     )
     const waterMaterial = this.createWaterParticleMaterial()
-    const inletCount = this.quality === 'high' ? 34 : 12
+    const inletCount = this.quality === 'high' ? 46 : 14
     const outletCount = this.quality === 'high' ? 42 : 14
-    const splashCount = this.quality === 'high' ? 38 : 10
+    const splashCount = this.quality === 'high' ? 64 : 16
     const bubbleCount = Math.min(
-      this.quality === 'high' ? 180 : 48,
-      Math.max(12, this.reachableCells.length),
+      this.quality === 'high' ? 62 : 22,
+      Math.max(10, Math.ceil(this.reachableCells.length * 0.48)),
     )
 
     const inletDroplets = new THREE.InstancedMesh(
@@ -947,6 +1223,7 @@ export class WaterSceneRuntime {
       inletCount,
     )
     inletDroplets.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    inletDroplets.frustumCulled = false
     inletDroplets.renderOrder = 9
     this.scene.add(inletDroplets)
 
@@ -956,29 +1233,36 @@ export class WaterSceneRuntime {
       outletCount,
     )
     outletDroplets.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    outletDroplets.frustumCulled = false
     outletDroplets.renderOrder = 9
     this.scene.add(outletDroplets)
 
-    const foamMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xd9fbff,
-      roughness: 0.1,
-      transmission: this.quality === 'high' ? 0.18 : 0,
+    const foamMaterial = new THREE.MeshStandardMaterial({
+      color: 0x62dceb,
+      roughness: 0.35,
+      metalness: 0,
+      emissive: 0x006d7c,
+      emissiveIntensity: 0.07,
       transparent: true,
-      opacity: 0.84,
+      opacity: 0.9,
       depthWrite: false,
-      clearcoat: 1,
     })
     const splashDroplets = new THREE.InstancedMesh(
-      dropletGeometry.clone(),
+      new THREE.SphereGeometry(
+        0.105,
+        this.quality === 'high' ? 12 : 6,
+        this.quality === 'high' ? 9 : 5,
+      ),
       foamMaterial,
       splashCount,
     )
     splashDroplets.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    splashDroplets.frustumCulled = false
     splashDroplets.renderOrder = 11
     this.scene.add(splashDroplets)
 
     const bubbleGeometry = new THREE.SphereGeometry(
-      0.025,
+      0.016,
       this.quality === 'high' ? 8 : 5,
       this.quality === 'high' ? 6 : 4,
     )
@@ -987,7 +1271,7 @@ export class WaterSceneRuntime {
       roughness: 0.04,
       transmission: this.quality === 'high' ? 0.72 : 0,
       transparent: true,
-      opacity: 0.62,
+      opacity: 0.42,
       depthWrite: false,
       clearcoat: 1,
     })
@@ -997,6 +1281,7 @@ export class WaterSceneRuntime {
       bubbleCount,
     )
     bubbles.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    bubbles.frustumCulled = false
     bubbles.renderOrder = 12
     this.scene.add(bubbles)
 
@@ -1037,9 +1322,33 @@ export class WaterSceneRuntime {
   }
 
   private resetEffects() {
-    this.inletJet.scale.set(1, 0.001, 1)
+    this.inletJet.visible = false
+    this.inletHighlight.visible = false
+    updateFallingJetGeometry(
+      this.inletJet.geometry,
+      this.inletLayout.dropHeight,
+      0,
+      0,
+      0,
+    )
+    updateFallingJetGeometry(
+      this.inletHighlight.geometry,
+      this.inletLayout.dropHeight,
+      0,
+      0,
+      0,
+      0.34,
+    )
     this.outletJet.scale.set(1, 0.001, 1)
     this.outletJet.visible = false
+    this.impactPool.visible = false
+    ;(this.impactPool.material as THREE.MeshStandardMaterial).opacity = 0
+    for (const ring of this.impactRings) {
+      ring.visible = false
+      ;(ring.material as THREE.MeshBasicMaterial).opacity = 0
+    }
+    this.waterSurfaceMaterial.uniforms.uImpactStrength.value = 0
+    this.waterSurfaceMaterial.uniforms.uFlowGate.value = 0
     for (let index = 0; index < this.inletSeeds.length; index += 1) {
       this.hideParticle(this.inletDroplets, index)
     }
@@ -1058,34 +1367,75 @@ export class WaterSceneRuntime {
     this.bubbles.instanceMatrix.needsUpdate = true
   }
 
-  private updateStreams(now: number) {
+  private updateStreams() {
     const graph = this.project.mazeGraph
-    const topEdge = graph.rows / 2
-    const pourIn = smoothstep(0, 360, this.elapsedMs)
-    const pourOut = 1 - smoothstep(this.completeAt - 480, this.completeAt, this.elapsedMs)
-    const inletStrength = pourIn * pourOut
-    const inletLength = 0.7 * inletStrength
-    this.inletJet.scale.set(
-      0.9 + Math.sin(now * 0.012) * 0.08,
-      Math.max(0.001, inletLength),
-      1.1 - Math.sin(now * 0.012) * 0.08,
+    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
+    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
+    updateFallingJetGeometry(
+      this.inletJet.geometry,
+      this.inletLayout.dropHeight,
+      this.elapsedMs,
+      inlet.frontProgress,
+      inlet.strength,
     )
-    this.inletJet.position.set(
-      this.sourcePosition.x,
-      topEdge + 0.01 - inletLength / 2,
-      0.3,
+    updateFallingJetGeometry(
+      this.inletHighlight.geometry,
+      this.inletLayout.dropHeight,
+      this.elapsedMs,
+      inlet.frontProgress,
+      inlet.strength,
+      0.34,
     )
-    this.inletJet.visible = inletStrength > 0.01
+    this.inletJet.visible = inlet.strength > 0.01
+    this.inletHighlight.visible = inlet.strength > 0.01
+    this.waterSurfaceMaterial.uniforms.uImpactStrength.value =
+      inlet.impactStrength
+    this.waterSurfaceMaterial.uniforms.uFlowGate.value = smoothstep(
+      WATER_INLET_IMPACT_MS,
+      WATER_INLET_IMPACT_MS + 220,
+      this.elapsedMs,
+    )
+
+    const impactPulse =
+      inlet.impactStrength *
+      (0.9 + Math.sin(flowElapsedMs * 0.018) * 0.1)
+    this.impactPool.visible = impactPulse > 0.01
+    this.impactPool.scale.set(
+      0.8 + impactPulse * 0.34,
+      0.58 + impactPulse * 0.18,
+      1,
+    )
+    ;(this.impactPool.material as THREE.MeshStandardMaterial).opacity =
+      impactPulse * 0.24
+
+    for (let index = 0; index < this.impactRings.length; index += 1) {
+      const ring = this.impactRings[index]
+      const phase =
+        ((Math.max(0, flowElapsedMs) * 0.0013 + index / 3) % 1 + 1) % 1
+      const burstFade = 1 - smoothstep(
+        WATER_INLET_IMPACT_MS + 720,
+        WATER_INLET_IMPACT_MS + 1_900,
+        this.elapsedMs,
+      )
+      const ringStrength =
+        inlet.impactStrength *
+        (0.18 + burstFade * 0.82) *
+        Math.sin(phase * Math.PI) *
+        (1 - phase * 0.68)
+      ring.visible = ringStrength > 0.015
+      ring.scale.setScalar(0.55 + phase * 2.15)
+      ;(ring.material as THREE.MeshBasicMaterial).opacity = ringStrength * 0.055
+    }
 
     const outletStart = this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER
     const outletStrength =
-      smoothstep(outletStart, outletStart + 320, this.elapsedMs) *
+      smoothstep(outletStart, outletStart + 320, flowElapsedMs) *
       (1 - smoothstep(this.completeAt - 320, this.completeAt, this.elapsedMs))
     const outletLength = 0.88 * outletStrength
     this.outletJet.scale.set(
-      0.9 + Math.sin(now * 0.009) * 0.1,
+      0.9 + Math.sin(flowElapsedMs * 0.009) * 0.1,
       Math.max(0.001, outletLength),
-      1.1 - Math.sin(now * 0.009) * 0.1,
+      1.1 - Math.sin(flowElapsedMs * 0.009) * 0.1,
     )
     this.outletJet.position.set(
       this.exitPosition.x,
@@ -1094,7 +1444,7 @@ export class WaterSceneRuntime {
     )
     this.outletJet.visible = outletStrength > 0.01
 
-    const reservoirPulse = 1 + Math.sin(now * 0.004) * 0.025
+    const reservoirPulse = 1 + Math.sin(this.elapsedMs * 0.004) * 0.025
     const reservoirLevel = 1 - smoothstep(
       this.completeAt - 620,
       this.completeAt,
@@ -1107,32 +1457,35 @@ export class WaterSceneRuntime {
     )
   }
 
-  private updateInletParticles(now: number) {
-    const graph = this.project.mazeGraph
-    const topEdge = graph.rows / 2
-    const pourStrength =
-      smoothstep(0, 260, this.elapsedMs) *
-      (1 - smoothstep(this.completeAt - 420, this.completeAt, this.elapsedMs))
+  private updateInletParticles() {
+    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
     for (let index = 0; index < this.inletSeeds.length; index += 1) {
       const seed = this.inletSeeds[index]
-      if (pourStrength < 0.02) {
+      if (inlet.strength < 0.02) {
         this.hideParticle(this.inletDroplets, index)
         continue
       }
-      const phase = (this.elapsedMs * 0.0024 + seed.phase) % 1
-      const y = topEdge + 0.14 - phase * 0.86
+      const phase = (this.elapsedMs * 0.00182 + seed.phase) % 1
+      if (phase > inlet.frontProgress + 0.035) {
+        this.hideParticle(this.inletDroplets, index)
+        continue
+      }
+      const gravityProgress = phase * phase
+      const y =
+        this.inletLayout.nozzleY -
+        gravityProgress * this.inletLayout.dropHeight
       this.particleDummy.position.set(
         this.sourcePosition.x +
-          seed.drift * 0.07 +
-          Math.sin(now * 0.007 + index) * 0.018,
+          seed.drift * (0.022 + gravityProgress * 0.09) +
+          Math.sin(this.elapsedMs * 0.007 + index) * 0.014,
         y,
-        0.28 + seed.depth * 0.075,
+        0.36 + seed.depth * (0.045 + gravityProgress * 0.055),
       )
       this.particleDummy.rotation.set(0, 0, seed.drift * 0.12)
       this.particleDummy.scale.set(
-        seed.size * pourStrength,
-        seed.size * (1.1 + phase * 0.9) * pourStrength,
-        seed.size * 0.8 * pourStrength,
+        seed.size * inlet.strength * (0.56 - gravityProgress * 0.1),
+        seed.size * (0.85 + gravityProgress * 1.2) * inlet.strength,
+        seed.size * 0.52 * inlet.strength,
       )
       this.particleDummy.updateMatrix()
       this.inletDroplets.setMatrixAt(index, this.particleDummy.matrix)
@@ -1141,28 +1494,53 @@ export class WaterSceneRuntime {
   }
 
   private updateSplashParticles() {
-    const graph = this.project.mazeGraph
-    const topEdge = graph.rows / 2
-    const active =
-      smoothstep(120, 420, this.elapsedMs) *
-      (1 - smoothstep(this.completeAt - 360, this.completeAt, this.elapsedMs))
+    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
+    const sinceImpactMs = this.elapsedMs - WATER_INLET_IMPACT_MS
     for (let index = 0; index < this.splashSeeds.length; index += 1) {
       const seed = this.splashSeeds[index]
-      if (active < 0.02) {
+      if (inlet.impactStrength < 0.02 || sinceImpactMs < 0) {
         this.hideParticle(this.splashDroplets, index)
         continue
       }
-      const phase = (this.elapsedMs * 0.00165 + seed.phase) % 1
-      const arc = Math.sin(phase * Math.PI)
+      const lifetime = 0.48 + seed.lift * 0.22
+      const crownCount = this.quality === 'high' ? 20 : 8
+      const initialCrown = sinceImpactMs < 700 && index < crownCount
+      const phase = initialCrown
+        ? clamp01(sinceImpactMs / (520 + seed.phase * 180))
+        : ((sinceImpactMs / (lifetime * 1_000) + seed.phase) % 1 + 1) % 1
+      const age = phase * lifetime
+      const crownDirection =
+        crownCount <= 1 ? 0 : (index / (crownCount - 1)) * 2 - 1
+      const horizontalVelocity = initialCrown
+        ? crownDirection * (1.85 + seed.size * 0.42)
+        : seed.drift * (0.58 + seed.size * 0.2)
+      const verticalVelocity = initialCrown
+        ? 1.72 + (1 - Math.abs(crownDirection)) * 0.72 + seed.lift * 0.22
+        : 0.94 + seed.lift * 0.5
+      const verticalPosition =
+        verticalVelocity * age - 0.5 * (initialCrown ? 5.1 : 4.15) * age * age
+      const depthVelocity = seed.depth *
+        (initialCrown ? 0.48 : 0.18 + seed.size * 0.08)
       this.particleDummy.position.set(
-        this.sourcePosition.x + seed.drift * phase * 0.42,
-        topEdge - 0.18 + arc * seed.lift * 0.22 - phase * 0.22,
-        0.32 + seed.depth * 0.12 + arc * 0.13,
+        this.sourcePosition.x + horizontalVelocity * age,
+        this.inletLayout.impactY + verticalPosition,
+        0.25 + depthVelocity * age + Math.sin(phase * Math.PI) * 0.13,
       )
-      this.particleDummy.rotation.set(0, 0, seed.drift * phase)
-      const fade = Math.sin(phase * Math.PI) * active
-      this.particleDummy.scale.setScalar(
-        Math.max(0.001, seed.size * fade * 0.75),
+      const verticalSpeed =
+        verticalVelocity - (initialCrown ? 5.1 : 4.15) * age
+      this.particleDummy.rotation.set(
+        0,
+        0,
+        Math.atan2(verticalSpeed, horizontalVelocity) - Math.PI / 2,
+      )
+      const initialBurst = Math.exp(-Math.max(0, sinceImpactMs) / 700)
+      const splashStrength =
+        inlet.impactStrength * (0.25 + initialBurst * 0.75)
+      const fade = Math.sin(phase * Math.PI) * splashStrength
+      this.particleDummy.scale.set(
+        Math.max(0.001, seed.size * fade * 0.46),
+        Math.max(0.001, seed.size * fade * (0.7 + Math.abs(verticalSpeed) * 0.45)),
+        Math.max(0.001, seed.size * fade * 0.42),
       )
       this.particleDummy.updateMatrix()
       this.splashDroplets.setMatrixAt(index, this.particleDummy.matrix)
@@ -1174,8 +1552,9 @@ export class WaterSceneRuntime {
     const graph = this.project.mazeGraph
     const bottomEdge = -graph.rows / 2
     const outletStart = this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER
+    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
     const outletStrength =
-      smoothstep(outletStart, outletStart + 320, this.elapsedMs) *
+      smoothstep(outletStart, outletStart + 320, flowElapsedMs) *
       (1 - smoothstep(this.completeAt - 280, this.completeAt, this.elapsedMs))
     for (let index = 0; index < this.outletSeeds.length; index += 1) {
       const seed = this.outletSeeds[index]
@@ -1184,7 +1563,7 @@ export class WaterSceneRuntime {
         continue
       }
       const phase =
-        ((this.elapsedMs - outletStart) * 0.0018 + seed.phase + 10) % 1
+        ((flowElapsedMs - outletStart) * 0.0018 + seed.phase + 10) % 1
       const fan = Math.sin(phase * Math.PI)
       this.particleDummy.position.set(
         this.exitPosition.x + seed.drift * fan * 0.32,
@@ -1204,14 +1583,15 @@ export class WaterSceneRuntime {
     this.outletDroplets.instanceMatrix.needsUpdate = true
   }
 
-  private updateBubbles(now: number) {
+  private updateBubbles() {
+    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
     for (let index = 0; index < this.bubbleSeeds.length; index += 1) {
       const seed = this.bubbleSeeds[index]
       const arrival = seed.cell?.arrivalMs
       if (
         arrival === null ||
         arrival === undefined ||
-        this.elapsedMs < arrival + 80
+        flowElapsedMs < arrival + 80
       ) {
         this.hideParticle(this.bubbles, index)
         continue
@@ -1221,7 +1601,7 @@ export class WaterSceneRuntime {
         this.model.options.drainDelayMs
       const drained =
         seed.cell.retainedLevel < 0.2 &&
-        this.elapsedMs >
+        flowElapsedMs >
           drainStart + this.model.options.drainDurationMs * 0.72
       if (drained) {
         this.hideParticle(this.bubbles, index)
@@ -1231,16 +1611,16 @@ export class WaterSceneRuntime {
         this.project.mazeGraph,
         seed.cell.position,
       )
-      const phase = (this.elapsedMs * 0.00042 + seed.phase) % 1
+      const phase = (flowElapsedMs * 0.00042 + seed.phase) % 1
       this.particleDummy.position.set(
         position.x +
           seed.drift * 0.22 +
-          Math.sin(now * 0.002 + index) * 0.045,
+          Math.sin(flowElapsedMs * 0.002 + index) * 0.045,
         position.y - 0.27 + phase * 0.52,
         0.22 + seed.depth * 0.08,
       )
       this.particleDummy.rotation.set(0, 0, 0)
-      const pulse = 0.62 + Math.sin(now * 0.006 + index) * 0.16
+      const pulse = 0.62 + Math.sin(flowElapsedMs * 0.006 + index) * 0.16
       this.particleDummy.scale.setScalar(seed.size * pulse)
       this.particleDummy.updateMatrix()
       this.bubbles.setMatrixAt(index, this.particleDummy.matrix)
@@ -1249,35 +1629,59 @@ export class WaterSceneRuntime {
   }
 
   private updateEffects(now: number) {
-    this.updateStreams(now)
+    this.updateStreams()
+    const impactBurstActive =
+      this.elapsedMs >= WATER_INLET_IMPACT_MS &&
+      this.elapsedMs < WATER_INLET_IMPACT_MS + 1_400
+    // The status callback and pause button can land between throttled particle
+    // frames. Keep the short impact crown in lockstep with simulation time so
+    // a paused collision frame never loses the actual splash.
+    if (impactBurstActive) this.updateSplashParticles()
     if (now - this.lastParticleAt < (this.quality === 'high' ? 24 : 44)) return
     this.lastParticleAt = now
-    this.updateInletParticles(now)
-    this.updateSplashParticles()
+    this.updateInletParticles()
+    if (!impactBurstActive) this.updateSplashParticles()
     this.updateOutletParticles()
-    this.updateBubbles(now)
+    this.updateBubbles()
   }
 
   private emitStatus(now: number) {
     if (now - this.lastStatusAt < 140) return
     this.lastStatusAt = now
-    while (
-      this.visibleCursor < this.reachableCells.length &&
-      (this.reachableCells[this.visibleCursor].arrivalMs ?? Number.MAX_SAFE_INTEGER) <=
-        this.elapsedMs
-    ) {
-      this.visibleCursor += 1
+    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
+    if (this.elapsedMs >= WATER_INLET_IMPACT_MS) {
+      while (
+        this.visibleCursor < this.reachableCells.length &&
+        (this.reachableCells[this.visibleCursor].arrivalMs ?? Number.MAX_SAFE_INTEGER) <=
+          flowElapsedMs
+      ) {
+        this.visibleCursor += 1
+      }
     }
     const complete = this.elapsedMs >= this.completeAt
-    this.onStatus({
+    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
+    const status: WaterPlaybackStatus = {
       elapsedMs: this.elapsedMs,
       filledCells: this.visibleCursor,
       totalCells: this.reachableCells.length,
       reachedExit:
         this.model.exitArrivalMs !== null &&
-        this.elapsedMs >= this.model.exitArrivalMs,
+        flowElapsedMs >= this.model.exitArrivalMs,
       complete,
-    })
+      inletState: inlet.state,
+      inletVisible: inlet.strength > 0.01,
+    }
+    const signature = [
+      Math.round(status.elapsedMs),
+      status.filledCells,
+      status.reachedExit,
+      status.complete,
+      status.inletState,
+      status.inletVisible,
+    ].join(':')
+    if (signature === this.lastStatusSignature) return
+    this.lastStatusSignature = signature
+    this.onStatus(status)
   }
 
   private emitMetrics() {
@@ -1288,13 +1692,17 @@ export class WaterSceneRuntime {
       atlasHeight: this.timeline.height,
       drawCalls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
+      inletDropHeight: this.inletLayout.dropHeight,
     })
   }
 
   private fitCamera() {
     const graph = this.project.mazeGraph
     const boardWidth = graph.cols + 1.8
-    const boardHeight = graph.rows + 3.6
+    const topExtent = this.inletLayout.reservoirY + 0.58
+    const bottomExtent = -graph.rows / 2 - 1.42
+    const boardHeight = topExtent - bottomExtent
+    const sceneCenterY = (topExtent + bottomExtent) / 2
     const verticalFov = THREE.MathUtils.degToRad(this.camera.fov)
     const horizontalFov =
       2 *
@@ -1307,13 +1715,52 @@ export class WaterSceneRuntime {
     const isNarrow = this.camera.aspect < 0.72
     this.camera.position.set(
       isNarrow ? boardWidth * 0.025 : boardWidth * 0.065,
-      boardHeight * 0.015,
+      sceneCenterY + boardHeight * 0.008,
       distance,
     )
-    this.controls.target.set(0, 0, 0.08)
+    this.controls.target.set(0, sceneCenterY, 0.08)
     this.camera.lookAt(this.controls.target)
     this.initialCameraPosition.copy(this.camera.position)
     this.initialTarget.copy(this.controls.target)
+
+    const introHeight = Math.max(4.2, this.inletLayout.dropHeight + 1.7)
+    const introDistance =
+      (introHeight / (2 * Math.tan(verticalFov / 2))) * 1.04
+    const introCenterY =
+      (this.inletLayout.nozzleY + this.inletLayout.impactY) / 2 + 0.18
+    this.introCameraPosition.set(
+      this.sourcePosition.x + 0.12,
+      introCenterY,
+      introDistance,
+    )
+    this.introTarget.set(this.sourcePosition.x, introCenterY, 0.16)
+
+    if (
+      !this.reducedMotion &&
+      !this.cameraIntroCancelled &&
+      this.elapsedMs < 2_350
+    ) {
+      this.camera.position.copy(this.introCameraPosition)
+      this.controls.target.copy(this.introTarget)
+      this.camera.lookAt(this.controls.target)
+    }
+  }
+
+  private updateCameraIntro() {
+    if (this.reducedMotion || this.cameraIntroCancelled) return
+    const progress = smoothstep(520, 2_350, this.elapsedMs)
+    this.camera.position.lerpVectors(
+      this.introCameraPosition,
+      this.initialCameraPosition,
+      progress,
+    )
+    this.controls.target.lerpVectors(
+      this.introTarget,
+      this.initialTarget,
+      progress,
+    )
+    this.camera.lookAt(this.controls.target)
+    if (progress >= 0.999) this.cameraIntroCancelled = true
   }
 
   private resize() {
@@ -1327,6 +1774,7 @@ export class WaterSceneRuntime {
     this.camera.aspect = nextAspect
     this.camera.updateProjectionMatrix()
     if (shouldRefit) this.fitCamera()
+    this.needsRender = true
   }
 
   private tick = () => {
@@ -1342,15 +1790,23 @@ export class WaterSceneRuntime {
       )
     }
     const now = performance.now()
-    this.waterSurfaceMaterial.uniforms.uTime.value = this.elapsedMs
+    const visualTimeChanged = this.elapsedMs !== this.lastVisualElapsedMs
+    if (visualTimeChanged) {
+      this.waterSurfaceMaterial.uniforms.uTime.value =
+        getWaterFlowElapsedMs(this.elapsedMs)
+      this.updateEffects(now)
+      this.updateCameraIntro()
+      this.lastVisualElapsedMs = this.elapsedMs
+    }
+    const controlsChanged = this.controls.update()
+    this.emitStatus(now)
+    if (!visualTimeChanged && !controlsChanged && !this.needsRender) return
     this.waterSurfaceMaterial.uniforms.uCameraPosition.value.copy(
       this.camera.position,
     )
-    this.updateEffects(now)
-    this.controls.update()
     this.renderer.render(this.scene, this.camera)
     this.emitMetrics()
-    this.emitStatus(now)
+    this.needsRender = false
 
     if (
       this.reducedMotion &&

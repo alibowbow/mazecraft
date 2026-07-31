@@ -212,7 +212,10 @@ export function buildWaterSurfaceTimeline(
     scheduleByIndex.set(cell.index, cell)
   }
 
-  const channelRadius = Math.max(0.5, pixelsPerCell * 0.24)
+  // The clear corridor is roughly 84% of a cell after the 0.16-cell walls.
+  // A 0.36-cell radius makes the water read as a body filling that corridor
+  // instead of a thin glowing line, while retaining a dry contact margin.
+  const channelRadius = Math.max(0.5, pixelsPerCell * 0.36)
   let latestScheduledTime = Math.max(
     0,
     Number.isFinite(model.totalDurationMs) ? model.totalDurationMs : 0,

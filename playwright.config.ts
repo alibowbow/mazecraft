@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const testPort = Number(process.env.PLAYWRIGHT_PORT ?? 4173)
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -9,26 +11,29 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4173',
-    trace: 'retain-on-failure'
-    ,
+    baseURL: `http://127.0.0.1:${testPort}`,
+    trace: 'retain-on-failure',
     launchOptions: process.env.PLAYWRIGHT_EXECUTABLE_PATH
       ? {
           executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH,
           args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
         }
-      : undefined
+      : undefined,
   },
   webServer: {
-    command: 'npm run preview -- --host 127.0.0.1',
-    port: 4173,
-    reuseExistingServer: true
+    command: `npm run preview -- --host 127.0.0.1 --port ${testPort} --strictPort`,
+    port: testPort,
+    reuseExistingServer: true,
   },
   projects: [
-    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } } },
+    {
+      name: 'desktop',
+      grepInvert: /15\./,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } },
+    },
     {
       name: 'mobile',
-      grep: /11\./,
+      grep: /(?:11|15)\./,
       use: { ...devices['Galaxy S9+'], viewport: { width: 360, height: 800 } },
     }
   ]
