@@ -38,6 +38,10 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
     'displaced-timeline-surface',
   )
   await expect(stage).toHaveAttribute(
+    'data-fluid-model',
+    'finite-supply-hydraulic',
+  )
+  await expect(stage).toHaveAttribute(
     'data-inlet-renderer',
     'coupled-gravity-jet',
   )
@@ -47,6 +51,13 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   )
   await expect(stage).toHaveAttribute('data-quality', 'high')
   await expect(canvas).toBeVisible()
+  const activeCells = Number(await stage.getAttribute('data-active-cells'))
+  const wettableCells = Number(
+    await stage.getAttribute('data-wettable-cells'),
+  )
+  expect(activeCells).toBeGreaterThan(0)
+  expect(wettableCells).toBeGreaterThan(0)
+  expect(wettableCells).toBeLessThan(activeCells)
   await expect
     .poll(async () => Number(await stage.getAttribute('data-draw-calls')))
     .toBeGreaterThan(0)
@@ -220,6 +231,19 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   expect(Number(await stage.getAttribute('data-triangles'))).toBeLessThan(
     500_000,
   )
+  await page.getByLabel('물 흐름 속도').selectOption('4')
+  await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
+    timeout: 30_000,
+  })
+  const breakthroughFrame = await captureStage()
+  await writeFile(
+    testInfo.outputPath('water-hydraulic-breakthrough.png'),
+    breakthroughFrame,
+  )
+  expect(breakthroughFrame.byteLength).toBeGreaterThan(10_000)
+  expect(
+    Number(await stage.getAttribute('data-filled-cells')),
+  ).toBeLessThan(activeCells)
   expect(
     await page.evaluate(
       () =>

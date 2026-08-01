@@ -23,7 +23,7 @@ export interface WaterSurfaceTimeline {
    */
   schedule: Float32Array
   /**
-   * RGBA byte atlas: channel coverage, flow X, flow Y, noise seed.
+   * RGBA byte atlas: channel coverage, flow X, flow Y, peak water level.
    */
   field: Uint8Array
 }
@@ -36,6 +36,7 @@ interface SurfacePoint {
 interface SurfaceSample {
   arrivalMs: number
   fullMs: number
+  peakLevel: number
   retainedLevel: number
 }
 
@@ -93,28 +94,6 @@ function resolvePixelsPerCell(
   )
 }
 
-function hashString(value: string): number {
-  let hash = 0x811c9dc5
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 0x01000193)
-  }
-  return hash >>> 0
-}
-
-function hashTexel(seed: number, x: number, y: number): number {
-  let hash =
-    seed ^
-    Math.imul(x + 1, 0x9e3779b1) ^
-    Math.imul(y + 1, 0x85ebca77)
-  hash ^= hash >>> 16
-  hash = Math.imul(hash, 0x7feb352d)
-  hash ^= hash >>> 15
-  hash = Math.imul(hash, 0x846ca68b)
-  hash ^= hash >>> 16
-  return hash >>> 0
-}
-
 function encodeFlowComponent(value: number): number {
   return Math.round((clamp(value, -1, 1) * 0.5 + 0.5) * 255)
 }
@@ -155,6 +134,7 @@ function asSurfaceSample(
   return {
     arrivalMs: Math.max(0, cell.arrivalMs),
     fullMs: Math.max(cell.arrivalMs, cell.fullMs),
+    peakLevel: clamp(cell.peakLevel, 0, 1),
     retainedLevel: clamp(cell.retainedLevel, 0, 1),
   }
 }
@@ -192,17 +172,13 @@ export function buildWaterSurfaceTimeline(
   const closestDistance = new Float32Array(texelCount)
   closestDistance.fill(Number.POSITIVE_INFINITY)
 
-  const graphSeed = hashString(
-    `${graph.seed}\u0000${graph.rows}x${graph.cols}`,
-  )
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const texelIndex = y * width + x
       const offset = texelIndex * 4
-      const seed = hashTexel(graphSeed, x, y) / 0xffffffff
       field[offset + 1] = encodeFlowComponent(0)
       field[offset + 2] = encodeFlowComponent(0)
-      field[offset + 3] = Math.round(seed * 255)
+      field[offset + 3] = 0
     }
   }
 
@@ -290,6 +266,14 @@ export function buildWaterSurfaceTimeline(
         schedule[offset + 3] = 1
         field[offset + 1] = encodedFlowX
         field[offset + 2] = encodedFlowY
+        field[offset + 3] = Math.round(
+          clamp(
+            fromSample.peakLevel +
+              (toSample.peakLevel - fromSample.peakLevel) * projection,
+            0,
+            1,
+          ) * 255,
+        )
       }
     }
   }
@@ -331,6 +315,7 @@ export function buildWaterSurfaceTimeline(
         schedule[offset + 3] = 1
         field[offset + 1] = encodedFlowX
         field[offset + 2] = encodedFlowY
+        field[offset + 3] = Math.round(sample.peakLevel * 255)
       }
     }
   }
@@ -431,6 +416,7 @@ export function buildWaterSurfaceTimeline(
     const outletSample: SurfaceSample = {
       arrivalMs: exitSample.arrivalMs + outletTravelMs,
       fullMs: exitSample.fullMs + outletTravelMs,
+      peakLevel: exitSample.peakLevel,
       retainedLevel: exitSample.retainedLevel,
     }
     paintCapsule(

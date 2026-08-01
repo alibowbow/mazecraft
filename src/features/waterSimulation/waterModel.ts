@@ -1,5 +1,4 @@
 import {
-  directionBetween,
   getActiveCell,
   getCellIndex,
   getPassageNeighbors,
@@ -31,6 +30,15 @@ export interface WaterSimulationOptions {
   /** Water retained in a basin that would need to climb to escape. */
   pooledLevel?: number
   /**
+   * Fraction of the through-flow volume that may be stored temporarily in
+   * blind side branches before the outlet takes over the supplied flow.
+   */
+  sidePoolVolumeRatio?: number
+  /** Peak visual depth of water that is actively carrying source-to-outlet flow. */
+  flowPeakLevel?: number
+  /** Smallest physically meaningful stored depth rendered as wet. */
+  minimumWetLevel?: number
+  /**
    * Require the source and exit to occupy the topmost and bottommost active
    * rows. This defaults to true because the visual simulation pours vertically.
    */
@@ -47,6 +55,9 @@ export interface ResolvedWaterSimulationOptions {
   drainDurationMs: number
   residualFilmLevel: number
   pooledLevel: number
+  sidePoolVolumeRatio: number
+  flowPeakLevel: number
+  minimumWetLevel: number
   enforceVerticalEndpoints: boolean
 }
 
@@ -60,6 +71,7 @@ export interface WaterCellSchedule {
   index: number
   position: CellPosition
   active: boolean
+  /** True only when the finite hydraulic supply actually wets this cell. */
   reachable: boolean
   /** First contact with the water front. Null for unreachable cells. */
   arrivalMs: number | null
@@ -78,6 +90,8 @@ export interface WaterCellSchedule {
   incomingDirection: WallDirection | null
   isDeadEnd: boolean
   drainage: WaterDrainage
+  /** Greatest local fluid depth reached while the source is feeding. */
+  peakLevel: number
   retainedLevel: number
 }
 
@@ -147,6 +161,9 @@ const DEFAULT_OPTIONS: ResolvedWaterSimulationOptions = {
   drainDurationMs: 900,
   residualFilmLevel: 0.06,
   pooledLevel: 0.92,
+  sidePoolVolumeRatio: 0.18,
+  flowPeakLevel: 0.78,
+  minimumWetLevel: 0.06,
   enforceVerticalEndpoints: true,
 }
 
@@ -192,9 +209,22 @@ function resolveOptions(
   assertFiniteInRange('drainDurationMs', options.drainDurationMs, 1)
   assertFiniteInRange('residualFilmLevel', options.residualFilmLevel, 0, 1)
   assertFiniteInRange('pooledLevel', options.pooledLevel, 0, 1)
+  assertFiniteInRange(
+    'sidePoolVolumeRatio',
+    options.sidePoolVolumeRatio,
+    0,
+    1,
+  )
+  assertFiniteInRange('flowPeakLevel', options.flowPeakLevel, 0.05, 1)
+  assertFiniteInRange('minimumWetLevel', options.minimumWetLevel, 0.001, 0.5)
   if (options.pooledLevel < options.residualFilmLevel) {
     throw new RangeError(
       'pooledLevel must be greater than or equal to residualFilmLevel.',
+    )
+  }
+  if (options.minimumWetLevel > options.flowPeakLevel) {
+    throw new RangeError(
+      'minimumWetLevel must be less than or equal to flowPeakLevel.',
     )
   }
   return options
@@ -328,6 +358,7 @@ function calculateArrivalTree(
   graph: MazeGraph,
   sourceIndex: number,
   options: ResolvedWaterSimulationOptions,
+  allowedIndices?: ReadonlySet<number>,
 ): {
   arrivals: number[]
   depths: number[]
@@ -357,7 +388,9 @@ function calculateArrivalTree(
 
     const currentCell = graph.cells[currentEntry.index]
     if (!currentCell?.active) continue
-    const passageNeighbors = getPassageNeighbors(graph, currentCell)
+    const passageNeighbors = getPassageNeighbors(graph, currentCell).filter(
+      ({ cell }) => !allowedIndices || allowedIndices.has(cell.index),
+    )
     const parentIndex = parents[currentEntry.index]
     const outgoingCount = passageNeighbors.reduce(
       (count, neighbor) => count + (neighbor.cell.index === parentIndex ? 0 : 1),
@@ -392,6 +425,264 @@ function calculateArrivalTree(
   }
 
   return { arrivals, depths, parents, incomingDirections }
+}
+
+/**
+ * Removes hydraulically dangling topology while preserving the source and
+ * outlet. In a perfect maze the remaining cells are exactly the unique
+ * source-to-outlet route. Braided loops remain because they can carry part of
+ * the through-flow; blind trees are handled separately as finite storage.
+ */
+function calculateHydraulicBackbone(
+  graph: MazeGraph,
+  sourceIndex: number,
+  exitIndex: number,
+): Set<number> {
+  const retained = new Uint8Array(graph.cells.length)
+  const degrees = new Int32Array(graph.cells.length)
+  const queue = new Int32Array(graph.cells.length)
+  let queueStart = 0
+  let queueEnd = 0
+
+  for (const cell of graph.cells) {
+    if (!cell.active) continue
+    retained[cell.index] = 1
+    degrees[cell.index] = getPassageNeighbors(graph, cell).length
+  }
+  for (const cell of graph.cells) {
+    if (
+      retained[cell.index] &&
+      cell.index !== sourceIndex &&
+      cell.index !== exitIndex &&
+      degrees[cell.index] <= 1
+    ) {
+      queue[queueEnd++] = cell.index
+    }
+  }
+
+  while (queueStart < queueEnd) {
+    const index = queue[queueStart++]
+    if (!retained[index] || index === sourceIndex || index === exitIndex) {
+      continue
+    }
+    retained[index] = 0
+    const cell = graph.cells[index]
+    for (const { cell: neighbor } of getPassageNeighbors(graph, cell)) {
+      if (!retained[neighbor.index]) continue
+      degrees[neighbor.index] -= 1
+      if (
+        neighbor.index !== sourceIndex &&
+        neighbor.index !== exitIndex &&
+        degrees[neighbor.index] === 1
+      ) {
+        queue[queueEnd++] = neighbor.index
+      }
+    }
+  }
+
+  const result = new Set<number>()
+  for (const cell of graph.cells) {
+    if (retained[cell.index]) result.add(cell.index)
+  }
+  result.add(sourceIndex)
+  result.add(exitIndex)
+  return result
+}
+
+interface SideStorageCandidate {
+  index: number
+  parentIndex: number
+  incomingDirection: WallDirection
+  arrivalMs: number
+  depth: number
+  attachmentRow: number
+  targetLevel: number
+}
+
+interface AllocatedSideStorage extends SideStorageCandidate {
+  peakLevel: number
+}
+
+/**
+ * Calculates transient water stored in blind branches. The allocation is
+ * deliberately finite: once the outlet establishes through-flow, only the
+ * supplied side-volume can remain in cul-de-sacs. Cells above the attachment
+ * head are never flooded merely because they are graph-connected.
+ */
+function calculateSideStorage(
+  graph: MazeGraph,
+  backbone: ReadonlySet<number>,
+  arrivals: readonly number[],
+  depths: readonly number[],
+  exitArrivalMs: number | null,
+  options: ResolvedWaterSimulationOptions,
+): Map<number, AllocatedSideStorage> {
+  const candidateArrivals = new Array<number>(graph.cells.length).fill(
+    Number.POSITIVE_INFINITY,
+  )
+  const candidateParents = new Int32Array(graph.cells.length)
+  candidateParents.fill(-1)
+  const candidateDirections = new Array<WallDirection | null>(
+    graph.cells.length,
+  ).fill(null)
+  const candidateDepths = new Int32Array(graph.cells.length)
+  candidateDepths.fill(-1)
+  const attachmentRows = new Int32Array(graph.cells.length)
+  attachmentRows.fill(-1)
+  const queue = new MinArrivalQueue()
+
+  const tryCandidate = (
+    index: number,
+    parentIndex: number,
+    direction: WallDirection,
+    arrivalMs: number,
+    depth: number,
+    attachmentRow: number,
+  ) => {
+    const previous = candidateArrivals[index]
+    const preferred =
+      arrivalMs < previous - EPSILON ||
+      (Math.abs(arrivalMs - previous) <= EPSILON &&
+        parentIndex < candidateParents[index])
+    if (!preferred) return
+    candidateArrivals[index] = arrivalMs
+    candidateParents[index] = parentIndex
+    candidateDirections[index] = direction
+    candidateDepths[index] = depth
+    attachmentRows[index] = attachmentRow
+    queue.push({ index, arrivalMs })
+  }
+
+  for (const backboneIndex of backbone) {
+    if (!Number.isFinite(arrivals[backboneIndex])) continue
+    const cell = graph.cells[backboneIndex]
+    const departureMs = arrivals[backboneIndex] + options.cellFillMs
+    for (const { direction, cell: neighbor } of getPassageNeighbors(
+      graph,
+      cell,
+    )) {
+      if (backbone.has(neighbor.index) || neighbor.row < cell.row) continue
+      tryCandidate(
+        neighbor.index,
+        backboneIndex,
+        direction,
+        departureMs + travelTimeForDirection(direction, options) * 1.5,
+        Math.max(0, depths[backboneIndex]) + 1,
+        cell.row,
+      )
+    }
+  }
+
+  while (queue.size > 0) {
+    const entry = queue.pop()
+    if (!entry) break
+    if (entry.arrivalMs > candidateArrivals[entry.index] + EPSILON) continue
+    const current = graph.cells[entry.index]
+    const attachmentRow = attachmentRows[entry.index]
+    const departureMs = entry.arrivalMs + options.cellFillMs * 1.35
+    for (const { direction, cell: neighbor } of getPassageNeighbors(
+      graph,
+      current,
+    )) {
+      if (
+        backbone.has(neighbor.index) ||
+        neighbor.index === candidateParents[entry.index] ||
+        neighbor.row < attachmentRow
+      ) {
+        continue
+      }
+      tryCandidate(
+        neighbor.index,
+        entry.index,
+        direction,
+        departureMs + travelTimeForDirection(direction, options) * 1.8,
+        candidateDepths[entry.index] + 1,
+        attachmentRow,
+      )
+    }
+  }
+
+  const latestBackboneArrival = arrivals.reduce(
+    (latest, value) => Number.isFinite(value) ? Math.max(latest, value) : latest,
+    0,
+  )
+  const feedCutoffMs =
+    (exitArrivalMs ?? latestBackboneArrival) + options.drainDelayMs
+  const candidates: SideStorageCandidate[] = graph.cells
+    .filter(
+      (cell) =>
+        !backbone.has(cell.index) &&
+        Number.isFinite(candidateArrivals[cell.index]) &&
+        candidateArrivals[cell.index] <= feedCutoffMs + EPSILON &&
+        candidateParents[cell.index] >= 0 &&
+        candidateDirections[cell.index] !== null,
+    )
+    .map((cell) => {
+      const attachmentRow = attachmentRows[cell.index]
+      const verticalDrop = Math.max(0, cell.row - attachmentRow)
+      const deadEnd = getPassageNeighbors(graph, cell).length <= 1
+      const gravityStorage = verticalDrop > 0
+        ? options.pooledLevel
+        : Math.max(options.minimumWetLevel, options.flowPeakLevel * 0.42)
+      return {
+        index: cell.index,
+        parentIndex: candidateParents[cell.index],
+        incomingDirection: candidateDirections[cell.index] as WallDirection,
+        arrivalMs: roundTime(candidateArrivals[cell.index]),
+        depth: candidateDepths[cell.index],
+        attachmentRow,
+        targetLevel: clamp(
+          gravityStorage + (deadEnd && verticalDrop > 0 ? 0.04 : 0),
+          options.minimumWetLevel,
+          1,
+        ),
+      }
+    })
+    .sort((left, right) =>
+      left.arrivalMs - right.arrivalMs || left.index - right.index,
+    )
+
+  const flowingCellCount = arrivals.reduce(
+    (count, value) => count + Number(Number.isFinite(value)),
+    0,
+  )
+  let availableVolume = options.sidePoolVolumeRatio === 0
+    ? 0
+    : Math.max(
+      options.minimumWetLevel * 2,
+      flowingCellCount * options.sidePoolVolumeRatio,
+    )
+  const allocated = new Map<number, AllocatedSideStorage>()
+
+  for (let cursor = 0; cursor < candidates.length && availableVolume > 0;) {
+    const groupStart = cursor
+    const groupArrival = candidates[cursor].arrivalMs
+    while (
+      cursor < candidates.length &&
+      Math.abs(candidates[cursor].arrivalMs - groupArrival) <= EPSILON
+    ) {
+      cursor += 1
+    }
+    const group = candidates.slice(groupStart, cursor).filter((candidate) =>
+      backbone.has(candidate.parentIndex) || allocated.has(candidate.parentIndex),
+    )
+    if (!group.length) continue
+    const demand = group.reduce(
+      (total, candidate) => total + candidate.targetLevel,
+      0,
+    )
+    const allocationRatio = Math.min(1, availableVolume / demand)
+    const groupAllocation = group.reduce((total, candidate) => {
+      const peakLevel = candidate.targetLevel * allocationRatio
+      if (peakLevel + EPSILON < options.minimumWetLevel) return total
+      allocated.set(candidate.index, { ...candidate, peakLevel })
+      return total + peakLevel
+    }, 0)
+    availableVolume = Math.max(0, availableVolume - groupAllocation)
+    if (allocationRatio < 1) break
+  }
+
+  return allocated
 }
 
 function collectExitRoute(parents: readonly number[], exitIndex: number): Set<number> {
@@ -477,10 +768,11 @@ function calculateGravityDrainage(
 }
 
 /**
- * Builds a deterministic, graph-only water propagation model. It does not use
- * the maze solution and intentionally visits every corridor reachable from the
- * source. The resulting schedules are suitable for particles, instanced water
- * meshes, shaders, or a 2D fallback renderer.
+ * Builds a deterministic source-to-outlet hydraulic model without consulting
+ * the maze solution. Steady through-flow is found by pruning zero-discharge
+ * blind topology; gravity-favourable cul-de-sacs then receive only a finite
+ * share of the supplied volume. Graph connectivity alone never makes a dry
+ * corridor appear full.
  */
 export function buildWaterSimulation(
   graph: MazeGraph,
@@ -497,10 +789,29 @@ export function buildWaterSimulation(
   )
   const sourceIndex = getCellIndex(graph.cols, start)
   const exitIndex = getCellIndex(graph.cols, end)
+  const backbone = calculateHydraulicBackbone(
+    graph,
+    sourceIndex,
+    exitIndex,
+  )
   const { arrivals, depths, parents, incomingDirections } =
-    calculateArrivalTree(graph, sourceIndex, options)
+    calculateArrivalTree(graph, sourceIndex, options, backbone)
   const reachedExit = Number.isFinite(arrivals[exitIndex])
   const exitArrivalMs = reachedExit ? roundTime(arrivals[exitIndex]) : null
+  const sideStorage = calculateSideStorage(
+    graph,
+    backbone,
+    arrivals,
+    depths,
+    exitArrivalMs,
+    options,
+  )
+  for (const side of sideStorage.values()) {
+    arrivals[side.index] = side.arrivalMs
+    parents[side.index] = side.parentIndex
+    incomingDirections[side.index] = side.incomingDirection
+    depths[side.index] = side.depth
+  }
   const exitRoute = reachedExit
     ? collectExitRoute(parents, exitIndex)
     : new Set<number>([sourceIndex])
@@ -531,6 +842,11 @@ export function buildWaterSimulation(
 
   const cells: WaterCellSchedule[] = graph.cells.map((cell) => {
     const reachable = cell.active && Number.isFinite(arrivals[cell.index])
+    const side = sideStorage.get(cell.index)
+    const peakLevel = reachable
+      ? side?.peakLevel ??
+        (cell.index === sourceIndex ? 1 : options.flowPeakLevel)
+      : 0
     const isDeadEnd =
       cell.active &&
       cell.index !== sourceIndex &&
@@ -541,23 +857,26 @@ export function buildWaterSimulation(
     if (reachable) {
       if (cell.index === exitIndex && reachedExit) {
         drainage = 'exit'
-      } else if (canDrain.has(cell.index)) {
+      } else if (backbone.has(cell.index) || canDrain.has(cell.index)) {
         drainage = 'drains'
-        retainedLevel = options.residualFilmLevel
+        retainedLevel = Math.min(peakLevel, options.residualFilmLevel)
       } else {
         drainage = 'pools'
-        retainedLevel = options.pooledLevel
+        retainedLevel = Math.min(peakLevel, options.pooledLevel)
       }
     }
     const arrivalMs = reachable ? roundTime(arrivals[cell.index]) : null
+    const fillScale = clamp(
+      peakLevel / Math.max(options.flowPeakLevel, EPSILON),
+      0.25,
+      1,
+    )
     return {
       index: cell.index,
       position: { row: cell.row, col: cell.col },
       active: cell.active,
       reachable,
       arrivalMs,
-      fullMs:
-        arrivalMs === null ? null : roundTime(arrivalMs + options.cellFillMs),
       depth: reachable ? depths[cell.index] : null,
       branch: reachable ? branches[cell.index] : null,
       order: reachable ? orderByIndex[cell.index] : null,
@@ -568,7 +887,12 @@ export function buildWaterSimulation(
         : null,
       isDeadEnd,
       drainage,
+      peakLevel,
       retainedLevel,
+      fullMs:
+        arrivalMs === null
+          ? null
+          : roundTime(arrivalMs + options.cellFillMs * fillScale),
     }
   })
 
@@ -654,16 +978,18 @@ function sampleCell(
   if (elapsedMs < cell.fullMs) {
     return {
       ...base,
-      level: clamp(
-        (elapsedMs - cell.arrivalMs) / (cell.fullMs - cell.arrivalMs),
-        0,
-        1,
-      ),
+      level:
+        cell.peakLevel *
+        clamp(
+          (elapsedMs - cell.arrivalMs) / (cell.fullMs - cell.arrivalMs),
+          0,
+          1,
+        ),
       state: 'filling',
     }
   }
   if (!model.reachedExit || model.exitArrivalMs === null) {
-    return { ...base, level: 1, state: 'pooled' }
+    return { ...base, level: cell.peakLevel, state: 'pooled' }
   }
 
   const drainStart = Math.max(
@@ -673,7 +999,7 @@ function sampleCell(
   if (elapsedMs < drainStart) {
     return {
       ...base,
-      level: 1,
+      level: cell.peakLevel,
       state: cell.drainage === 'exit' ? 'outlet' : 'flowing',
     }
   }
@@ -683,7 +1009,9 @@ function sampleCell(
     0,
     1,
   )
-  const level = 1 - (1 - cell.retainedLevel) * drainProgress
+  const level =
+    cell.peakLevel -
+    (cell.peakLevel - cell.retainedLevel) * drainProgress
   if (cell.drainage === 'exit') {
     return { ...base, level, state: 'outlet' }
   }

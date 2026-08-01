@@ -80,6 +80,8 @@ const WATER_VERTEX_SHADER = /* glsl */ `
   uniform sampler2D uSchedule;
   uniform sampler2D uField;
   uniform float uTime;
+  uniform float uDrainStart;
+  uniform float uDrainDuration;
   uniform vec2 uBoardSize;
   uniform vec2 uImpactCenter;
   uniform float uImpactStrength;
@@ -94,11 +96,24 @@ const WATER_VERTEX_SHADER = /* glsl */ `
     float mask = smoothstep(0.08, 0.86, field.r) *
       smoothstep(0.04, 0.82, validity);
     float arrival = schedule.r / max(validity, 0.001);
-    float localGate = smoothstep(
-      arrival - 36.0,
-      arrival + 132.0,
+    float fullAt = max(
+      schedule.g / max(validity, 0.001),
+      arrival + 1.0
+    );
+    float retained = clamp(
+      schedule.b / max(validity, 0.001),
+      0.0,
+      1.0
+    );
+    float peak = clamp(field.a, 0.0, 1.0);
+    float fill = smoothstep(arrival - 24.0, fullAt + 72.0, uTime);
+    float localDrainStart = max(fullAt, uDrainStart);
+    float draining = smoothstep(
+      localDrainStart,
+      localDrainStart + max(1.0, uDrainDuration),
       uTime
-    ) * uFlowGate;
+    );
+    float localLevel = mix(peak * fill, retained, draining) * uFlowGate;
     vec2 channelUv = uv * uBoardSize;
     vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
     float broadWave = sin(
@@ -118,7 +133,7 @@ const WATER_VERTEX_SHADER = /* glsl */ `
     )) * uImpactStrength;
     vec3 transformed = position;
     transformed.z += mask * (
-      localGate * (0.014 + broadWave * 0.012 + crossWave * 0.006) +
+      localLevel * (0.014 + broadWave * 0.012 + crossWave * 0.006) +
       impactBody * 0.018 -
       impactDimple * 0.026 +
       impactShoulder * 0.026
@@ -181,6 +196,7 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
       0.0,
       1.0
     );
+    float peak = clamp(field.a, 0.0, 1.0);
     vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
     vec2 channelUv = vUv * uBoardSize;
     float frontNoise =
@@ -207,12 +223,13 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
       localDrainStart + max(1.0, uDrainDuration),
       uTime
     );
-    float level = mix(1.0, retained, draining);
+    float fillingLevel = mix(min(peak, 0.12), peak, fill);
+    float level = mix(fillingLevel, retained, draining);
     float impactDistance = length((vUv - uImpactCenter) * uBoardSize);
     float sourceInjection = exp(-pow(impactDistance / 0.46, 4.0)) *
       uImpactStrength;
     float visibleWater = max(
-      wet * mix(0.32, 1.0, fill),
+      wet * smoothstep(0.015, 0.12, level),
       sourceInjection * (0.76 + fill * 0.24)
     );
     float causalGate = smoothstep(arrival - 72.0, arrival + 108.0, uTime);
@@ -294,7 +311,7 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
       smoothstep(0.54, 0.96, mask);
     bodyColor += vec3(0.025, 0.2, 0.31) * contactRim * 0.28;
 
-    float alpha = mask * visibleWater * mix(0.16, 0.79, level);
+    float alpha = mask * visibleWater * mix(0.12, 0.79, sqrt(level));
     alpha *= mix(0.92, 1.03, broadNoise);
     alpha = max(alpha, edgeAeration * mask * 0.48);
     alpha = max(alpha, impactRing * mask * 0.42);
@@ -821,6 +838,7 @@ export class WaterSceneRuntime {
     this.requestedPaused = paused
     this.paused = paused || document.hidden
     this.clock.getDelta()
+    if (paused) this.emitStatus(performance.now(), true)
     this.needsRender = true
   }
 
@@ -1633,8 +1651,8 @@ export class WaterSceneRuntime {
     this.updateBubbles()
   }
 
-  private emitStatus(now: number) {
-    if (now - this.lastStatusAt < 140) return
+  private emitStatus(now: number, force = false) {
+    if (!force && now - this.lastStatusAt < 140) return
     this.lastStatusAt = now
     const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
     if (this.elapsedMs >= WATER_INLET_IMPACT_MS) {

@@ -217,11 +217,9 @@ export default function WaterSimulationDialog({
       restart()
       return
     }
-    setPaused((value) => {
-      const next = !value
-      runtimeRef.current?.setPaused(next)
-      return next
-    })
+    const next = !paused
+    runtimeRef.current?.setPaused(next)
+    setPaused(next)
   }
 
   const progress =
@@ -235,7 +233,7 @@ export default function WaterSimulationDialog({
         : status.reachedExit
           ? '출구를 뚫고 배출되는 중'
         : status.filledCells > 1
-          ? '갈림길마다 유량을 나누는 중'
+          ? '중력·수두에 따라 유량을 나누는 중'
           : '상단 저장조에서 물을 붓는 중'
   const phase = renderState === 'error'
     ? 'error'
@@ -251,8 +249,8 @@ export default function WaterSimulationDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title="시네마틱 물 미로"
-      description="밝은 아크릴 실험 장치 안에서 물이 위에서 아래로 흐릅니다. 연결된 수면, 갈림길 유량, 막다른 길 고임과 출구 분출을 연속적으로 표현합니다."
+      title="물리 기반 물 미로"
+      description="유한한 물의 양이 중력과 수두 차를 따라 흐릅니다. 출구 유로에는 흐름이 생기고, 막힌 낮은 가지에는 일부만 고이며 나머지 통로는 마른 상태로 남습니다."
       width="min(1180px, calc(100vw - 24px))"
       className="water-simulation-modal"
       closeLabel="3D 물 시뮬레이션 닫기"
@@ -263,11 +261,14 @@ export default function WaterSimulationDialog({
           data-testid="water-simulation-stage"
           data-renderer={renderState}
           data-fluid-renderer="displaced-timeline-surface"
+          data-fluid-model="finite-supply-hydraulic"
           data-water-continuity="coupled-source-surface"
           data-phase={phase}
           data-quality={resolvedQuality}
           data-start-edge="top"
           data-end-edge="bottom"
+          data-active-cells={activeCellCount}
+          data-wettable-cells={reachableCellCount}
           data-filled-cells={status.filledCells}
           data-reached-exit={status.reachedExit}
           data-atlas-width={metrics.atlasWidth}
@@ -284,7 +285,7 @@ export default function WaterSimulationDialog({
           aria-label={
             renderState === 'error'
               ? undefined
-              : `${project.title}의 물 미로 실험. 청록색 물이 상단 저장조에서 연속된 통로를 따라 최하단 출구로 흐릅니다.`
+              : `${project.title}의 물리 기반 물 미로 실험. 청록색 물이 중력과 수두 차에 따라 일부 통로를 적시며 최하단 출구로 흐릅니다.`
           }
         >
           <div
@@ -329,8 +330,8 @@ export default function WaterSimulationDialog({
               {statusLabel}
             </span>
             <small>
-              {status.filledCells.toLocaleString()} /{' '}
-              {status.totalCells.toLocaleString()} 셀 · {progress}%
+              젖은 셀 {status.filledCells.toLocaleString()} / 전체{' '}
+              {activeCellCount.toLocaleString()} · 흐름 {progress}%
             </small>
           </div>
           <div className="water-simulation-controls">
