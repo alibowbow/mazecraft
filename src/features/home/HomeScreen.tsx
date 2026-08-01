@@ -3,7 +3,6 @@ import {
   Clock3,
   Copy,
   Download,
-  Droplets,
   FileText,
   FolderOpen,
   Image as ImageIcon,
@@ -39,43 +38,6 @@ const templates: Array<{
   { id: 'time-attack', title: '타임어택 챌린지', description: '제작자 기록과 벌이는 한판', icon: Clock3, color: 'amber', label: 'CHALLENGE' },
   { id: 'worksheet', title: '인쇄용 워크시트', description: 'A4 문제지와 정답지를 한 번에', icon: Printer, color: 'slate', label: 'PRINT' },
 ]
-
-function HeroMazePreview() {
-  return (
-    <div className="hero-maze-card" aria-hidden="true">
-      <div className="hero-maze-toolbar">
-        <span><i /> LIVE MAZE</span>
-        <strong>12 × 12</strong>
-      </div>
-      <div className="hero-maze-stage">
-        <svg viewBox="0 0 520 360" fill="none">
-          <defs>
-            <linearGradient id="hero-water" x1="82" y1="48" x2="436" y2="322" gradientUnits="userSpaceOnUse">
-              <stop stopColor="#7CE9FF" />
-              <stop offset="1" stopColor="#1689C9" />
-            </linearGradient>
-            <filter id="hero-shadow" x="-20%" y="-20%" width="140%" height="160%">
-              <feDropShadow dx="0" dy="8" stdDeviation="8" floodColor="#1F2E31" floodOpacity=".18" />
-            </filter>
-          </defs>
-          <rect x="34" y="28" width="452" height="304" rx="22" fill="#FFFDF7" filter="url(#hero-shadow)" />
-          <path className="hero-maze-walls" d="M84 28v44h74v62H84v64h74v68h84v66M242 28v44h88v62h80V72h76M34 134h50M158 134h84v64h88v68h80v66M34 266h50v66M330 134v64h80M242 266h88" />
-          <path className="hero-maze-water" d="M84 28v24h70v48h-42v64h80v56h64v52h-14v60" />
-          <circle cx="84" cy="31" r="13" fill="#171B19" />
-          <text x="84" y="35" textAnchor="middle" fill="white" fontSize="11" fontWeight="800">S</text>
-          <circle cx="242" cy="329" r="13" fill="#FF6D43" />
-          <text x="242" y="333" textAnchor="middle" fill="white" fontSize="11" fontWeight="800">E</text>
-        </svg>
-        <span className="hero-water-chip"><Droplets size={13} /> 중력 물 시뮬레이션</span>
-      </div>
-      <div className="hero-maze-footer">
-        <span>검증 통과</span>
-        <span>최단 경로 42칸</span>
-        <strong>READY</strong>
-      </div>
-    </div>
-  )
-}
 
 const relativeTime = (value: string) => {
   const milliseconds = Date.now() - Date.parse(value)
@@ -200,7 +162,6 @@ export function HomeScreen({
             <span>링크·QR 공유</span>
           </div>
         </div>
-        <HeroMazePreview />
       </section>
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">

@@ -253,7 +253,7 @@ export function App() {
   const generateProject = useCallback(
     async (base?: MazeProject) => {
       const source = base ?? project
-      if (!source) return
+      if (!source) return false
       dispatch({ type: 'GENERATE' })
       setGenerationProgress({ completed: 0, total: 1 })
       try {
@@ -271,6 +271,7 @@ export function App() {
         setGenerationTrace(candidate.generationTrace)
         changeProject(next)
         dispatch({ type: 'GENERATED' })
+        return true
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
           dispatch({ type: 'STOP' })
@@ -279,6 +280,7 @@ export function App() {
           dispatch({ type: 'FAIL', message })
           toast(message, true)
         }
+        return false
       } finally {
         setGenerationProgress(null)
         cancelGenerationRef.current = () => undefined

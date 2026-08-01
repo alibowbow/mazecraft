@@ -58,6 +58,8 @@ async function completeFixture(page: Page, project: MazeProject) {
 }
 
 test('1. 새 기본 미로를 생성한다', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText('LIVE MAZE', { exact: true })).toHaveCount(0)
   await createBasic(page)
   await expect(page.locator('canvas')).toBeVisible()
   await expect(page.getByText(/24×24/)).toBeVisible()
