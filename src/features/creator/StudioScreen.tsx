@@ -24,7 +24,6 @@ import {
   Minimize2,
   Minus,
   Moon,
-  MousePointer2,
   Move,
   PanelLeftClose,
   PanelLeftOpen,
@@ -154,7 +153,6 @@ const shapeIcons: Record<BuiltInShape, typeof Square> = {
 const difficultyOptions: DifficultyLevel[] = ['very-easy', 'easy', 'normal', 'hard', 'expert', 'custom']
 
 const toolOptions: Array<{ id: EditorTool; label: string; icon: (props: { size?: number }) => ReactNode }> = [
-  { id: 'select', label: '선택', icon: MousePointer2 },
   { id: 'open-wall', label: '벽 열기', icon: Minus },
   { id: 'close-wall', label: '벽 닫기', icon: Plus },
   { id: 'set-start', label: '시작점', icon: CircleDot },
@@ -163,8 +161,14 @@ const toolOptions: Array<{ id: EditorTool; label: string; icon: (props: { size?:
   { id: 'checkpoint', label: '체크포인트', icon: FlagIcon },
   { id: 'eraser', label: '지우개', icon: Eraser },
   { id: 'pan', label: '이동', icon: Move },
-  { id: 'zoom', label: '확대', icon: Maximize2 },
 ]
+
+const clampGridSize = (raw: string, fallback: number) => {
+  if (!raw.trim()) return fallback
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(8, Math.min(150, Math.round(parsed)))
+}
 
 function FlagIcon({ size = 18 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 21V4m0 1h11l-2 4 2 4H5" /></svg>
@@ -178,6 +182,32 @@ const projectWithMetrics = (project: MazeProject): MazeProject => ({
   updatedAt: new Date().toISOString(),
   mask: graphToMask(project.mazeGraph),
   mazeMetrics: calculateMazeMetrics(project.mazeGraph, project.startCell, project.endCell),
+})
+
+type EditorSnapshot = Pick<
+  MazeProject,
+  'mazeGraph' | 'startCell' | 'endCell' | 'collectibles' | 'checkpoints'
+>
+
+const editorSnapshotFromProject = (project: MazeProject): EditorSnapshot => ({
+  mazeGraph: project.mazeGraph,
+  startCell: project.startCell,
+  endCell: project.endCell,
+  collectibles: project.collectibles,
+  checkpoints: project.checkpoints,
+})
+
+const projectFromEditorSnapshot = (
+  project: MazeProject,
+  snapshot: EditorSnapshot,
+): MazeProject => projectWithMetrics({
+  ...project,
+  ...snapshot,
+  grid: {
+    ...project.grid,
+    rows: snapshot.mazeGraph.rows,
+    cols: snapshot.mazeGraph.cols,
+  },
 })
 
 const fileToDataUrl = (file: Blob) =>
@@ -276,7 +306,12 @@ export function StudioScreen({
   const [step, setStep] = useState<StudioStep>(1)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editorEnabled, setEditorEnabled] = useState(false)
-  const [tool, setTool] = useState<EditorTool>('select')
+  const [tool, setTool] = useState<EditorTool>('open-wall')
+  const [mazePanelMode, setMazePanelMode] = useState<'generate' | 'edit'>('generate')
+  const [gridDraft, setGridDraft] = useState({
+    cols: String(project.grid.cols),
+    rows: String(project.grid.rows),
+  })
   const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null)
   const [showSolution, setShowSolution] = useState(false)
   const [advanced, setAdvanced] = useState(false)
@@ -299,8 +334,16 @@ export function StudioScreen({
     typeof window !== 'undefined' && window.matchMedia(compactLayoutQuery).matches,
   )
   const canvasRef = useRef<MazeCanvasHandle>(null)
-  const historyRef = useRef(new UndoRedoHistory(project, 100))
-  const editBaselineRef = useRef(project)
+  const historyRef = useRef(new UndoRedoHistory(editorSnapshotFromProject(project), 100))
+  const editBaselineRef = useRef(editorSnapshotFromProject(project))
+  const historyProjectIdRef = useRef(project.id)
+  const acknowledgedEditorGraphRef = useRef(project.mazeGraph)
+  const wallEditRef = useRef<{
+    gestureId: number
+    baseline: MazeProject
+    graph: ReturnType<typeof cloneMazeGraph>
+    changed: boolean
+  } | null>(null)
   const drawingPathRef = useRef<Array<{ x: number; y: number; pressure: number }>>([])
   const sheetStartRef = useRef<number | null>(null)
   const sheetCloseRef = useRef<HTMLButtonElement>(null)
@@ -321,6 +364,10 @@ export function StudioScreen({
     [project],
   )
   const controllerRef = useRef<MazeAnimationController | null>(null)
+
+  useEffect(() => {
+    setGridDraft({ cols: String(project.grid.cols), rows: String(project.grid.rows) })
+  }, [project.id, project.grid.cols, project.grid.rows])
 
   useEffect(() => {
     const query = window.matchMedia(compactLayoutQuery)
@@ -400,47 +447,28 @@ export function StudioScreen({
   }, [state])
 
   useEffect(() => {
+    const switchedProject = historyProjectIdRef.current !== project.id
+    const externalGraphChange = acknowledgedEditorGraphRef.current !== project.mazeGraph
     controllerRef.current?.cancel()
-    historyRef.current = new UndoRedoHistory(project, 100)
-    editBaselineRef.current = project
+    if (switchedProject || externalGraphChange) {
+      historyRef.current = new UndoRedoHistory(editorSnapshotFromProject(project), 100)
+      editBaselineRef.current = editorSnapshotFromProject(project)
+      wallEditRef.current = null
+    }
+    historyProjectIdRef.current = project.id
+    acknowledgedEditorGraphRef.current = project.mazeGraph
     setSource(inputSource(project))
     setShowSolution(false)
     setAnimation(null)
     setWaterSimulationOpen(false)
     setWaterSimulationProject(null)
-  }, [project.id, project.seed])
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
-      const typing = target?.matches('input, textarea, select, [contenteditable="true"]')
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        if (typing) return
-        event.preventDefault()
-        const next = event.shiftKey ? historyRef.current.redo() : historyRef.current.undo()
-        onChange(next)
-      } else if (event.key === 'Delete' && selectedCell && !typing) {
-        event.preventDefault()
-        const next = {
-          ...project,
-          collectibles: project.collectibles.filter((item) => item.row !== selectedCell.row || item.col !== selectedCell.col),
-          checkpoints: project.checkpoints.filter((item) => item.row !== selectedCell.row || item.col !== selectedCell.col),
-        }
-        historyRef.current.push(next)
-        onChange(next)
-      } else if (event.key === 'Escape') {
-        setSheetOpen(false)
-        setFocusMode(false)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onChange, project, selectedCell])
+  }, [project.id, project.mazeGraph])
 
   const commit = useCallback(
     (next: MazeProject) => {
       const withMetrics = projectWithMetrics(next)
-      historyRef.current.push(withMetrics)
+      acknowledgedEditorGraphRef.current = withMetrics.mazeGraph
+      historyRef.current.push(editorSnapshotFromProject(withMetrics))
       onChange(withMetrics)
     },
     [onChange],
@@ -471,6 +499,10 @@ export function StudioScreen({
   }
 
   const selectStep = (next: StudioStep, openSheet = false, trigger?: HTMLElement) => {
+    if (next !== 2 && !(next === 1 && source === 'drawing')) {
+      finishWallEdit(true)
+      setEditorEnabled(false)
+    }
     setStep(next)
     setInspectorCollapsed(false)
     setFocusMode(false)
@@ -501,39 +533,134 @@ export function StudioScreen({
 
   const inspectorPanelOpen = compactLayout ? sheetOpen : !inspectorCollapsed
 
-  const handleEditGesture = (gesture: MazeEditGesture) => {
-    if (gesture.phase === 'cancel') {
-      drawingPathRef.current = []
-      return
+  const projectFromGridDraft = () => {
+    const cols = clampGridSize(gridDraft.cols, project.grid.cols)
+    const rows = clampGridSize(gridDraft.rows, project.grid.rows)
+    const next = {
+      ...project,
+      grid: { ...project.grid, cols, rows },
+      updatedAt: new Date().toISOString(),
     }
-    const hit = gesture.hit
-    if (!hit) {
-      if (gesture.phase === 'end' && source === 'drawing' && drawingPathRef.current.length) {
-        const existing = project.shape.kind === 'drawing' ? project.shape.paths : []
-        const next: MazeProject = {
-          ...project,
-          shape: { kind: 'drawing', paths: [...existing, drawingPathRef.current], brushSize: project.shape.kind === 'drawing' ? project.shape.brushSize : 0.045 },
-        }
-        drawingPathRef.current = []
-        void onGenerate(next)
-      }
-      return
-    }
-    setSelectedCell({ row: hit.row, col: hit.col })
+    setGridDraft({ cols: String(cols), rows: String(rows) })
+    return next
+  }
 
-    if (source === 'drawing') {
+  const setGridPreset = (cols: number, rows: number) => {
+    setGridDraft({ cols: String(cols), rows: String(rows) })
+  }
+
+  const fitAndFocusCanvas = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        canvasRef.current?.fit()
+        canvasRef.current?.getCanvas()?.focus({ preventScroll: true })
+      })
+    })
+  }
+
+  const chooseEditorTool = (nextTool: EditorTool) => {
+    finishWallEdit(true)
+    if (!editorEnabled) editBaselineRef.current = editorSnapshotFromProject(project)
+    setEditorEnabled(true)
+    setMazePanelMode('edit')
+    setStep(2)
+    setTool(nextTool)
+    if (compactLayout) setSheetOpen(false)
+    fitAndFocusCanvas()
+  }
+
+  const toggleEditor = () => {
+    if (editorEnabled) {
+      finishWallEdit(true)
+      setEditorEnabled(false)
+      return
+    }
+    editBaselineRef.current = editorSnapshotFromProject(project)
+    setStep(2)
+    setMazePanelMode('edit')
+    setSheetOpen(false)
+    setEditorEnabled(true)
+    fitAndFocusCanvas()
+  }
+
+  const previewWallGraph = (base: MazeProject, graph: ReturnType<typeof cloneMazeGraph>) => {
+    const renderer = canvasRef.current?.getRenderer()
+    if (!renderer) return
+    renderer.setModel(renderModelFromProject({ ...base, mazeGraph: graph }))
+    renderer.invalidateStaticLayer()
+    canvasRef.current?.draw()
+  }
+
+  const finishWallEdit = (save: boolean, gestureId?: number) => {
+    const transaction = wallEditRef.current
+    if (gestureId !== undefined && transaction?.gestureId !== gestureId) return
+    wallEditRef.current = null
+    if (!transaction) return
+    if (save && transaction.changed) {
+      commit({ ...project, mazeGraph: transaction.graph })
+    } else {
+      previewWallGraph(project, transaction.baseline.mazeGraph)
+    }
+  }
+
+  const restoreEditorHistory = (direction: 'undo' | 'redo') => {
+    finishWallEdit(true)
+    const snapshot = direction === 'undo'
+      ? historyRef.current.undo()
+      : historyRef.current.redo()
+    const next = projectFromEditorSnapshot(project, snapshot)
+    acknowledgedEditorGraphRef.current = next.mazeGraph
+    onChange(next)
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing = target?.matches('input, textarea, select, [contenteditable="true"]')
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        if (typing) return
+        event.preventDefault()
+        restoreEditorHistory(event.shiftKey ? 'redo' : 'undo')
+      } else if (event.key === 'Delete' && selectedCell && !typing) {
+        event.preventDefault()
+        commit({
+          ...project,
+          collectibles: project.collectibles.filter((item) => item.row !== selectedCell.row || item.col !== selectedCell.col),
+          checkpoints: project.checkpoints.filter((item) => item.row !== selectedCell.row || item.col !== selectedCell.col),
+        })
+      } else if (event.key === 'Escape') {
+        finishWallEdit(true)
+        setSheetOpen(false)
+        setFocusMode(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [commit, project, restoreEditorHistory, selectedCell])
+
+  const handleEditGesture = (gesture: MazeEditGesture) => {
+    if (step === 1 && source === 'drawing') {
+      if (gesture.phase === 'cancel') {
+        drawingPathRef.current = []
+        return
+      }
       if (gesture.phase === 'start') drawingPathRef.current = []
-      if (gesture.phase !== 'end') {
+      if (gesture.phase !== 'end' && gesture.hit) {
         drawingPathRef.current.push({
-          x: Math.max(0, Math.min(1, hit.x / project.grid.cols)),
-          y: Math.max(0, Math.min(1, hit.y / project.grid.rows)),
+          x: Math.max(0, Math.min(1, gesture.hit.x / project.grid.cols)),
+          y: Math.max(0, Math.min(1, gesture.hit.y / project.grid.rows)),
           pressure: gesture.originalEvent.pressure || 1,
         })
-      } else if (drawingPathRef.current.length) {
+      }
+      if (gesture.phase === 'end' && drawingPathRef.current.length) {
         const existing = project.shape.kind === 'drawing' ? project.shape.paths : []
         const next: MazeProject = {
           ...project,
-          shape: { kind: 'drawing', paths: [...existing, drawingPathRef.current], brushSize: project.shape.kind === 'drawing' ? project.shape.brushSize : 0.045 },
+          shape: {
+            kind: 'drawing',
+            paths: [...existing, drawingPathRef.current],
+            brushSize: project.shape.kind === 'drawing' ? project.shape.brushSize : 0.045,
+          },
         }
         drawingPathRef.current = []
         void onGenerate(next)
@@ -541,13 +668,55 @@ export function StudioScreen({
       return
     }
 
-    if (tool === 'open-wall' || tool === 'close-wall') {
-      if (hit.kind !== 'wall' || gesture.phase === 'end') return
-      const graph = cloneMazeGraph(project.mazeGraph)
-      setWall(graph, { row: hit.row, col: hit.col }, hit.wall, tool === 'close-wall')
-      commit({ ...project, mazeGraph: graph })
+    if (editorEnabled && step === 2 && (tool === 'open-wall' || tool === 'close-wall')) {
+      if (gesture.phase === 'cancel') {
+        finishWallEdit(false, gesture.gestureId)
+        return
+      }
+      if (gesture.phase === 'end') {
+        finishWallEdit(true, gesture.gestureId)
+        return
+      }
+      if (gesture.hit?.kind !== 'wall') return
+      let transaction = wallEditRef.current
+      if (!transaction || transaction.gestureId !== gesture.gestureId) {
+        const baseline = transaction?.changed
+          ? { ...project, mazeGraph: transaction.graph }
+          : project
+        if (transaction) finishWallEdit(true, transaction.gestureId)
+        transaction = {
+          gestureId: gesture.gestureId,
+          baseline,
+          graph: cloneMazeGraph(baseline.mazeGraph),
+          changed: false,
+        }
+        wallEditRef.current = transaction
+      }
+      const cell = transaction.graph.cells[
+        gesture.hit.row * transaction.graph.cols + gesture.hit.col
+      ]
+      const desiredClosed = tool === 'close-wall'
+      if (!cell || cell.walls[gesture.hit.wall] === desiredClosed) return
+      setWall(
+        transaction.graph,
+        { row: gesture.hit.row, col: gesture.hit.col },
+        gesture.hit.wall,
+        desiredClosed,
+      )
+      const updatedCell = transaction.graph.cells[
+        gesture.hit.row * transaction.graph.cols + gesture.hit.col
+      ]
+      if (updatedCell?.walls[gesture.hit.wall] !== desiredClosed) return
+      transaction.changed = true
+      previewWallGraph(transaction.baseline, transaction.graph)
       return
     }
+
+    if (gesture.phase === 'cancel') return
+    const hit = gesture.hit
+    if (!hit) return
+    setSelectedCell({ row: hit.row, col: hit.col })
+
     if (gesture.phase !== 'start' || hit.kind !== 'cell') return
     const position = { row: hit.row, col: hit.col }
     if (tool === 'set-start') commit({ ...project, startCell: position })
@@ -685,8 +854,7 @@ export function StudioScreen({
       : project
 
     if (reoriented) {
-      historyRef.current.push(simulationProject)
-      onChange(simulationProject)
+      commit(simulationProject)
       onToast('물 흐름에 맞춰 입구를 최상단, 출구를 최하단으로 재배치했습니다.')
     }
     setWaterSimulationProject(simulationProject)
@@ -728,10 +896,19 @@ export function StudioScreen({
                   key={value}
                   className={source === value ? 'active' : ''}
                   onClick={() => {
+                    finishWallEdit(true)
                     setSource(value)
-                    if (value === 'drawing' && project.shape.kind !== 'drawing') {
-                      onChange({ ...project, shape: { kind: 'drawing', paths: [], brushSize: 0.045 } })
+                    if (value === 'drawing') {
+                      if (project.shape.kind !== 'drawing') {
+                        onChange({ ...project, shape: { kind: 'drawing', paths: [], brushSize: 0.045 } })
+                      }
                       setEditorEnabled(true)
+                      if (compactLayout) {
+                        setSheetOpen(false)
+                        fitAndFocusCanvas()
+                      }
+                    } else {
+                      setEditorEnabled(false)
                     }
                   }}
                 >
@@ -849,64 +1026,101 @@ export function StudioScreen({
     }
 
     if (step === 2) {
+      const draftCols = clampGridSize(gridDraft.cols, project.grid.cols)
+      const draftRows = clampGridSize(gridDraft.rows, project.grid.rows)
+      const sizePending =
+        draftCols !== project.mazeGraph.cols || draftRows !== project.mazeGraph.rows
       return (
         <>
           <div className="inspector-section settings-stack">
-            <label className="field"><span>난이도</span><select value={project.difficulty} onChange={(event) => update('difficulty', event.target.value as DifficultyLevel)}>{difficultyOptions.map((value) => <option key={value} value={value}>{difficultyLabel(value)}</option>)}</select></label>
-            <div className="settings-row">
-              <label className="field"><span>가로 셀</span><input type="number" min="8" max="150" value={project.grid.cols} onChange={(event) => update('grid', { ...project.grid, cols: Math.max(8, Math.min(150, Number(event.target.value))) })} /></label>
-              <label className="field"><span>세로 셀</span><input type="number" min="8" max="150" value={project.grid.rows} onChange={(event) => update('grid', { ...project.grid, rows: Math.max(8, Math.min(150, Number(event.target.value))) })} /></label>
-            </div>
-            <label className="field"><span>Seed</span><input value={project.seed} maxLength={120} onChange={(event) => update('seed', event.target.value.replace(/[^\p{L}\p{N}_. -]/gu, ''))} /></label>
-            <button className="button" disabled={state === 'generating'} onClick={() => void onGenerate()}><WandSparkles size={17} />새 후보 생성</button>
-            <button className="advanced-toggle" onClick={() => setAdvanced((value) => !value)}><Settings2 size={16} />고급 설정<ChevronRight className={advanced ? 'rotated' : ''} size={16} /></button>
-            {advanced && (
-              <>
-                <label className="field"><span>생성 알고리즘</span><select value={project.mazeGraph.algorithm} onChange={(event) => {
-                  const algorithm = event.target.value as MazeAlgorithm
-                  onChange({ ...project, mazeGraph: { ...project.mazeGraph, algorithm } })
-                  if (generationAnimation !== 'none') setGenerationAnimation(algorithm)
-                }}><option value="dfs">DFS 탐색</option><option value="kruskal">Kruskal 벽 제거</option><option value="prim">Prim 영역 확장</option></select></label>
-                <label className="field"><span>생성 애니메이션</span><select value={generationAnimation} onChange={(event) => {
-                  const mode = event.target.value as 'none' | MazeAlgorithm
-                  setGenerationAnimation(mode)
-                  if (mode !== 'none') onChange({ ...project, mazeGraph: { ...project.mazeGraph, algorithm: mode } })
-                }}><option value="none">없음</option><option value="dfs">DFS 탐색</option><option value="kruskal">Kruskal 벽 제거</option><option value="prim">Prim 영역 확장</option></select></label>
-              </>
-            )}
-          </div>
-          <div className="inspector-section settings-stack">
-            <p className="panel-label">미로 편집 도구</p>
-            <div className="editor-tool-grid">
-              {toolOptions.map(({ id, label, icon: Icon }) => (
-                <button key={id} className={tool === id ? 'active' : ''} onClick={() => {
-                  if (!editorEnabled) {
-                    editBaselineRef.current = project
-                    setEditorEnabled(true)
-                  }
-                  setTool(id)
-                }}><Icon size={17} />{label}</button>
-              ))}
-            </div>
-            <div className="settings-row">
-              <button className="button secondary small" disabled={!history.canUndo} onClick={() => onChange(historyRef.current.undo())}><Undo2 size={15} />실행 취소</button>
-              <button className="button secondary small" disabled={!history.canRedo} onClick={() => onChange(historyRef.current.redo())}><Redo2 size={15} />다시 실행</button>
-            </div>
-            <button className="button ghost small" onClick={() => {
-              historyRef.current.reset(editBaselineRef.current)
-              onChange(editBaselineRef.current)
-            }}>편집 전 상태로</button>
-            <div className="transform-grid">
-              <button onClick={() => {
-                const swapped = swapEndpoints(project.startCell, project.endCell)
-                commit({ ...project, startCell: swapped.start, endCell: swapped.end })
-              }}><ArrowLeftRight size={16} />시작·종료 교환</button>
-              <button onClick={() => applyTransform('flip-horizontal')}>↔ 좌우 반전</button>
-              <button onClick={() => applyTransform('flip-vertical')}>↕ 상하 반전</button>
-              <button onClick={() => applyTransform('rotate-clockwise')}><RotateCw size={16} />90° 회전</button>
+            <div className="segmented maze-panel-tabs" aria-label="미로 설정 방식">
+              <button aria-pressed={mazePanelMode === 'generate'} className={mazePanelMode === 'generate' ? 'active' : ''} onClick={() => setMazePanelMode('generate')}>크기·생성</button>
+              <button aria-pressed={mazePanelMode === 'edit'} className={mazePanelMode === 'edit' ? 'active' : ''} onClick={() => setMazePanelMode('edit')}>직접 수정</button>
             </div>
           </div>
-          <QualityCard project={project} validation={validation} onRepair={autoRepair} />
+          {mazePanelMode === 'generate' ? (
+            <>
+              <div className="inspector-section settings-stack">
+                <label className="field"><span>난이도</span><select aria-label="난이도" disabled={state === 'generating'} value={project.difficulty} onChange={(event) => update('difficulty', event.target.value as DifficultyLevel)}>{difficultyOptions.map((value) => <option key={value} value={value}>{difficultyLabel(value)}</option>)}</select></label>
+                <div className="settings-row grid-size-fields">
+                  <label className="field"><span>가로 셀</span><input type="number" inputMode="numeric" enterKeyHint="done" min="8" max="150" step="1" disabled={state === 'generating'} value={gridDraft.cols} onChange={(event) => setGridDraft((value) => ({ ...value, cols: event.target.value }))} onBlur={projectFromGridDraft} onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setGridDraft((value) => ({ ...value, cols: String(project.grid.cols) }))
+                    }
+                  }} /></label>
+                  <label className="field"><span>세로 셀</span><input type="number" inputMode="numeric" enterKeyHint="done" min="8" max="150" step="1" disabled={state === 'generating'} value={gridDraft.rows} onChange={(event) => setGridDraft((value) => ({ ...value, rows: event.target.value }))} onBlur={projectFromGridDraft} onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setGridDraft((value) => ({ ...value, rows: String(project.grid.rows) }))
+                    }
+                  }} /></label>
+                </div>
+                <div className="grid-presets" aria-label="미로 크기 빠른 선택">
+                  {([[16, 16], [24, 24], [32, 24], [48, 36]] as const).map(([cols, rows]) => (
+                    <button key={`${cols}x${rows}`} disabled={state === 'generating'} aria-pressed={draftCols === cols && draftRows === rows} className={draftCols === cols && draftRows === rows ? 'active' : ''} onClick={() => setGridPreset(cols, rows)}>{cols}×{rows}</button>
+                  ))}
+                </div>
+                {sizePending && <div className="notice pending-size-notice">현재 캔버스는 {project.mazeGraph.cols}×{project.mazeGraph.rows}입니다. 아래 버튼을 누르면 {draftCols}×{draftRows}로 다시 만듭니다.</div>}
+                <label className="field"><span>Seed</span><input aria-label="Seed" disabled={state === 'generating'} value={project.seed} maxLength={120} onChange={(event) => update('seed', event.target.value.replace(/[^\p{L}\p{N}_. -]/gu, ''))} /></label>
+                <button className="button" disabled={state === 'generating'} onClick={() => void onGenerate(projectFromGridDraft())}><WandSparkles size={17} />이 크기로 미로 다시 생성</button>
+                <button className="advanced-toggle" onClick={() => setAdvanced((value) => !value)}><Settings2 size={16} />고급 설정<ChevronRight className={advanced ? 'rotated' : ''} size={16} /></button>
+                {advanced && (
+                  <>
+                    <label className="field"><span>생성 알고리즘</span><select disabled={state === 'generating'} value={project.mazeGraph.algorithm} onChange={(event) => {
+                      const algorithm = event.target.value as MazeAlgorithm
+                      onChange({ ...project, mazeGraph: { ...project.mazeGraph, algorithm } })
+                      if (generationAnimation !== 'none') setGenerationAnimation(algorithm)
+                    }}><option value="dfs">DFS 탐색</option><option value="kruskal">Kruskal 벽 제거</option><option value="prim">Prim 영역 확장</option></select></label>
+                    <label className="field"><span>생성 애니메이션</span><select disabled={state === 'generating'} value={generationAnimation} onChange={(event) => {
+                      const mode = event.target.value as 'none' | MazeAlgorithm
+                      setGenerationAnimation(mode)
+                      if (mode !== 'none') onChange({ ...project, mazeGraph: { ...project.mazeGraph, algorithm: mode } })
+                    }}><option value="none">없음</option><option value="dfs">DFS 탐색</option><option value="kruskal">Kruskal 벽 제거</option><option value="prim">Prim 영역 확장</option></select></label>
+                  </>
+                )}
+              </div>
+              <QualityCard project={project} validation={validation} onRepair={autoRepair} />
+            </>
+          ) : (
+            <div className="inspector-section settings-stack edit-tools-section">
+              <div className="notice editor-help">도구를 고르면 설정창이 닫힙니다. 벽 가까이를 누르거나 쓸어 편집하고, 두 손가락으로 확대·이동하세요.</div>
+              <div className="editor-tool-grid">
+                {toolOptions.map(({ id, label, icon: Icon }) => (
+                  <button key={id} className={tool === id && editorEnabled ? 'active' : ''} onClick={() => chooseEditorTool(id)}><Icon size={17} />{label}</button>
+                ))}
+              </div>
+              <div className="settings-row">
+                <button className="button secondary small" disabled={!history.canUndo} onClick={() => restoreEditorHistory('undo')}><Undo2 size={15} />실행 취소</button>
+                <button className="button secondary small" disabled={!history.canRedo} onClick={() => restoreEditorHistory('redo')}><Redo2 size={15} />다시 실행</button>
+              </div>
+              <button className="button ghost small" onClick={() => {
+                finishWallEdit(false)
+                const next = projectFromEditorSnapshot(project, editBaselineRef.current)
+                historyRef.current.reset(editorSnapshotFromProject(next))
+                acknowledgedEditorGraphRef.current = next.mazeGraph
+                onChange(next)
+              }}>편집 전 상태로</button>
+              <div className="transform-grid">
+                <button onClick={() => {
+                  const swapped = swapEndpoints(project.startCell, project.endCell)
+                  commit({ ...project, startCell: swapped.start, endCell: swapped.end })
+                }}><ArrowLeftRight size={16} />시작·종료 교환</button>
+                <button onClick={() => applyTransform('flip-horizontal')}>↔ 좌우 반전</button>
+                <button onClick={() => applyTransform('flip-vertical')}>↕ 상하 반전</button>
+                <button onClick={() => applyTransform('rotate-clockwise')}><RotateCw size={16} />90° 회전</button>
+              </div>
+              {editorEnabled && <button className="button secondary" onClick={() => {
+                finishWallEdit(true)
+                setEditorEnabled(false)
+                setSheetOpen(false)
+              }}><CheckCircle2 size={17} />편집 완료</button>}
+            </div>
+          )}
         </>
       )
     }
@@ -1029,6 +1243,15 @@ export function StudioScreen({
     )
   })()
 
+  const defaultMobileEditTools: EditorTool[] = ['open-wall', 'close-wall', 'pan']
+  const mobileEditTools: EditorTool[] = defaultMobileEditTools.includes(tool)
+    ? defaultMobileEditTools
+    : [tool, 'open-wall', 'pan']
+  const drawingMode = editorEnabled && step === 1 && source === 'drawing'
+  const activeToolLabel = drawingMode
+    ? '실루엣 그리기'
+    : toolOptions.find((item) => item.id === tool)?.label ?? '편집'
+
   return (
     <>
     <main
@@ -1037,6 +1260,8 @@ export function StudioScreen({
       data-inspector-collapsed={inspectorCollapsed}
       data-focus-mode={focusMode}
       data-sheet-open={sheetOpen}
+      data-editor-enabled={editorEnabled}
+      data-step={step}
     >
       <header className="studio-header no-print" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
         <button className="brand" onClick={onHome} aria-label="홈으로">
@@ -1121,17 +1346,15 @@ export function StudioScreen({
               </button>
               <button
                 className={`toolbar-button edit-tool ${editorEnabled ? 'active' : ''}`}
-                aria-label="미로 편집"
-                onClick={() => {
-                  if (!editorEnabled) editBaselineRef.current = project
-                  setEditorEnabled((value) => !value)
-                }}
+                aria-label={editorEnabled ? '미로 편집 완료' : '미로 편집 시작'}
+                aria-pressed={editorEnabled}
+                onClick={toggleEditor}
               >
-                <PencilLine size={17} /><span>미로 편집</span>
+                {editorEnabled ? <CheckCircle2 size={17} /> : <PencilLine size={17} />}<span>{editorEnabled ? '편집 완료' : '미로 편집'}</span>
               </button>
               <span className="toolbar-separator history-tool" />
-              <button className="toolbar-button history-tool" disabled={!history.canUndo} aria-label="실행 취소" onClick={() => onChange(historyRef.current.undo())}><Undo2 size={17} /></button>
-              <button className="toolbar-button history-tool" disabled={!history.canRedo} aria-label="다시 실행" onClick={() => onChange(historyRef.current.redo())}><Redo2 size={17} /></button>
+              <button className="toolbar-button history-tool" disabled={!history.canUndo} aria-label="실행 취소" onClick={() => restoreEditorHistory('undo')}><Undo2 size={17} /></button>
+              <button className="toolbar-button history-tool" disabled={!history.canRedo} aria-label="다시 실행" onClick={() => restoreEditorHistory('redo')}><Redo2 size={17} /></button>
             </div>
             <div className="toolbar-group view-controls">
               <button
@@ -1173,6 +1396,7 @@ export function StudioScreen({
           <div className="canvas-viewport">
             <MazeCanvas
               ref={canvasRef}
+              className="maze-canvas-shell"
               model={renderModelFromProject(project)}
               mode={editorEnabled ? 'edit' : 'view'}
               singlePointerAction={
@@ -1184,7 +1408,8 @@ export function StudioScreen({
                       : 'edit'
                   : 'auto'
               }
-              preferWallHit={tool === 'open-wall' || tool === 'close-wall'}
+              preferWallHit={editorEnabled && step === 2 && (tool === 'open-wall' || tool === 'close-wall')}
+              commitEditOnPinch={editorEnabled && step === 2 && (tool === 'open-wall' || tool === 'close-wall')}
               onEditGesture={handleEditGesture}
               frame={rendererFrame}
               theme={{
@@ -1197,9 +1422,15 @@ export function StudioScreen({
               }}
               ariaLabel={`${project.title} 제작 캔버스. 두 손가락으로 확대하고 이동할 수 있습니다.`}
             />
+            {editorEnabled && (
+              <div className="canvas-edit-hint" role="status">
+                <PencilLine size={15} />
+                <span><strong>{activeToolLabel}</strong>{drawingMode ? ' · 한 손가락으로 윤곽 그리기, 두 손가락 확대·이동' : tool === 'pan' ? ' · 한 손가락 이동, 두 손가락 확대' : ' · 누르거나 쓸어 편집, 두 손가락 확대·이동'}</span>
+              </div>
+            )}
           </div>
           <div className="canvas-statusbar no-print">
-            <span>{project.grid.cols}×{project.grid.rows} · {project.mazeMetrics.activeCells.toLocaleString()} 셀 · Seed {project.seed.slice(0, 24)}</span>
+            <span>{project.mazeGraph.cols}×{project.mazeGraph.rows} · {project.mazeMetrics.activeCells.toLocaleString()} 셀 · Seed {project.seed.slice(0, 24)}</span>
             <span>{editorEnabled ? `${toolOptions.find((item) => item.id === tool)?.label} 도구` : '보기 모드'} · {validation.valid ? '검증 통과' : `문제 ${validation.issues.length}건`}</span>
           </div>
           {(state === 'generating' || generationProgress) && (
@@ -1246,6 +1477,22 @@ export function StudioScreen({
           {inspectorContent}
         </aside>
 
+        {editorEnabled && step === 2 && (
+          <nav className="mobile-edit-dock no-print" aria-label="모바일 미로 편집 도구" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
+            {mobileEditTools.map((id) => {
+              const item = toolOptions.find((candidate) => candidate.id === id)
+              if (!item) return null
+              const Icon = item.icon
+              return <button key={id} className={tool === id ? 'active' : ''} aria-label={`${item.label} 도구`} aria-pressed={tool === id} onClick={() => chooseEditorTool(id)}><Icon size={18} /><span>{item.label}</span></button>
+            })}
+            <button disabled={!history.canUndo} aria-label="실행 취소" onClick={() => restoreEditorHistory('undo')}><Undo2 size={18} /><span>취소</span></button>
+            <button disabled={!history.canRedo} aria-label="다시 실행" onClick={() => restoreEditorHistory('redo')}><Redo2 size={18} /><span>다시</span></button>
+            <button className="done" aria-label="미로 편집 완료" onClick={() => {
+              finishWallEdit(true)
+              setEditorEnabled(false)
+            }}><CheckCircle2 size={18} /><span>완료</span></button>
+          </nav>
+        )}
         <nav className="mobile-tabs no-print" aria-label="모바일 제작 탭" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
           {mobileSteps.map((id) => {
             const item = steps.find((candidate) => candidate.id === id)!

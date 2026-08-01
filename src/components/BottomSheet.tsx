@@ -24,6 +24,7 @@ export interface BottomSheetProps {
   closeOnEscape?: boolean
   initialFocusRef?: RefObject<HTMLElement | null>
   maxHeight?: number | string
+  closeLabel?: string
 }
 
 interface DragState {
@@ -70,6 +71,7 @@ export function BottomSheet({
   closeOnEscape = true,
   initialFocusRef,
   maxHeight = 'min(86dvh, 760px)',
+  closeLabel = '설정 닫기',
 }: BottomSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<DragState | null>(null)
@@ -218,7 +220,7 @@ export function BottomSheet({
             type="button"
             style={closeButtonStyle}
             className="mc-bottom-sheet__close"
-            aria-label="설정 닫기"
+            aria-label={closeLabel}
             title="닫기"
             onClick={onClose}
           >

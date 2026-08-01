@@ -40,6 +40,7 @@ export interface MazeCanvasProps {
   mode?: MazeCanvasMode
   singlePointerAction?: 'auto' | 'pan' | 'edit' | 'zoom'
   preferWallHit?: boolean
+  commitEditOnPinch?: boolean
   disabled?: boolean
   className?: string
   style?: CSSProperties
@@ -88,6 +89,7 @@ interface GestureState {
   pinchDistance: number
   pinchMidpoint: MazeScreenPoint
   editedKeys: Set<string>
+  wallOrientation: 'horizontal' | 'vertical' | null
   moved: boolean
 }
 
@@ -99,6 +101,7 @@ const initialGesture = (): GestureState => ({
   pinchDistance: 0,
   pinchMidpoint: { x: 0, y: 0 },
   editedKeys: new Set(),
+  wallOrientation: null,
   moved: false,
 })
 
@@ -110,6 +113,9 @@ const midpoint = (a: PointerSample, b: PointerSample): MazeScreenPoint => ({
 const pointDistance = (a: MazeScreenPoint, b: MazeScreenPoint): number =>
   Math.hypot(a.x - b.x, a.y - b.y)
 
+const editSampleSpacing = (renderer: MazeCanvasRenderer): number =>
+  Math.max(0.5, Math.min(8, renderer.getViewport().scale * 0.25))
+
 const hitKey = (hit: MazeHit | null): string | null => {
   if (!hit) return null
   if (hit.kind === 'cell') return `${hit.row}:${hit.col}:cell`
@@ -120,6 +126,11 @@ const hitKey = (hit: MazeHit | null): string | null => {
     return `${hit.row - 1}:${hit.col}:bottom`
   }
   return `${hit.row}:${hit.col}:${hit.wall}`
+}
+
+const wallOrientation = (hit: MazeHit): 'horizontal' | 'vertical' | null => {
+  if (hit.kind !== 'wall') return null
+  return hit.wall === 'top' || hit.wall === 'bottom' ? 'horizontal' : 'vertical'
 }
 
 const screenReaderOnly: CSSProperties = {
@@ -172,6 +183,7 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
       mode = 'view',
       singlePointerAction = 'auto',
       preferWallHit = false,
+      commitEditOnPinch = false,
       disabled = false,
       className,
       style,
@@ -394,10 +406,24 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
       ): void => {
         const renderer = rendererRef.current
         if (!renderer) return
-        const hit = renderer.hitTest(point, preferWallHit)
+        const wallHitSlop =
+          sample.pointerType === 'touch'
+            ? 14
+            : sample.pointerType === 'pen'
+              ? 12
+              : 8
+        const hit = renderer.hitTest(point, preferWallHit, wallHitSlop)
         const gesture = gestureRef.current
-        const key = hitKey(hit)
         const changesMaze = phase === 'start' || phase === 'move'
+        const orientation = hit ? wallOrientation(hit) : null
+        if (changesMaze && orientation) {
+          if (gesture.wallOrientation === null) {
+            gesture.wallOrientation = orientation
+          } else if (gesture.wallOrientation !== orientation) {
+            return
+          }
+        }
+        const key = hitKey(hit)
         if (changesMaze && key && gesture.editedKeys.has(key)) return
         if (changesMaze && key) gesture.editedKeys.add(key)
         callbackRef.current.onEditGesture?.({
@@ -409,6 +435,30 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
         })
       },
       [preferWallHit],
+    )
+
+    const emitInterpolatedEdits = useCallback(
+      (
+        sample: PointerSample,
+        from: MazeScreenPoint,
+        to: MazeScreenPoint,
+      ): void => {
+        const renderer = rendererRef.current
+        if (!renderer) return
+        const distance = pointDistance(from, to)
+        const segmentCount = Math.max(
+          1,
+          Math.ceil(distance / editSampleSpacing(renderer)),
+        )
+        for (let segment = 1; segment <= segmentCount; segment += 1) {
+          const progress = segment / segmentCount
+          emitEdit('move', sample, {
+            x: from.x + (to.x - from.x) * progress,
+            y: from.y + (to.y - from.y) * progress,
+          })
+        }
+      },
+      [emitEdit],
     )
 
     const beginPinch = useCallback((): void => {
@@ -423,7 +473,7 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
           previousGesture.primaryPointerId,
         )
         if (previousSample) {
-          emitEdit('cancel', previousSample, {
+          emitEdit(commitEditOnPinch ? 'end' : 'cancel', previousSample, {
             x: previousSample.x,
             y: previousSample.y,
           })
@@ -437,7 +487,7 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
       gestureRef.current.pinchDistance = Math.max(1, pointDistance(first, second))
       gestureRef.current.moved = true
       gestureRef.current.editedKeys.clear()
-    }, [emitEdit])
+    }, [commitEditOnPinch, emitEdit])
 
     const onPointerDown = useCallback(
       (event: ReactPointerEvent<HTMLCanvasElement>): void => {
@@ -466,6 +516,7 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
         gesture.primaryPointerId = event.pointerId
         gesture.lastPoint = point
         gesture.editedKeys = new Set()
+        gesture.wallOrientation = null
         gesture.moved = false
         const forcePan = spacePressedRef.current || event.button === 1
         if (forcePan || resolvedPointerAction === 'pan') {
@@ -473,13 +524,13 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
         } else if (resolvedPointerAction === 'zoom') {
           gesture.kind = 'zoom'
         } else if (resolvedPointerAction === 'edit') {
-          gesture.kind = event.pointerType === 'touch' ? 'edit-pending' : 'edit'
+          gesture.kind = event.pointerType === 'touch' || preferWallHit ? 'edit-pending' : 'edit'
           if (gesture.kind === 'edit') emitEdit('start', sample, point)
         } else {
           gesture.kind = 'swipe'
         }
       },
-      [beginPinch, disabled, emitEdit, resolvedPointerAction],
+      [beginPinch, disabled, emitEdit, preferWallHit, resolvedPointerAction],
     )
 
     const onPointerMove = useCallback(
@@ -489,6 +540,7 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
         const renderer = rendererRef.current
         if (!sample || !renderer) return
         const point = pointerPoint(event.nativeEvent, event.currentTarget)
+        const previousPoint = { x: sample.x, y: sample.y }
         sample.x = point.x
         sample.y = point.y
         sample.nativeEvent = event.nativeEvent
@@ -534,12 +586,28 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
           }
         } else if (gesture.kind === 'edit-pending' && movement > 4) {
           gesture.kind = 'edit'
-          emitEdit('start', sample, point)
+          const startPoint = { x: sample.startX, y: sample.startY }
+          if (preferWallHit) {
+            gesture.wallOrientation =
+              Math.abs(point.x - startPoint.x) >= Math.abs(point.y - startPoint.y)
+                ? 'horizontal'
+                : 'vertical'
+          }
+          emitEdit('start', sample, startPoint)
+          emitInterpolatedEdits(sample, startPoint, point)
         } else if (gesture.kind === 'edit') {
-          emitEdit('move', sample, point)
+          emitInterpolatedEdits(sample, previousPoint, point)
         }
       },
-      [beginPinch, disabled, draw, emitEdit, notifyViewport],
+      [
+        beginPinch,
+        disabled,
+        draw,
+        emitEdit,
+        emitInterpolatedEdits,
+        notifyViewport,
+        preferWallHit,
+      ],
     )
 
     const finishPointer = useCallback(
@@ -548,12 +616,20 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
         if (!sample) return
         const point = pointerPoint(event.nativeEvent, event.currentTarget)
         const gesture = gestureRef.current
+        sample.nativeEvent = event.nativeEvent
 
         if (gesture.primaryPointerId === event.pointerId) {
           if (gesture.kind === 'edit-pending') {
-            emitEdit('start', sample, point)
+            const startPoint = { x: sample.startX, y: sample.startY }
+            emitEdit('start', sample, startPoint)
+            emitInterpolatedEdits(sample, startPoint, point)
             emitEdit('end', sample, point)
           } else if (gesture.kind === 'edit') {
+            emitInterpolatedEdits(
+              sample,
+              { x: sample.x, y: sample.y },
+              point,
+            )
             emitEdit('end', sample, point)
           } else if (gesture.kind === 'swipe') {
             const deltaX = point.x - sample.startX
@@ -607,7 +683,14 @@ export const MazeCanvas = forwardRef<MazeCanvasHandle, MazeCanvasProps>(
           beginPinch()
         }
       },
-      [beginPinch, draw, emitEdit, mode, notifyViewport],
+      [
+        beginPinch,
+        draw,
+        emitEdit,
+        emitInterpolatedEdits,
+        mode,
+        notifyViewport,
+      ],
     )
 
     const cancelPointer = useCallback(
