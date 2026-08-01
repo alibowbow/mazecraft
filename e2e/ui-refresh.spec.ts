@@ -16,7 +16,7 @@ test('홈에서 핵심 가치와 하나의 프로젝트 가져오기 경로를 �
 
   await expect(page.getByRole('heading', { name: /미로를 만들고.*이야기를 숨기세요/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /새 미로 만들기/ })).toBeVisible()
-  await expect(page.locator('.hero-maze-card')).toBeVisible()
+  await expect(page.getByText('LIVE MAZE', { exact: true })).toHaveCount(0)
   const projectInput = page.locator('input[type="file"][accept*=".mazecraft"]')
   await expect(projectInput).toHaveCount(1)
   await expect(projectInput).toHaveAttribute('tabindex', '-1')

@@ -90,7 +90,7 @@ import {
   type MazeAnimationSnapshot,
 } from '../../renderer/animationController'
 import { renderModelFromProject } from '../../renderer/types'
-import { difficultyLabel, scoreLabel } from '../../app/projectFactory'
+import { createRandomSeed, difficultyLabel, scoreLabel } from '../../app/projectFactory'
 import type { AutosaveStatus } from '../../storage'
 import { type EditorTool } from '../editor/editor'
 
@@ -107,7 +107,7 @@ interface StudioScreenProps {
   generationProgress: { completed: number; total: number } | null
   generationTrace: MazeGenerationTraceStep[]
   onChange: (project: MazeProject) => void
-  onGenerate: (base?: MazeProject) => Promise<void>
+  onGenerate: (base?: MazeProject) => Promise<boolean>
   onCancelGeneration: () => void
   onPlay: (recordCreator?: boolean) => void
   onHome: () => void
@@ -312,6 +312,7 @@ export function StudioScreen({
     cols: String(project.grid.cols),
     rows: String(project.grid.rows),
   })
+  const [seedDraft, setSeedDraft] = useState('')
   const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null)
   const [showSolution, setShowSolution] = useState(false)
   const [advanced, setAdvanced] = useState(false)
@@ -368,6 +369,10 @@ export function StudioScreen({
   useEffect(() => {
     setGridDraft({ cols: String(project.grid.cols), rows: String(project.grid.rows) })
   }, [project.id, project.grid.cols, project.grid.rows])
+
+  useEffect(() => {
+    setSeedDraft('')
+  }, [project.id])
 
   useEffect(() => {
     const query = window.matchMedia(compactLayoutQuery)
@@ -547,6 +552,16 @@ export function StudioScreen({
 
   const setGridPreset = (cols: number, rows: number) => {
     setGridDraft({ cols: String(cols), rows: String(rows) })
+  }
+
+  const generateMazeFromDraft = async () => {
+    const requestedSeed = seedDraft.trim()
+    const next = {
+      ...projectFromGridDraft(),
+      seed: requestedSeed || createRandomSeed(),
+      updatedAt: new Date().toISOString(),
+    }
+    if (await onGenerate(next)) setSeedDraft('')
   }
 
   const fitAndFocusCanvas = () => {
@@ -1066,8 +1081,30 @@ export function StudioScreen({
                   ))}
                 </div>
                 {sizePending && <div className="notice pending-size-notice">현재 캔버스는 {project.mazeGraph.cols}×{project.mazeGraph.rows}입니다. 아래 버튼을 누르면 {draftCols}×{draftRows}로 다시 만듭니다.</div>}
-                <label className="field"><span>Seed</span><input aria-label="Seed" disabled={state === 'generating'} value={project.seed} maxLength={120} onChange={(event) => update('seed', event.target.value.replace(/[^\p{L}\p{N}_. -]/gu, ''))} /></label>
-                <button className="button" disabled={state === 'generating'} onClick={() => void onGenerate(projectFromGridDraft())}><WandSparkles size={17} />이 크기로 미로 다시 생성</button>
+                <label className="field seed-field">
+                  <span>Seed (선택)</span>
+                  <input
+                    aria-label="Seed"
+                    disabled={state === 'generating'}
+                    value={seedDraft}
+                    maxLength={120}
+                    placeholder="비워두면 새 Seed 자동 생성"
+                    onChange={(event) => setSeedDraft(event.target.value.replace(/[^\p{L}\p{N}_. -]/gu, ''))}
+                  />
+                  <small>비워두면 누를 때마다 새 미로 · 입력하면 같은 미로 재현</small>
+                </label>
+                <div className="current-seed" aria-label="현재 미로 Seed">
+                  <span>현재 Seed</span>
+                  <code title={project.seed}>{project.seed}</code>
+                  <button
+                    type="button"
+                    disabled={state === 'generating'}
+                    onClick={() => setSeedDraft(project.seed)}
+                  >
+                    현재 Seed 사용
+                  </button>
+                </div>
+                <button className="button" disabled={state === 'generating'} onClick={() => void generateMazeFromDraft()}><WandSparkles size={17} />{seedDraft.trim() ? '입력한 Seed로 미로 재현' : '새 Seed로 미로 다시 생성'}</button>
                 <button className="advanced-toggle" onClick={() => setAdvanced((value) => !value)}><Settings2 size={16} />고급 설정<ChevronRight className={advanced ? 'rotated' : ''} size={16} /></button>
                 {advanced && (
                   <>

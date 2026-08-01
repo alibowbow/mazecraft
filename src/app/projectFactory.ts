@@ -13,7 +13,7 @@ import {
 } from '../core/maze'
 import type { ProjectTemplate } from '../features/home/HomeScreen'
 
-const randomSeed = () =>
+export const createRandomSeed = () =>
   typeof crypto !== 'undefined' && 'getRandomValues' in crypto
     ? [...crypto.getRandomValues(new Uint32Array(2))].map((value) => value.toString(36)).join('-')
     : `maze-${Date.now().toString(36)}`
@@ -37,7 +37,7 @@ const defaultTextSettings = {
 }
 
 export const createProjectFromTemplate = (template: ProjectTemplate): MazeProject => {
-  const seed = randomSeed()
+  const seed = createRandomSeed()
   const common = { seed }
   if (template === 'text') {
     const base = createDefaultProject({ ...common, title: '글자 미로', grid: { rows: 32, cols: 32, minimumCellPixels: 8 } })
