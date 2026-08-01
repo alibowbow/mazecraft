@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
 import type {
   CellPosition,
   CreatorReplay,
@@ -12,12 +21,8 @@ import {
   migrateProject,
   validateMaze,
 } from '../core/maze'
-import { StudioScreen } from '../features/creator/StudioScreen'
-import { ExportDialog } from '../features/export/ExportDialog'
 import { HomeScreen, type ProjectTemplate } from '../features/home/HomeScreen'
-import { PlayerScreen } from '../features/player/PlayerScreen'
 import { ProjectService } from '../features/projects/projectService'
-import { ShareDialog } from '../features/share/ShareDialog'
 import {
   createRemixProject,
   readShareHash,
@@ -44,6 +49,27 @@ import {
 
 type Route = 'loading' | 'home' | 'studio' | 'play'
 
+const StudioScreen = lazy(() =>
+  import('../features/creator/StudioScreen').then((module) => ({
+    default: module.StudioScreen,
+  })),
+)
+const PlayerScreen = lazy(() =>
+  import('../features/player/PlayerScreen').then((module) => ({
+    default: module.PlayerScreen,
+  })),
+)
+const ShareDialog = lazy(() =>
+  import('../features/share/ShareDialog').then((module) => ({
+    default: module.ShareDialog,
+  })),
+)
+const ExportDialog = lazy(() =>
+  import('../features/export/ExportDialog').then((module) => ({
+    default: module.ExportDialog,
+  })),
+)
+
 interface Toast {
   id: number
   message: string
@@ -51,6 +77,16 @@ interface Toast {
 }
 
 const service = new ProjectService(localProjectRepository)
+
+function RouteFallback({ label }: { label: string }) {
+  return (
+    <main className="route-loading" aria-live="polite">
+      <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
+      <strong>{label}</strong>
+      <span className="route-loading-bar" aria-hidden="true"><i /></span>
+    </main>
+  )
+}
 
 const resolveDark = () => {
   const theme = readSettings().theme
@@ -405,42 +441,52 @@ export function App() {
         />
       )}
       {route === 'studio' && project && (
-        <StudioScreen
-          project={project}
-          state={machine.value}
-          saveStatus={saveStatus}
-          generationProgress={generationProgress}
-          generationTrace={generationTrace}
-          onChange={changeProject}
-          onGenerate={generateProject}
-          onCancelGeneration={cancelGeneration}
-          onPlay={play}
-          onHome={() => void home()}
-          onShare={() => setShareOpen(true)}
-          onExport={() => setExportProject(project)}
-          onThemeToggle={toggleTheme}
-          dark={dark}
-          onToast={toast}
-        />
+        <Suspense fallback={<RouteFallback label="제작실을 여는 중…" />}>
+          <StudioScreen
+            project={project}
+            state={machine.value}
+            saveStatus={saveStatus}
+            generationProgress={generationProgress}
+            generationTrace={generationTrace}
+            onChange={changeProject}
+            onGenerate={generateProject}
+            onCancelGeneration={cancelGeneration}
+            onPlay={play}
+            onHome={() => void home()}
+            onShare={() => setShareOpen(true)}
+            onExport={() => setExportProject(project)}
+            onThemeToggle={toggleTheme}
+            dark={dark}
+            onToast={toast}
+          />
+        </Suspense>
       )}
       {route === 'play' && project && (
-        <PlayerScreen
-          project={project}
-          shared={sharedPlay}
-          allowSolution={!sharedPlay || Boolean(sharedSolution?.length)}
-          recordCreator={recordCreator}
-          onExit={exitPlay}
-          onRemix={(source) => void remix(source)}
-          onCreatorReplay={saveCreatorReplay}
-        />
+        <Suspense fallback={<RouteFallback label="플레이를 준비하는 중…" />}>
+          <PlayerScreen
+            project={project}
+            shared={sharedPlay}
+            allowSolution={!sharedPlay || Boolean(sharedSolution?.length)}
+            recordCreator={recordCreator}
+            onExit={exitPlay}
+            onRemix={(source) => void remix(source)}
+            onCreatorReplay={saveCreatorReplay}
+          />
+        </Suspense>
       )}
-      {shareOpen && project && <ShareDialog project={project} valid={valid} onClose={() => setShareOpen(false)} />}
+      {shareOpen && project && (
+        <Suspense fallback={null}>
+          <ShareDialog project={project} valid={valid} onClose={() => setShareOpen(false)} />
+        </Suspense>
+      )}
       {exportProject && (
-        <ExportDialog
-          project={exportProject}
-          valid={validateMaze(exportProject.mazeGraph, exportProject.startCell, exportProject.endCell).valid}
-          onClose={() => setExportProject(null)}
-        />
+        <Suspense fallback={null}>
+          <ExportDialog
+            project={exportProject}
+            valid={validateMaze(exportProject.mazeGraph, exportProject.startCell, exportProject.endCell).valid}
+            onClose={() => setExportProject(null)}
+          />
+        </Suspense>
       )}
       <div className="toast-region" aria-live="polite">
         {toasts.map((item) => <div key={item.id} className={`toast ${item.error ? 'error' : ''}`}>{item.message}</div>)}

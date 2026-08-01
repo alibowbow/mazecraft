@@ -1,4 +1,5 @@
 import {
+  ArrowDownUp,
   ArrowRight,
   Clock3,
   Copy,
@@ -11,13 +12,15 @@ import {
   Moon,
   Plus,
   Printer,
+  Search,
   Shapes,
   Sparkles,
   Sun,
   Trash2,
   Type,
+  Workflow,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { memo, useMemo, useRef, useState } from 'react'
 import { BottomSheet } from '../../components/BottomSheet'
 import type { MazeProject } from '../../core/maze/types'
 
@@ -31,12 +34,12 @@ const templates: Array<{
   color: string
   label: string
 }> = [
-  { id: 'basic', title: '기본 미로', description: '형태와 난이도를 고르고 가장 빠르게 시작', icon: Shapes, color: 'mint', label: 'QUICK START' },
-  { id: 'text', title: '글자 미로', description: '단어나 문장을 미로의 윤곽으로', icon: Type, color: 'blue', label: 'TYPOGRAPHY' },
-  { id: 'image', title: '이미지 실루엣', description: '내 이미지 안에서 길을 만들기', icon: ImageIcon, color: 'violet', label: 'SILHOUETTE' },
-  { id: 'secret', title: '시크릿 메시지', description: '완주해야 열리는 편지와 쿠폰', icon: MessageSquareText, color: 'coral', label: 'REVEAL' },
-  { id: 'time-attack', title: '타임어택 챌린지', description: '제작자 기록과 벌이는 한판', icon: Clock3, color: 'amber', label: 'CHALLENGE' },
-  { id: 'worksheet', title: '인쇄용 워크시트', description: 'A4 문제지와 정답지를 한 번에', icon: Printer, color: 'slate', label: 'PRINT' },
+  { id: 'basic', title: '기본 미로', description: '형태와 난이도를 고르고 가장 빠르게 시작', icon: Shapes, color: 'mint', label: '빠른 시작' },
+  { id: 'text', title: '글자 미로', description: '단어나 문장을 미로의 윤곽으로', icon: Type, color: 'blue', label: '타이포그래피' },
+  { id: 'image', title: '이미지 실루엣', description: '내 이미지 안에서 길을 만들기', icon: ImageIcon, color: 'violet', label: '실루엣' },
+  { id: 'secret', title: '시크릿 메시지', description: '완주해야 열리는 편지와 쿠폰', icon: MessageSquareText, color: 'coral', label: '완주 보상' },
+  { id: 'time-attack', title: '타임어택 챌린지', description: '제작자 기록과 벌이는 한판', icon: Clock3, color: 'amber', label: '챌린지' },
+  { id: 'worksheet', title: '인쇄용 워크시트', description: 'A4 문제지와 정답지를 한 번에', icon: Printer, color: 'slate', label: '인쇄' },
 ]
 
 const relativeTime = (value: string) => {
@@ -50,7 +53,7 @@ const relativeTime = (value: string) => {
   return `${Math.floor(hours / 24)}일 전`
 }
 
-const ProjectMiniature = ({ project }: { project: MazeProject }) => {
+const ProjectMiniature = memo(function ProjectMiniature({ project }: { project: MazeProject }) {
   const graph = project.mazeGraph
   const width = 180
   const height = 110
@@ -74,7 +77,7 @@ const ProjectMiniature = ({ project }: { project: MazeProject }) => {
       <circle cx={(project.endCell.col + 0.5) * cellWidth} cy={(project.endCell.row + 0.5) * cellHeight} r="3" fill={project.visualTheme.endColor} />
     </svg>
   )
-}
+})
 
 interface HomeScreenProps {
   projects: MazeProject[]
@@ -103,6 +106,25 @@ export function HomeScreen({
 }: HomeScreenProps) {
   const importInputRef = useRef<HTMLInputElement>(null)
   const [actionProject, setActionProject] = useState<MazeProject | null>(null)
+  const [projectQuery, setProjectQuery] = useState('')
+  const [projectSort, setProjectSort] = useState<'recent' | 'title' | 'size'>('recent')
+  const latestProject = projects[0] ?? null
+  const visibleProjects = useMemo(() => {
+    const query = projectQuery.trim().toLocaleLowerCase('ko-KR')
+    const filtered = query
+      ? projects.filter((project) =>
+          project.title.toLocaleLowerCase('ko-KR').includes(query) ||
+          project.seed.toLocaleLowerCase('ko-KR').includes(query),
+        )
+      : projects
+    return [...filtered].sort((left, right) => {
+      if (projectSort === 'title') return left.title.localeCompare(right.title, 'ko-KR')
+      if (projectSort === 'size') {
+        return right.grid.rows * right.grid.cols - left.grid.rows * left.grid.cols
+      }
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    })
+  }, [projectQuery, projectSort, projects])
 
   const runProjectAction = (
     action: (project: MazeProject) => void,
@@ -145,32 +167,54 @@ export function HomeScreen({
         </div>
       </header>
 
-      <section className="home-hero">
+      <section className="home-hero" aria-labelledby="home-hero-title">
         <div className="home-hero-copy">
-          <p className="eyebrow"><Sparkles size={13} /> PLAY TO UNLOCK</p>
-          <h1>미로를 만들고,<br /><span>이야기를 숨기세요.</span></h1>
-          <p>형태를 고르고, 길을 만들고, 직접 검증하세요. 누군가의 완주 끝에 메시지와 이미지가 열립니다.</p>
+          <p className="eyebrow"><Sparkles size={13} /> 풀어야 열리는 이야기</p>
+          <h1 id="home-hero-title">미로를 만들고,<br /><span>이야기를 숨기세요.</span></h1>
+          <p>형태 제작부터 난이도 분석, 플레이 검증, 링크 공유까지 한 작업실에서 끝냅니다.</p>
           <div className="home-hero-actions">
             <button className="button hero-primary" onClick={() => onCreate('basic')}>새 미로 만들기 <ArrowRight size={17} /></button>
-            <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}>
-              <FolderOpen size={17} /> 기존 프로젝트 열기
-            </button>
+            {latestProject ? (
+              <button className="button secondary continue-project" onClick={() => onOpen(latestProject)}>
+                <ArrowRight size={17} /> 최근 작업 이어서
+              </button>
+            ) : (
+              <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}>
+                <FolderOpen size={17} /> 프로젝트 파일 열기
+              </button>
+            )}
           </div>
           <div className="home-capabilities" aria-label="주요 기능">
             <span>150×150 대형 미로</span>
-            <span>3D 물 시뮬레이션</span>
+            <span>지속형 3D 물 시뮬레이션</span>
             <span>링크·QR 공유</span>
           </div>
         </div>
+        <aside className="home-flow-card" aria-label="미로 제작 흐름">
+          <header>
+            <span><Workflow size={17} /> 제작 흐름</span>
+            <small>브라우저 안에서 자동 저장</small>
+          </header>
+          <ol>
+            <li><i>1</i><span><strong>형태 만들기</strong><small>도형·텍스트·이미지·직접 그리기</small></span></li>
+            <li><i>2</i><span><strong>길 다듬기</strong><small>난이도 생성·벽 편집·시작과 종료</small></span></li>
+            <li><i>3</i><span><strong>직접 시험하기</strong><small>플레이·정답 경로·물 흐름 검증</small></span></li>
+            <li><i>4</i><span><strong>건네기</strong><small>링크·QR·이미지·인쇄 파일</small></span></li>
+          </ol>
+          <div className="flow-card-footer">
+            <span><strong>{projects.length}</strong> 저장된 프로젝트</span>
+            <span><strong>{latestProject ? relativeTime(latestProject.updatedAt) : '—'}</strong> 마지막 작업</span>
+          </div>
+        </aside>
       </section>
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">
         <div className="section-heading">
           <div>
-            <p className="section-kicker">01 · START MODE</p>
+            <p className="section-kicker">01 · 시작 방식</p>
             <h2 id="new-maze-title">무엇을 만들까요?</h2>
           </div>
-          <span className="section-note">템플릿은 시작점일 뿐, 편집기에서 모두 바꿀 수 있습니다</span>
+          <span className="section-note">어떤 방식으로 시작해도 제작실에서 모두 바꿀 수 있습니다</span>
         </div>
         <div className="template-grid">
           {templates.map((template, index) => {
@@ -194,20 +238,41 @@ export function HomeScreen({
       <section className="home-section projects-section" aria-labelledby="recent-title">
         <div className="section-heading">
           <div>
-            <p className="section-kicker">02 · YOUR WORK</p>
-            <h2 id="recent-title">최근 프로젝트 <span>{projects.length}</span></h2>
+            <p className="section-kicker">02 · 내 작업</p>
+            <h2 id="recent-title">프로젝트 <span>{projects.length}</span></h2>
           </div>
-          <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}>
-            <FolderOpen size={17} />
-            파일 열기
-          </button>
+          <div className="project-tools">
+            <label className="project-search">
+              <Search size={16} aria-hidden="true" />
+              <span className="sr-only">프로젝트 검색</span>
+              <input
+                type="search"
+                value={projectQuery}
+                placeholder="프로젝트 검색"
+                onChange={(event) => setProjectQuery(event.target.value)}
+              />
+            </label>
+            <label className="project-sort">
+              <ArrowDownUp size={15} aria-hidden="true" />
+              <span className="sr-only">프로젝트 정렬</span>
+              <select value={projectSort} onChange={(event) => setProjectSort(event.target.value as typeof projectSort)}>
+                <option value="recent">최근 수정순</option>
+                <option value="title">이름순</option>
+                <option value="size">큰 미로순</option>
+              </select>
+            </label>
+            <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}>
+              <FolderOpen size={17} />
+              파일 열기
+            </button>
+          </div>
         </div>
 
         {loading ? (
           <div className="empty-projects" aria-live="polite">프로젝트를 불러오는 중입니다…</div>
-        ) : projects.length ? (
+        ) : visibleProjects.length ? (
           <div className="project-grid">
-            {projects.slice(0, 12).map((project) => (
+            {visibleProjects.slice(0, 12).map((project) => (
               <article className="project-card" key={project.id}>
                 <button className="project-preview" onClick={() => onOpen(project)}>
                   <ProjectMiniature project={project} />
@@ -216,7 +281,7 @@ export function HomeScreen({
                 <div className="project-meta">
                   <button className="project-title" onClick={() => onOpen(project)}>
                     <strong>{project.title}</strong>
-                    <small>{relativeTime(project.updatedAt)} · {project.grid.cols}×{project.grid.rows}</small>
+                    <small>{relativeTime(project.updatedAt)} · {project.grid.cols}×{project.grid.rows} · 최단 {project.mazeMetrics.pathLength}칸</small>
                   </button>
                   <button
                     type="button"
@@ -235,12 +300,12 @@ export function HomeScreen({
         ) : (
           <div className="empty-projects">
             <FileText size={28} />
-            <strong>아직 저장된 미로가 없습니다</strong>
-            <span>위 템플릿 중 하나를 선택하면 자동 저장이 시작됩니다.</span>
+            <strong>{projectQuery ? '검색 결과가 없습니다' : '아직 저장된 미로가 없습니다'}</strong>
+            <span>{projectQuery ? '다른 이름이나 Seed로 다시 찾아보세요.' : '위 템플릿 중 하나를 선택하면 자동 저장이 시작됩니다.'}</span>
           </div>
         )}
       </section>
-      <footer className="home-footer">MAZECRAFT CORE 1.0 · LOCAL FIRST CREATIVE TOOL</footer>
+      <footer className="home-footer">이 기기에 자동 저장 · 회원가입 없이 링크로 공유</footer>
 
       <BottomSheet
         open={Boolean(actionProject)}

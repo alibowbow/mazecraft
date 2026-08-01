@@ -373,7 +373,7 @@ describe('buildWaterSimulation', () => {
 })
 
 describe('sampleWaterSimulation', () => {
-  it('interpolates fill levels, then drains corridors while retaining pools', () => {
+  it('interpolates fill levels, then establishes through-flow while retaining pools', () => {
     const graph = createGraph(4, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
       [{ row: 1, col: 1 }, { row: 2, col: 1 }],
@@ -401,7 +401,7 @@ describe('sampleWaterSimulation', () => {
     const completed = sampleWaterSimulation(model, model.totalDurationMs)
     expect(completed.progress).toBe(1)
     expect(frameAt(model, model.totalDurationMs, 0, 1)).toMatchObject({
-      level: 0.06,
+      level: model.options.steadyFlowLevel,
       state: 'wet',
     })
     expect(frameAt(model, model.totalDurationMs, 2, 0)).toMatchObject({
@@ -411,7 +411,7 @@ describe('sampleWaterSimulation', () => {
       scheduleAt(model, 2, 0)?.retainedLevel,
     )
     expect(frameAt(model, model.totalDurationMs, 3, 1)).toMatchObject({
-      level: 0,
+      level: model.options.steadyFlowLevel,
       state: 'outlet',
     })
   })

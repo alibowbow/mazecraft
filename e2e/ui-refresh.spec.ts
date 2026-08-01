@@ -16,6 +16,10 @@ test('홈에서 핵심 가치와 하나의 프로젝트 가져오기 경로를 �
 
   await expect(page.getByRole('heading', { name: /미로를 만들고.*이야기를 숨기세요/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /새 미로 만들기/ })).toBeVisible()
+  await expect(page.getByLabel('미로 제작 흐름')).toContainText('형태 만들기')
+  await expect(page.getByLabel('미로 제작 흐름')).toContainText('직접 시험하기')
+  await expect(page.getByPlaceholder('프로젝트 검색')).toBeVisible()
+  await expect(page.getByLabel('프로젝트 정렬')).toBeVisible()
   await expect(page.getByText('LIVE MAZE', { exact: true })).toHaveCount(0)
   const projectInput = page.locator('input[type="file"][accept*=".mazecraft"]')
   await expect(projectInput).toHaveCount(1)
@@ -23,17 +27,18 @@ test('홈에서 핵심 가치와 하나의 프로젝트 가져오기 경로를 �
   await capture(page, testInfo, 'home-desktop.png', true)
 })
 
-test('데스크톱 제작기에서 양쪽 패널과 집중 모드로 캔버스를 확장한다', async ({ page }, testInfo) => {
+test('데스크톱 제작기에서 중복 탐색 없이 단계 흐름과 넓은 캔버스를 제공한다', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1366, height: 768 })
   await createBasic(page)
 
   const workspace = page.locator('.canvas-workspace')
   const initial = await workspace.boundingBox()
   expect(initial).not.toBeNull()
+  expect(initial!.width).toBeGreaterThan(900)
+  await expect(page.locator('.left-rail')).toHaveCount(0)
+  await expect(page.locator('.studio-workflow button')).toHaveCount(6)
+  await expect(page.locator('.studio-workflow button.active')).toContainText('형태')
   await capture(page, testInfo, 'studio-desktop.png')
-
-  await page.locator('.rail-collapse-button').click()
-  await expect(page.locator('.studio-root')).toHaveAttribute('data-nav-collapsed', 'true')
 
   await page.locator('.inspector-collapse').click()
   await expect(page.locator('.studio-root')).toHaveAttribute('data-inspector-collapsed', 'true')
@@ -91,10 +96,10 @@ test('소형 태블릿 홈에서 히어로와 템플릿이 읽을 수 있는 열
 
     await expect.poll(() => page.locator('.home-hero').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
-    )).toBe(1)
+    )).toBe(width <= 900 ? 1 : 2)
     await expect.poll(() => page.locator('.template-grid').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
-    )).toBe(2)
+    )).toBe(width <= 900 ? 2 : 3)
 
     const clippedCards = await page.locator('.template-card').evaluateAll((cards) =>
       cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length,

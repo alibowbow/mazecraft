@@ -7,7 +7,6 @@ export type WaterInletState =
   | 'falling'
   | 'impact'
   | 'steady'
-  | 'fading'
 
 export interface WaterInletLayout {
   boardTopY: number
@@ -73,36 +72,25 @@ export function resolveWaterInletLayout(
   }
 }
 
-export function sampleWaterInlet(
-  elapsedMs: number,
-  completeAtMs: number,
-): WaterInletSample {
+export function sampleWaterInlet(elapsedMs: number): WaterInletSample {
   const elapsed = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0)
-  const completeAt = Math.max(
-    WATER_INLET_IMPACT_MS + 1,
-    Number.isFinite(completeAtMs) ? completeAtMs : WATER_INLET_IMPACT_MS + 1,
-  )
-  const fadeStart = Math.max(
-    WATER_INLET_IMPACT_MS + WATER_INLET_IMPACT_BURST_MS,
-    completeAt - 520,
-  )
-  const fade = 1 - smoothstep(fadeStart, completeAt, elapsed)
-  const strength = smoothstep(0, 190, elapsed) * fade
+  // The tank is a continuous feed. Reaching the outlet establishes a steady
+  // through-flow; it must never turn the inlet off or stop the scene.
+  const strength = smoothstep(0, 190, elapsed)
   const frontProgress = smoothstep(40, WATER_INLET_IMPACT_MS, elapsed)
   const impactStrength =
     smoothstep(
       WATER_INLET_IMPACT_MS,
       WATER_INLET_IMPACT_MS + 165,
       elapsed,
-    ) * fade
+    )
 
   let state: WaterInletState
   if (elapsed <= 0 || strength <= 0.001) state = 'off'
   else if (elapsed < WATER_INLET_IMPACT_MS) state = 'falling'
   else if (elapsed < WATER_INLET_IMPACT_MS + WATER_INLET_IMPACT_BURST_MS) {
     state = 'impact'
-  } else if (elapsed < fadeStart) state = 'steady'
-  else state = 'fading'
+  } else state = 'steady'
 
   return { state, strength, frontProgress, impactStrength }
 }
@@ -111,11 +99,8 @@ export function getWaterFlowElapsedMs(elapsedMs: number): number {
   return Math.max(0, elapsedMs - WATER_INLET_IMPACT_MS)
 }
 
-export function sampleWaterHandoff(
-  elapsedMs: number,
-  completeAtMs: number,
-): WaterHandoffSample {
-  const inlet = sampleWaterInlet(elapsedMs, completeAtMs)
+export function sampleWaterHandoff(elapsedMs: number): WaterHandoffSample {
+  const inlet = sampleWaterInlet(elapsedMs)
   return {
     ...inlet,
     surfaceGate: smoothstep(

@@ -24,7 +24,7 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
     mimeType: 'application/vnd.mazecraft+json',
     buffer: Buffer.from(JSON.stringify(project)),
   })
-  await page.locator('.step-button').filter({ hasText: '테스트' }).click()
+  await page.locator('.studio-workflow button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('high')
   await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
 
@@ -39,7 +39,11 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   )
   await expect(stage).toHaveAttribute(
     'data-fluid-model',
-    'finite-supply-hydraulic',
+    'continuous-feed-hydraulic',
+  )
+  await expect(stage).toHaveAttribute(
+    'data-flow-mode',
+    'continuous-until-user-pauses',
   )
   await expect(stage).toHaveAttribute(
     'data-inlet-renderer',
@@ -235,6 +239,22 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
     timeout: 30_000,
   })
+  await expect(stage).toHaveAttribute('data-outlet-visible', 'true')
+  await expect(stage).toHaveAttribute(
+    'data-outlet-renderer',
+    'continuous-waterfall-and-catch-basin',
+  )
+  expect(
+    Number(await stage.getAttribute('data-outlet-drop-height')),
+  ).toBeGreaterThan(1.4)
+  await expect(stage).toHaveAttribute('data-settled', 'true', {
+    timeout: 30_000,
+  })
+  const steadyElapsed = Number(await stage.getAttribute('data-elapsed-ms'))
+  await page.waitForTimeout(360)
+  expect(Number(await stage.getAttribute('data-elapsed-ms'))).toBeGreaterThan(
+    steadyElapsed,
+  )
   const breakthroughFrame = await captureStage()
   await writeFile(
     testInfo.outputPath('water-hydraulic-breakthrough.png'),
@@ -244,6 +264,14 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   expect(
     Number(await stage.getAttribute('data-filled-cells')),
   ).toBeLessThan(activeCells)
+  await page
+    .getByRole('button', { name: '물 시뮬레이션 일시정지' })
+    .click()
+  const manuallyPausedAt = Number(await stage.getAttribute('data-elapsed-ms'))
+  await page.waitForTimeout(320)
+  expect(Number(await stage.getAttribute('data-elapsed-ms'))).toBe(
+    manuallyPausedAt,
+  )
   expect(
     await page.evaluate(
       () =>

@@ -41,6 +41,7 @@ const EMPTY_STATUS: WaterPlaybackStatus = {
   complete: false,
   inletState: 'off',
   inletVisible: false,
+  outletVisible: false,
 }
 
 const EMPTY_METRICS: WaterRuntimeMetrics = {
@@ -50,6 +51,7 @@ const EMPTY_METRICS: WaterRuntimeMetrics = {
   triangles: 0,
   inletDropHeight: 0,
   inletContactGap: 0,
+  outletDropHeight: 0,
 }
 
 const resolveQuality = (
@@ -155,10 +157,7 @@ export default function WaterSimulationDialog({
         project,
         model,
         resolvedQuality,
-        (next) => {
-          setStatus(next)
-          if (next.complete) setPaused(true)
-        },
+        setStatus,
         (message) => {
           setRenderState('error')
           setErrorMessage(message)
@@ -213,10 +212,6 @@ export default function WaterSimulationDialog({
   }, [])
 
   const togglePlayback = () => {
-    if (status.complete) {
-      restart()
-      return
-    }
     const next = !paused
     runtimeRef.current?.setPaused(next)
     setPaused(next)
@@ -226,23 +221,23 @@ export default function WaterSimulationDialog({
     status.totalCells > 0
       ? Math.round((status.filledCells / status.totalCells) * 100)
       : 0
-  const statusLabel = status.complete
-    ? '유체 실험 완료'
-    : paused
-        ? '일시정지'
-        : status.reachedExit
-          ? '출구를 뚫고 배출되는 중'
+  const statusLabel = paused
+    ? '사용자가 일시정지함'
+    : status.complete
+      ? '유입과 하단 배출이 계속되는 중'
+      : status.reachedExit
+        ? '하단 출구로 물이 떨어지는 중'
         : status.filledCells > 1
           ? '중력·수두에 따라 유량을 나누는 중'
           : '상단 저장조에서 물을 붓는 중'
   const phase = renderState === 'error'
     ? 'error'
-    : status.complete
-      ? 'complete'
-      : paused
-          ? 'paused'
-          : status.reachedExit
-            ? 'reached-exit'
+    : paused
+      ? 'paused'
+      : status.complete
+        ? 'steady-flow'
+        : status.reachedExit
+          ? 'reached-exit'
           : 'pouring'
 
   return (
@@ -250,7 +245,7 @@ export default function WaterSimulationDialog({
       open={open}
       onClose={onClose}
       title="물리 기반 물 미로"
-      description="유한한 물의 양이 중력과 수두 차를 따라 흐릅니다. 출구 유로에는 흐름이 생기고, 막힌 낮은 가지에는 일부만 고이며 나머지 통로는 마른 상태로 남습니다."
+      description="상단에서 물이 계속 유입되어 중력과 수두 차를 따라 흐르고, 하단 출구 밖으로 낙하합니다. 낮은 막힌 가지에만 일부가 고이며 사용자가 멈출 때까지 흐름이 이어집니다."
       width="min(1180px, calc(100vw - 24px))"
       className="water-simulation-modal"
       closeLabel="3D 물 시뮬레이션 닫기"
@@ -261,7 +256,8 @@ export default function WaterSimulationDialog({
           data-testid="water-simulation-stage"
           data-renderer={renderState}
           data-fluid-renderer="displaced-timeline-surface"
-          data-fluid-model="finite-supply-hydraulic"
+          data-fluid-model="continuous-feed-hydraulic"
+          data-flow-mode="continuous-until-user-pauses"
           data-water-continuity="coupled-source-surface"
           data-phase={phase}
           data-quality={resolvedQuality}
@@ -271,6 +267,7 @@ export default function WaterSimulationDialog({
           data-wettable-cells={reachableCellCount}
           data-filled-cells={status.filledCells}
           data-reached-exit={status.reachedExit}
+          data-settled={status.complete}
           data-atlas-width={metrics.atlasWidth}
           data-atlas-height={metrics.atlasHeight}
           data-draw-calls={metrics.drawCalls}
@@ -280,12 +277,15 @@ export default function WaterSimulationDialog({
           data-inlet-visible={status.inletVisible}
           data-inlet-drop-height={metrics.inletDropHeight.toFixed(2)}
           data-inlet-contact-gap={metrics.inletContactGap.toFixed(3)}
+          data-outlet-renderer="continuous-waterfall-and-catch-basin"
+          data-outlet-visible={status.outletVisible}
+          data-outlet-drop-height={metrics.outletDropHeight.toFixed(2)}
           data-elapsed-ms={Math.round(status.elapsedMs)}
           role={renderState === 'error' ? undefined : 'img'}
           aria-label={
             renderState === 'error'
               ? undefined
-              : `${project.title}의 물리 기반 물 미로 실험. 청록색 물이 중력과 수두 차에 따라 일부 통로를 적시며 최하단 출구로 흐릅니다.`
+              : `${project.title}의 물리 기반 물 미로 실험. 청록색 물이 상단에서 계속 유입되고 일부 통로를 적신 뒤 하단 출구 밖으로 떨어집니다.`
           }
         >
           <div
@@ -340,21 +340,17 @@ export default function WaterSimulationDialog({
               onClick={togglePlayback}
               disabled={renderState !== 'ready'}
               aria-label={
-                status.complete
-                  ? '물을 처음부터 다시 붓기'
-                  : paused
-                    ? '물 시뮬레이션 재생'
-                    : '물 시뮬레이션 일시정지'
+                paused
+                  ? '물 시뮬레이션 재생'
+                  : '물 시뮬레이션 일시정지'
               }
             >
-              {status.complete ? (
-                <RotateCcw size={17} />
-              ) : paused ? (
+              {paused ? (
                 <Play size={17} />
               ) : (
                 <Pause size={17} />
               )}
-              {status.complete ? '다시 붓기' : paused ? '계속' : '일시정지'}
+              {paused ? '계속' : '일시정지'}
             </button>
             <button
               className="button secondary"
