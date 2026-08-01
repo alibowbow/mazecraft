@@ -27,6 +27,8 @@ export interface WaterSimulationOptions {
   drainDurationMs?: number
   /** Thin film left in corridors that can drain to the exit. */
   residualFilmLevel?: number
+  /** Stable depth maintained on the source-to-outlet route by continuous feed. */
+  steadyFlowLevel?: number
   /** Water retained in a basin that would need to climb to escape. */
   pooledLevel?: number
   /**
@@ -54,6 +56,7 @@ export interface ResolvedWaterSimulationOptions {
   drainDelayMs: number
   drainDurationMs: number
   residualFilmLevel: number
+  steadyFlowLevel: number
   pooledLevel: number
   sidePoolVolumeRatio: number
   flowPeakLevel: number
@@ -160,6 +163,7 @@ const DEFAULT_OPTIONS: ResolvedWaterSimulationOptions = {
   drainDelayMs: 320,
   drainDurationMs: 900,
   residualFilmLevel: 0.06,
+  steadyFlowLevel: 0.34,
   pooledLevel: 0.92,
   sidePoolVolumeRatio: 0.18,
   flowPeakLevel: 0.78,
@@ -208,6 +212,7 @@ function resolveOptions(
   assertFiniteInRange('drainDelayMs', options.drainDelayMs, 0)
   assertFiniteInRange('drainDurationMs', options.drainDurationMs, 1)
   assertFiniteInRange('residualFilmLevel', options.residualFilmLevel, 0, 1)
+  assertFiniteInRange('steadyFlowLevel', options.steadyFlowLevel, 0, 1)
   assertFiniteInRange('pooledLevel', options.pooledLevel, 0, 1)
   assertFiniteInRange(
     'sidePoolVolumeRatio',
@@ -220,6 +225,14 @@ function resolveOptions(
   if (options.pooledLevel < options.residualFilmLevel) {
     throw new RangeError(
       'pooledLevel must be greater than or equal to residualFilmLevel.',
+    )
+  }
+  if (
+    options.steadyFlowLevel < options.residualFilmLevel ||
+    options.steadyFlowLevel > options.flowPeakLevel
+  ) {
+    throw new RangeError(
+      'steadyFlowLevel must be between residualFilmLevel and flowPeakLevel.',
     )
   }
   if (options.minimumWetLevel > options.flowPeakLevel) {
@@ -857,9 +870,10 @@ export function buildWaterSimulation(
     if (reachable) {
       if (cell.index === exitIndex && reachedExit) {
         drainage = 'exit'
+        retainedLevel = Math.min(peakLevel, options.steadyFlowLevel)
       } else if (backbone.has(cell.index) || canDrain.has(cell.index)) {
         drainage = 'drains'
-        retainedLevel = Math.min(peakLevel, options.residualFilmLevel)
+        retainedLevel = Math.min(peakLevel, options.steadyFlowLevel)
       } else {
         drainage = 'pools'
         retainedLevel = Math.min(peakLevel, options.pooledLevel)

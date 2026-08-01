@@ -25,8 +25,6 @@ import {
   Minus,
   Moon,
   Move,
-  PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Paintbrush,
@@ -328,7 +326,6 @@ export function StudioScreen({
   const [waterSimulationOpen, setWaterSimulationOpen] = useState(false)
   const [waterSimulationProject, setWaterSimulationProject] =
     useState<MazeProject | null>(null)
-  const [navCollapsed, setNavCollapsed] = useState(false)
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [compactLayout, setCompactLayout] = useState(() =>
@@ -353,6 +350,10 @@ export function StudioScreen({
   const solution = useMemo(
     () => solveMaze(project.mazeGraph, project.startCell, project.endCell).path,
     [project.mazeGraph, project.startCell, project.endCell],
+  )
+  const canvasModel = useMemo(
+    () => renderModelFromProject(project),
+    [project],
   )
   const lowPowerDevice = useMemo(() => {
     const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory
@@ -1293,7 +1294,6 @@ export function StudioScreen({
     <>
     <main
       className="studio-root"
-      data-nav-collapsed={navCollapsed}
       data-inspector-collapsed={inspectorCollapsed}
       data-focus-mode={focusMode}
       data-sheet-open={sheetOpen}
@@ -1303,14 +1303,31 @@ export function StudioScreen({
       <header className="studio-header no-print" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
         <button className="brand" onClick={onHome} aria-label="홈으로">
           <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
-          <span><strong>MazeCraft</strong><small>Core 1.0</small></span>
+          <span><strong>MazeCraft</strong><small>제작실</small></span>
         </button>
         <div className="studio-project-title">
+          <small>현재 프로젝트</small>
           <input aria-label="프로젝트 제목" value={project.title} maxLength={200} onChange={(event) => update('title', event.target.value)} />
           <span className={`save-state ${saveStatus.state === 'error' ? 'error' : ''}`} aria-live="polite">
             {saveStatus.state === 'saving' ? '저장 중…' : saveStatus.state === 'error' ? '저장 실패' : saveStatus.state === 'saved' ? <><CheckCircle2 size={13} />저장됨</> : ''}
           </span>
         </div>
+        <nav className="studio-workflow" aria-label="제작 단계">
+          {steps.map(({ id, title, icon: Icon }) => (
+            <button
+              key={id}
+              className={step === id ? 'active' : ''}
+              aria-current={step === id ? 'step' : undefined}
+              aria-label={`${id}단계 ${title}`}
+              data-ready={id < step || (id >= 5 && validation.valid)}
+              onClick={() => selectStep(id)}
+            >
+              <span><Icon size={15} /></span>
+              <small>{id}</small>
+              <strong>{title}</strong>
+            </button>
+          ))}
+        </nav>
         <div className="studio-header-actions">
           <button
             className={`icon-button focus-button ${focusMode ? 'active' : ''}`}
@@ -1328,52 +1345,6 @@ export function StudioScreen({
       </header>
 
       <div className="studio-layout">
-        <aside className="left-rail no-print" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout ? true : undefined}>
-          <section className="rail-section">
-            <div className="rail-heading">
-              <p className="panel-label">제작 단계</p>
-              <button
-                className="rail-collapse-button"
-                aria-label={navCollapsed ? '제작 단계 펼치기' : '제작 단계 접기'}
-                onClick={() => setNavCollapsed((value) => !value)}
-              >
-                {navCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-              </button>
-            </div>
-            <nav className="step-list" aria-label="제작 단계">
-              {steps.map(({ id, title, hint, icon: Icon }) => (
-                <button
-                  key={id}
-                  className={`step-button ${step === id ? 'active' : ''}`}
-                  aria-label={`${id}단계 ${title}: ${hint}`}
-                  title={navCollapsed ? `${id}. ${title} · ${hint}` : undefined}
-                  onClick={() => selectStep(id)}
-                >
-                  <span className="step-number"><Icon size={15} /><small>{id}</small></span>
-                  <span className="step-copy"><strong>{title}</strong><small>{hint}</small></span>
-                  {step === id && <ChevronRight size={15} />}
-                </button>
-              ))}
-            </nav>
-          </section>
-          <section className="rail-section">
-            <p className="panel-label">빠른 이동</p>
-            <div className="layer-list">
-              <button className="layer-row" onClick={() => selectStep(2)}><Layers3 size={15} /><span>미로 벽</span></button>
-              <button className="layer-row" onClick={() => selectStep(2)}><CircleDot size={15} /><span>시작·종료점</span></button>
-              <button className="layer-row" onClick={() => selectStep(3)}><Gamepad2 size={15} /><span>게임 오브젝트 · {project.collectibles.length + project.checkpoints.length}</span></button>
-              <button className="layer-row" onClick={() => selectStep(3)}><ImageIcon size={15} /><span>시크릿 콘텐츠</span></button>
-              <button className="layer-row" onClick={() => selectStep(4)}><Paintbrush size={15} /><span>배경</span></button>
-            </div>
-          </section>
-          {project.attribution && (
-            <section className="rail-section">
-              <p className="panel-label">리믹스 출처</p>
-              <div className="notice">{project.attribution.sourceTitle}{project.attribution.creatorDisplayName ? ` · ${project.attribution.creatorDisplayName}` : ''}</div>
-            </section>
-          )}
-        </aside>
-
         <section className="canvas-workspace" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
           <div className="canvas-toolbar no-print">
             <div className="toolbar-group editing-controls">
@@ -1434,7 +1405,7 @@ export function StudioScreen({
             <MazeCanvas
               ref={canvasRef}
               className="maze-canvas-shell"
-              model={renderModelFromProject(project)}
+              model={canvasModel}
               mode={editorEnabled ? 'edit' : 'view'}
               singlePointerAction={
                 editorEnabled
@@ -1467,8 +1438,8 @@ export function StudioScreen({
             )}
           </div>
           <div className="canvas-statusbar no-print">
-            <span>{project.mazeGraph.cols}×{project.mazeGraph.rows} · {project.mazeMetrics.activeCells.toLocaleString()} 셀 · Seed {project.seed.slice(0, 24)}</span>
-            <span>{editorEnabled ? `${toolOptions.find((item) => item.id === tool)?.label} 도구` : '보기 모드'} · {validation.valid ? '검증 통과' : `문제 ${validation.issues.length}건`}</span>
+            <span>{project.mazeGraph.cols}×{project.mazeGraph.rows} · {difficultyLabel(project.difficulty)} · 최단 {project.mazeMetrics.pathLength.toLocaleString()}칸</span>
+            <span>{editorEnabled ? `${toolOptions.find((item) => item.id === tool)?.label} 도구` : `${project.mazeMetrics.activeCells.toLocaleString()}개 유효 셀`} · {validation.valid ? '공유 준비 완료' : `수정할 문제 ${validation.issues.length}건`}</span>
           </div>
           {(state === 'generating' || generationProgress) && (
             <div className="busy-overlay" aria-live="polite">
@@ -1512,6 +1483,36 @@ export function StudioScreen({
             </div>
           </header>
           {inspectorContent}
+          {project.attribution && (
+            <div className="inspector-attribution">
+              <span>리믹스 출처</span>
+              <strong>{project.attribution.sourceTitle}</strong>
+              {project.attribution.creatorDisplayName && <small>{project.attribution.creatorDisplayName}</small>}
+            </div>
+          )}
+          <footer className="inspector-footer">
+            <button
+              className="button secondary"
+              disabled={step === 1}
+              onClick={() => selectStep(Math.max(1, step - 1) as StudioStep, compactLayout)}
+            >
+              이전
+            </button>
+            <span><strong>{step}</strong> / {steps.length}</span>
+            <button
+              className="button"
+              onClick={() => {
+                if (step === 6) {
+                  setSheetOpen(false)
+                  onShare()
+                  return
+                }
+                selectStep(Math.min(6, step + 1) as StudioStep, compactLayout)
+              }}
+            >
+              {step === 6 ? '공유하기' : `다음 · ${steps.find((item) => item.id === step + 1)?.title}`}
+            </button>
+          </footer>
         </aside>
 
         {editorEnabled && step === 2 && (

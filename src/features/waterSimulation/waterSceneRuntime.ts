@@ -36,6 +36,7 @@ export interface WaterPlaybackStatus {
   complete: boolean
   inletState: WaterInletState
   inletVisible: boolean
+  outletVisible: boolean
 }
 
 export interface WaterRuntimeMetrics {
@@ -45,6 +46,7 @@ export interface WaterRuntimeMetrics {
   triangles: number
   inletDropHeight: number
   inletContactGap: number
+  outletDropHeight: number
 }
 
 export type ResolvedWaterQuality = 'low' | 'high'
@@ -75,11 +77,13 @@ const WATER_SURFACE_Z = 0.185
 const WATER_JET_TOP_Z = 0.34
 const WATER_JET_CONTACT_Z = 0.205
 const WATER_JET_MIN_CONTACT_RADIUS = 0.074
+const WATER_OUTLET_DROP_HEIGHT = 1.58
 
 const WATER_VERTEX_SHADER = /* glsl */ `
   uniform sampler2D uSchedule;
   uniform sampler2D uField;
-  uniform float uTime;
+  uniform float uTimelineTime;
+  uniform float uMotionTime;
   uniform float uDrainStart;
   uniform float uDrainDuration;
   uniform vec2 uBoardSize;
@@ -106,21 +110,26 @@ const WATER_VERTEX_SHADER = /* glsl */ `
       1.0
     );
     float peak = clamp(field.a, 0.0, 1.0);
-    float fill = smoothstep(arrival - 24.0, fullAt + 72.0, uTime);
+    float fill = smoothstep(
+      arrival - 24.0,
+      fullAt + 72.0,
+      uTimelineTime
+    );
     float localDrainStart = max(fullAt, uDrainStart);
     float draining = smoothstep(
       localDrainStart,
       localDrainStart + max(1.0, uDrainDuration),
-      uTime
+      uTimelineTime
     );
     float localLevel = mix(peak * fill, retained, draining) * uFlowGate;
     vec2 channelUv = uv * uBoardSize;
     vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
     float broadWave = sin(
-      dot(channelUv, flow * 4.8) - uTime * 0.0065
+      dot(channelUv, flow * 4.8) - uMotionTime * 0.0065
     );
     float crossWave = sin(
-      dot(channelUv, vec2(-flow.y, flow.x) * 7.2) + uTime * 0.0042
+      dot(channelUv, vec2(-flow.y, flow.x) * 7.2) +
+      uMotionTime * 0.0042
     );
     float impactDistance = length((uv - uImpactCenter) * uBoardSize);
     float impactBody = exp(-pow(impactDistance / 0.46, 4.0)) *
@@ -150,7 +159,8 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
 
   uniform sampler2D uSchedule;
   uniform sampler2D uField;
-  uniform float uTime;
+  uniform float uTimelineTime;
+  uniform float uMotionTime;
   uniform float uDrainStart;
   uniform float uDrainDuration;
   uniform vec2 uBoardSize;
@@ -200,16 +210,20 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
     vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
     vec2 channelUv = vUv * uBoardSize;
     float frontNoise =
-      valueNoise(channelUv * 1.55 + flow * uTime * 0.00016) * 0.68 +
-      valueNoise(channelUv * 0.42 - flow * uTime * 0.00009) * 0.32;
+      valueNoise(channelUv * 1.55 + flow * uMotionTime * 0.00016) * 0.68 +
+      valueNoise(channelUv * 0.42 - flow * uMotionTime * 0.00009) * 0.32;
     float frontRipple = sin(
       dot(channelUv, vec2(-flow.y, flow.x) * 4.8) +
       valueNoise(channelUv * 0.31) * 3.4
     ) * 7.0;
     float frontTime =
-      uTime + (frontNoise - 0.5) * 44.0 + frontRipple;
+      uTimelineTime + (frontNoise - 0.5) * 44.0 + frontRipple;
 
-    float baseWet = smoothstep(arrival - 28.0, arrival + 132.0, uTime);
+    float baseWet = smoothstep(
+      arrival - 28.0,
+      arrival + 132.0,
+      uTimelineTime
+    );
     float irregularWet = smoothstep(
       arrival - 32.0,
       arrival + 138.0,
@@ -221,7 +235,7 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
     float draining = smoothstep(
       localDrainStart,
       localDrainStart + max(1.0, uDrainDuration),
-      uTime
+      uTimelineTime
     );
     float fillingLevel = mix(min(peak, 0.12), peak, fill);
     float level = mix(fillingLevel, retained, draining);
@@ -232,13 +246,17 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
       wet * smoothstep(0.015, 0.12, level),
       sourceInjection * (0.76 + fill * 0.24)
     );
-    float causalGate = smoothstep(arrival - 72.0, arrival + 108.0, uTime);
+    float causalGate = smoothstep(
+      arrival - 72.0,
+      arrival + 108.0,
+      uTimelineTime
+    );
     visibleWater *= max(causalGate, sourceInjection);
 
     float frontAge = max(0.0, frontTime - arrival);
     float leadingFoam =
       exp(-pow(frontAge / 108.0, 2.0)) *
-      step(arrival, uTime) *
+      step(arrival, uTimelineTime) *
       (1.0 - draining);
     float turnAeration = 1.0 - abs(flow.y);
     float edgeAeration = leadingFoam * (
@@ -247,36 +265,36 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
 
     float directionalWave = sin(
       dot(channelUv, flow * 11.0) -
-      uTime * 0.0085 +
+      uMotionTime * 0.0085 +
       valueNoise(channelUv * 0.22) * 4.0
     );
     float crossWave = sin(
       dot(channelUv, vec2(-flow.y, flow.x) * 17.0) +
-      uTime * 0.005
+      uMotionTime * 0.005
     );
     float broadNoise = valueNoise(
-      channelUv * 0.58 + flow * uTime * 0.00022
+      channelUv * 0.58 + flow * uMotionTime * 0.00022
     );
     float fineNoise = valueNoise(
-      channelUv * 2.25 - flow * uTime * 0.00072
+      channelUv * 2.25 - flow * uMotionTime * 0.00072
     );
     float flowStreak = pow(
       max(
         0.0,
         sin(
-          dot(channelUv, flow * 5.2) - uTime * 0.008 +
+          dot(channelUv, flow * 5.2) - uMotionTime * 0.008 +
           broadNoise * 4.6
         ) * 0.5 + 0.5
       ),
       6.0
     );
-    float impactPhase = fract(uTime * 0.00128);
+    float impactPhase = fract(uMotionTime * 0.00128);
     float impactRing = exp(-pow(
       (impactDistance - (0.08 + impactPhase * 0.42)) / 0.045,
       2.0
     )) * (1.0 - impactPhase) * uImpactStrength;
     float impactChurn = sin(
-      impactDistance * 34.0 - uTime * 0.022
+      impactDistance * 34.0 - uMotionTime * 0.022
     ) * exp(-impactDistance * 5.4) * uImpactStrength;
     float surface = directionalWave * 0.44 + crossWave * 0.2 +
       (broadNoise - 0.5) * 1.15 + (fineNoise - 0.5) * 0.32 +
@@ -484,7 +502,8 @@ function createWaterSurfaceMaterial(timeline: WaterSurfaceTimeline) {
     uniforms: {
       uSchedule: { value: schedule },
       uField: { value: field },
-      uTime: { value: 0 },
+      uTimelineTime: { value: 0 },
+      uMotionTime: { value: 0 },
       uDrainStart: { value: Number.MAX_SAFE_INTEGER },
       uDrainDuration: { value: 1 },
       uBoardSize: { value: new THREE.Vector2(1, 1) },
@@ -658,6 +677,8 @@ export class WaterSceneRuntime {
   private readonly inletJet: THREE.Mesh
   private readonly outletJet: THREE.Mesh
   private readonly reservoirWater: THREE.Mesh
+  private readonly outletPool: THREE.Mesh
+  private readonly outletSplashRing: THREE.Mesh
   private readonly inletDroplets: THREE.InstancedMesh
   private readonly outletDroplets: THREE.InstancedMesh
   private readonly splashDroplets: THREE.InstancedMesh
@@ -814,6 +835,8 @@ export class WaterSceneRuntime {
     this.inletJet = streams.inletJet
     this.outletJet = streams.outletJet
     this.reservoirWater = streams.reservoirWater
+    this.outletPool = streams.outletPool
+    this.outletSplashRing = streams.outletSplashRing
 
     const particleSystems = this.addParticleSystems()
     this.inletDroplets = particleSystems.inletDroplets
@@ -851,7 +874,8 @@ export class WaterSceneRuntime {
     this.visibleCursor = 0
     this.paused = false
     this.requestedPaused = false
-    this.waterSurfaceMaterial.uniforms.uTime.value = 0
+    this.waterSurfaceMaterial.uniforms.uTimelineTime.value = 0
+    this.waterSurfaceMaterial.uniforms.uMotionTime.value = 0
     this.lastVisualElapsedMs = -1
     this.lastStatusAt = -Infinity
     this.lastStatusSignature = ''
@@ -866,6 +890,7 @@ export class WaterSceneRuntime {
       complete: false,
       inletState: 'off',
       inletVisible: false,
+      outletVisible: false,
     })
   }
 
@@ -1208,23 +1233,33 @@ export class WaterSceneRuntime {
     this.scene.add(inletJet)
 
     const outletJet = new THREE.Mesh(
-      new THREE.CylinderGeometry(
-        0.1,
-        0.055,
-        1,
-        this.quality === 'high' ? 18 : 8,
+      createFallingJetGeometry(
+        this.quality === 'high' ? 24 : 16,
+        this.quality === 'high' ? 12 : 8,
       ),
       waterMaterial.clone(),
+    )
+    outletJet.position.set(
+      this.exitPosition.x,
+      -graph.rows / 2,
+      WATER_SURFACE_Z,
     )
     outletJet.renderOrder = 8
     outletJet.frustumCulled = false
     this.scene.add(outletJet)
 
-
     updateFallingJetGeometry(inletJet.geometry, dropHeight, 0, 0, 0)
+    updateFallingJetGeometry(
+      outletJet.geometry,
+      WATER_OUTLET_DROP_HEIGHT,
+      0,
+      0,
+      0,
+      1.28,
+    )
 
     const tray = new THREE.Mesh(
-      new RoundedBoxGeometry(1.25, 0.23, 0.5, 4, 0.08),
+      new RoundedBoxGeometry(2.05, 0.5, 0.54, 4, 0.1),
       new THREE.MeshStandardMaterial({
         color: 0xf2f5f3,
         roughness: 0.34,
@@ -1233,17 +1268,57 @@ export class WaterSceneRuntime {
     )
     tray.position.set(
       this.exitPosition.x,
-      -graph.rows / 2 - 1.12,
+      -graph.rows / 2 - WATER_OUTLET_DROP_HEIGHT,
       0.03,
     )
     tray.receiveShadow = true
     tray.castShadow = this.quality === 'high'
     this.scene.add(tray)
 
+    const outletPoolMaterial = waterMaterial.clone()
+    outletPoolMaterial.opacity = 0.82
+    const outletPool = new THREE.Mesh(
+      new RoundedBoxGeometry(1.7, 0.25, 0.18, 4, 0.07),
+      outletPoolMaterial,
+    )
+    outletPool.position.set(
+      this.exitPosition.x,
+      -graph.rows / 2 - WATER_OUTLET_DROP_HEIGHT,
+      0.34,
+    )
+    outletPool.renderOrder = 9
+    outletPool.visible = false
+    this.scene.add(outletPool)
+
+    const outletSplashRing = new THREE.Mesh(
+      new THREE.TorusGeometry(
+        0.24,
+        0.035,
+        this.quality === 'high' ? 10 : 6,
+        this.quality === 'high' ? 28 : 14,
+      ),
+      new THREE.MeshBasicMaterial({
+        color: 0xb8f5ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }),
+    )
+    outletSplashRing.position.set(
+      this.exitPosition.x,
+      -graph.rows / 2 - WATER_OUTLET_DROP_HEIGHT,
+      0.46,
+    )
+    outletSplashRing.renderOrder = 12
+    outletSplashRing.visible = false
+    this.scene.add(outletSplashRing)
+
     return {
       inletJet,
       outletJet,
       reservoirWater,
+      outletPool,
+      outletSplashRing,
     }
   }
 
@@ -1368,8 +1443,10 @@ export class WaterSceneRuntime {
       0,
       0,
     )
-    this.outletJet.scale.set(1, 0.001, 1)
+    this.outletJet.scale.set(1, 1, 1)
     this.outletJet.visible = false
+    this.outletPool.visible = false
+    this.outletSplashRing.visible = false
     this.startLabel.visible = true
     this.waterSurfaceMaterial.uniforms.uImpactStrength.value = 0
     this.waterSurfaceMaterial.uniforms.uFlowGate.value = 0
@@ -1393,7 +1470,7 @@ export class WaterSceneRuntime {
 
   private updateStreams() {
     const graph = this.project.mazeGraph
-    const inlet = sampleWaterHandoff(this.elapsedMs, this.completeAt)
+    const inlet = sampleWaterHandoff(this.elapsedMs)
     const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
     updateFallingJetGeometry(
       this.inletJet.geometry,
@@ -1420,36 +1497,37 @@ export class WaterSceneRuntime {
 
     const outletStart = this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER
     const outletStrength =
-      smoothstep(outletStart, outletStart + 320, flowElapsedMs) *
-      (1 - smoothstep(this.completeAt - 320, this.completeAt, this.elapsedMs))
-    const outletLength = 0.88 * outletStrength
-    this.outletJet.scale.set(
-      0.9 + Math.sin(flowElapsedMs * 0.009) * 0.1,
-      Math.max(0.001, outletLength),
-      1.1 - Math.sin(flowElapsedMs * 0.009) * 0.1,
-    )
-    this.outletJet.position.set(
-      this.exitPosition.x,
-      -graph.rows / 2 - outletLength / 2,
-      WATER_SURFACE_Z,
+      smoothstep(outletStart, outletStart + 360, flowElapsedMs)
+    updateFallingJetGeometry(
+      this.outletJet.geometry,
+      WATER_OUTLET_DROP_HEIGHT,
+      Math.max(0, flowElapsedMs - outletStart),
+      outletStrength,
+      outletStrength,
+      1.28,
     )
     this.outletJet.visible = outletStrength > 0.01
 
+    const poolPulse = 1 + Math.sin(flowElapsedMs * 0.0065) * 0.035
+    this.outletPool.visible = outletStrength > 0.01
+    this.outletPool.scale.set(poolPulse, 2 - poolPulse, 1)
+    const splashPhase = (flowElapsedMs * 0.00145) % 1
+    const splashMaterial = this.outletSplashRing.material as THREE.MeshBasicMaterial
+    this.outletSplashRing.visible = outletStrength > 0.02
+    this.outletSplashRing.scale.setScalar(0.72 + splashPhase * 1.35)
+    splashMaterial.opacity =
+      (1 - splashPhase) * outletStrength * (this.quality === 'high' ? 0.62 : 0.48)
+
     const reservoirPulse = 1 + Math.sin(this.elapsedMs * 0.004) * 0.025
-    const reservoirLevel = 1 - smoothstep(
-      this.completeAt - 620,
-      this.completeAt,
-      this.elapsedMs,
-    ) * 0.18
     this.reservoirWater.scale.set(
       reservoirPulse,
-      reservoirLevel,
+      1,
       2 - reservoirPulse,
     )
   }
 
   private updateInletParticles() {
-    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
+    const inlet = sampleWaterInlet(this.elapsedMs)
     for (let index = 0; index < this.inletSeeds.length; index += 1) {
       const seed = this.inletSeeds[index]
       if (inlet.strength < 0.02) {
@@ -1489,7 +1567,7 @@ export class WaterSceneRuntime {
   }
 
   private updateSplashParticles() {
-    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
+    const inlet = sampleWaterInlet(this.elapsedMs)
     const sinceImpactMs = this.elapsedMs - WATER_INLET_IMPACT_MS
     const contactOffset = sampleFallingJetCenterOffset(this.elapsedMs, 1)
     for (let index = 0; index < this.splashSeeds.length; index += 1) {
@@ -1560,8 +1638,7 @@ export class WaterSceneRuntime {
     const outletStart = this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER
     const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
     const outletStrength =
-      smoothstep(outletStart, outletStart + 320, flowElapsedMs) *
-      (1 - smoothstep(this.completeAt - 280, this.completeAt, this.elapsedMs))
+      smoothstep(outletStart, outletStart + 360, flowElapsedMs)
     for (let index = 0; index < this.outletSeeds.length; index += 1) {
       const seed = this.outletSeeds[index]
       if (outletStrength < 0.02) {
@@ -1572,16 +1649,16 @@ export class WaterSceneRuntime {
         ((flowElapsedMs - outletStart) * 0.0018 + seed.phase + 10) % 1
       const fan = Math.sin(phase * Math.PI)
       this.particleDummy.position.set(
-        this.exitPosition.x + seed.drift * fan * 0.32,
-        bottomEdge - 0.12 - phase * (0.78 + seed.lift * 0.18),
+        this.exitPosition.x + seed.drift * fan * 0.38,
+        bottomEdge - 0.08 - phase * (1.34 + seed.lift * 0.18),
         WATER_SURFACE_Z + seed.depth * 0.08 + fan * 0.07,
       )
       this.particleDummy.rotation.set(0, 0, seed.drift * 0.45)
       const fade = Math.sin(phase * Math.PI) * outletStrength
       this.particleDummy.scale.set(
-        seed.size * fade,
-        seed.size * fade * (1.1 + phase),
-        seed.size * fade * 0.82,
+        seed.size * fade * 1.08,
+        seed.size * fade * (1.3 + phase * 1.4),
+        seed.size * fade * 0.9,
       )
       this.particleDummy.updateMatrix()
       this.outletDroplets.setMatrixAt(index, this.particleDummy.matrix)
@@ -1599,17 +1676,6 @@ export class WaterSceneRuntime {
         arrival === undefined ||
         flowElapsedMs < arrival + 80
       ) {
-        this.hideParticle(this.bubbles, index)
-        continue
-      }
-      const drainStart =
-        (this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER) +
-        this.model.options.drainDelayMs
-      const drained =
-        seed.cell.retainedLevel < 0.2 &&
-        flowElapsedMs >
-          drainStart + this.model.options.drainDurationMs * 0.72
-      if (drained) {
         this.hideParticle(this.bubbles, index)
         continue
       }
@@ -1665,7 +1731,7 @@ export class WaterSceneRuntime {
       }
     }
     const complete = this.elapsedMs >= this.completeAt
-    const inlet = sampleWaterInlet(this.elapsedMs, this.completeAt)
+    const inlet = sampleWaterInlet(this.elapsedMs)
     const status: WaterPlaybackStatus = {
       elapsedMs: this.elapsedMs,
       filledCells: this.visibleCursor,
@@ -1676,6 +1742,9 @@ export class WaterSceneRuntime {
       complete,
       inletState: inlet.state,
       inletVisible: inlet.strength > 0.01,
+      outletVisible:
+        this.model.exitArrivalMs !== null &&
+        flowElapsedMs >= this.model.exitArrivalMs + 80,
     }
     const signature = [
       Math.round(status.elapsedMs),
@@ -1684,6 +1753,7 @@ export class WaterSceneRuntime {
       status.complete,
       status.inletState,
       status.inletVisible,
+      status.outletVisible,
     ].join(':')
     if (signature === this.lastStatusSignature) return
     this.lastStatusSignature = signature
@@ -1700,6 +1770,7 @@ export class WaterSceneRuntime {
       triangles: this.renderer.info.render.triangles,
       inletDropHeight: this.inletLayout.dropHeight,
       inletContactGap: resolveFallingJetContactGap(this.elapsedMs),
+      outletDropHeight: WATER_OUTLET_DROP_HEIGHT,
     })
   }
 
@@ -1707,7 +1778,8 @@ export class WaterSceneRuntime {
     const graph = this.project.mazeGraph
     const boardWidth = graph.cols + 1.8
     const topExtent = this.inletLayout.reservoirY + 0.58
-    const bottomExtent = -graph.rows / 2 - 1.42
+    const bottomExtent =
+      -graph.rows / 2 - WATER_OUTLET_DROP_HEIGHT - 0.5
     const boardHeight = topExtent - bottomExtent
     const sceneCenterY = (topExtent + bottomExtent) / 2
     const verticalFov = THREE.MathUtils.degToRad(this.camera.fov)
@@ -1791,16 +1863,20 @@ export class WaterSceneRuntime {
     // run in slow motion on low-FPS mobile GPUs and software WebGL.
     const deltaMs = Math.min(5_000, this.clock.getDelta() * 1_000)
     if (!this.paused) {
-      this.elapsedMs = Math.min(
-        this.completeAt,
-        this.elapsedMs + deltaMs * this.speed,
-      )
+      this.elapsedMs += deltaMs * this.speed
     }
     const now = performance.now()
     const visualTimeChanged = this.elapsedMs !== this.lastVisualElapsedMs
     if (visualTimeChanged) {
-      this.waterSurfaceMaterial.uniforms.uTime.value =
-        getWaterFlowElapsedMs(this.elapsedMs)
+      const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
+      this.waterSurfaceMaterial.uniforms.uTimelineTime.value = Math.min(
+        flowElapsedMs,
+        this.model.totalDurationMs,
+      )
+      // Keep surface waves moving after the hydraulic front has settled. The
+      // bounded clock avoids long-running float precision loss in WebGL.
+      this.waterSurfaceMaterial.uniforms.uMotionTime.value =
+        flowElapsedMs % 3_600_000
       this.updateEffects(now)
       this.updateCameraIntro()
       this.lastVisualElapsedMs = this.elapsedMs
@@ -1815,12 +1891,5 @@ export class WaterSceneRuntime {
     this.emitMetrics()
     this.needsRender = false
 
-    if (
-      this.reducedMotion &&
-      this.elapsedMs >= this.completeAt &&
-      now - this.lastCameraInteractionAt > 500
-    ) {
-      this.paused = true
-    }
   }
 }

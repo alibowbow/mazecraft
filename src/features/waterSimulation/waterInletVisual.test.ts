@@ -18,24 +18,24 @@ describe('water inlet visual timing', () => {
   })
 
   it('lets the falling stream reach the board before maze flow begins', () => {
-    expect(sampleWaterInlet(0, 10_000).state).toBe('off')
-    expect(sampleWaterInlet(240, 10_000).state).toBe('falling')
+    expect(sampleWaterInlet(0).state).toBe('off')
+    expect(sampleWaterInlet(240).state).toBe('falling')
     expect(
-      sampleWaterInlet(WATER_INLET_IMPACT_MS - 1, 10_000).impactStrength,
+      sampleWaterInlet(WATER_INLET_IMPACT_MS - 1).impactStrength,
     ).toBe(0)
     expect(
-      sampleWaterInlet(WATER_INLET_IMPACT_MS - 1, 10_000).state,
+      sampleWaterInlet(WATER_INLET_IMPACT_MS - 1).state,
     ).toBe('falling')
     expect(
-      sampleWaterInlet(WATER_INLET_IMPACT_MS + 100, 10_000).state,
+      sampleWaterInlet(WATER_INLET_IMPACT_MS + 100).state,
     ).toBe('impact')
     expect(getWaterFlowElapsedMs(WATER_INLET_IMPACT_MS - 1)).toBe(0)
     expect(getWaterFlowElapsedMs(WATER_INLET_IMPACT_MS + 250)).toBe(250)
   })
 
-  it('ramps, holds, then fades without invalid values', () => {
+  it('ramps once and then keeps a continuous feed without invalid values', () => {
     const samples = [0, 100, 400, 1_000, 5_000, 9_700, 10_000].map((time) =>
-      sampleWaterInlet(time, 10_000),
+      sampleWaterInlet(time),
     )
 
     for (const sample of samples) {
@@ -46,19 +46,21 @@ describe('water inlet visual timing', () => {
       expect(sample.impactStrength).toBeGreaterThanOrEqual(0)
       expect(sample.impactStrength).toBeLessThanOrEqual(1)
     }
-    expect(samples.at(-1)?.state).toBe('off')
+    expect(samples.at(-1)).toMatchObject({
+      state: 'steady',
+      strength: 1,
+      frontProgress: 1,
+      impactStrength: 1,
+    })
   })
 
   it('couples the jet, impact energy, and channel surface in one handoff', () => {
     expect(
-      sampleWaterHandoff(WATER_INLET_IMPACT_MS - 1, 10_000).surfaceGate,
+      sampleWaterHandoff(WATER_INLET_IMPACT_MS - 1).surfaceGate,
     ).toBe(0)
 
     for (let offset = 4; offset <= 240; offset += 4) {
-      const handoff = sampleWaterHandoff(
-        WATER_INLET_IMPACT_MS + offset,
-        10_000,
-      )
+      const handoff = sampleWaterHandoff(WATER_INLET_IMPACT_MS + offset)
       expect(handoff.strength).toBeGreaterThan(0.8)
       expect(handoff.impactStrength).toBeGreaterThan(0)
       expect(handoff.surfaceGate).toBeGreaterThan(0)
