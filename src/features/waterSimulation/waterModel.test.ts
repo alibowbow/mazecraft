@@ -76,7 +76,7 @@ describe('buildWaterSimulation', () => {
     })
   })
 
-  it('strongly prefers down, then horizontal, then upward propagation', () => {
+  it('keeps an upward blind branch dry while feeding lower and level storage', () => {
     const graph = createGraph(3, 3, [
       [{ row: 0, col: 0 }, { row: 1, col: 0 }],
       [{ row: 1, col: 0 }, { row: 1, col: 1 }],
@@ -96,63 +96,87 @@ describe('buildWaterSimulation', () => {
     const upward = scheduleAt(model, 0, 1)
 
     expect(downward?.arrivalMs).toBeLessThan(horizontal?.arrivalMs ?? 0)
-    expect(horizontal?.arrivalMs).toBeLessThan(upward?.arrivalMs ?? 0)
-    expect(
-      (upward?.arrivalMs ?? 0) - (horizontal?.arrivalMs ?? 0),
-    ).toBeGreaterThan(
-      (horizontal?.arrivalMs ?? 0) - (downward?.arrivalMs ?? 0),
+    expect(horizontal).toMatchObject({
+      reachable: true,
+      drainage: 'drains',
+    })
+    expect(horizontal?.peakLevel).toBeLessThan(
+      model.options.flowPeakLevel,
     )
+    expect(upward).toMatchObject({
+      reachable: false,
+      arrivalMs: null,
+      peakLevel: 0,
+    })
     expect(model.reachedExit).toBe(true)
   })
 
-  it('branches through every reachable corridor instead of following only the solution', () => {
-    const graph = createGraph(3, 3, [
-      [{ row: 0, col: 1 }, { row: 1, col: 1 }],
-      [{ row: 1, col: 1 }, { row: 2, col: 1 }],
+  it('uses a finite symmetric volume instead of flooding whole blind branches', () => {
+    const graph = createGraph(3, 5, [
+      [{ row: 0, col: 2 }, { row: 1, col: 2 }],
+      [{ row: 1, col: 2 }, { row: 2, col: 2 }],
+      [{ row: 1, col: 2 }, { row: 1, col: 1 }],
       [{ row: 1, col: 1 }, { row: 1, col: 0 }],
-      [{ row: 1, col: 1 }, { row: 1, col: 2 }],
+      [{ row: 1, col: 2 }, { row: 1, col: 3 }],
+      [{ row: 1, col: 3 }, { row: 1, col: 4 }],
     ])
     const model = buildWaterSimulation(
       graph,
-      { row: 0, col: 1 },
-      { row: 2, col: 1 },
+      { row: 0, col: 2 },
+      { row: 2, col: 2 },
     )
 
     const reachable = model.cells.filter((cell) => cell.reachable)
     expect(reachable).toHaveLength(5)
-    expect(scheduleAt(model, 2, 1)?.branch).toBe(0)
-    expect(scheduleAt(model, 1, 2)?.branch).toBe(1)
-    expect(scheduleAt(model, 1, 0)?.branch).toBe(2)
-    expect(scheduleAt(model, 1, 0)?.isDeadEnd).toBe(true)
-    expect(scheduleAt(model, 1, 2)?.isDeadEnd).toBe(true)
+    expect(scheduleAt(model, 2, 2)?.branch).toBe(0)
+    expect(scheduleAt(model, 1, 1)?.peakLevel).toBeCloseTo(
+      scheduleAt(model, 1, 3)?.peakLevel ?? 0,
+      8,
+    )
+    expect(scheduleAt(model, 1, 0)).toMatchObject({
+      reachable: false,
+      peakLevel: 0,
+    })
+    expect(scheduleAt(model, 1, 4)).toMatchObject({
+      reachable: false,
+      peakLevel: 0,
+    })
+    const storedSideVolume =
+      (scheduleAt(model, 1, 1)?.peakLevel ?? 0) +
+      (scheduleAt(model, 1, 3)?.peakLevel ?? 0)
+    expect(storedSideVolume).toBeCloseTo(
+      3 * model.options.sidePoolVolumeRatio,
+      8,
+    )
     expect(new Set(reachable.map((cell) => cell.order)).size).toBe(5)
   })
 
-  it('slows each water front when the current cell splits into more branches', () => {
+  it('does not let zero-discharge blind branches delay outlet through-flow', () => {
     const graph = createGraph(3, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
       [{ row: 1, col: 1 }, { row: 2, col: 1 }],
       [{ row: 1, col: 1 }, { row: 1, col: 0 }],
       [{ row: 1, col: 1 }, { row: 1, col: 2 }],
     ])
-    const unimpeded = buildWaterSimulation(
+    const noTransientStorage = buildWaterSimulation(
       graph,
       { row: 0, col: 1 },
       { row: 2, col: 1 },
-      { branchSlowdown: 0 },
+      { sidePoolVolumeRatio: 0 },
     )
-    const split = buildWaterSimulation(
+    const withTransientStorage = buildWaterSimulation(
       graph,
       { row: 0, col: 1 },
       { row: 2, col: 1 },
-      { branchSlowdown: 1 },
+      { sidePoolVolumeRatio: 0.5 },
     )
 
-    expect(scheduleAt(split, 2, 1)?.arrivalMs).toBeGreaterThan(
-      scheduleAt(unimpeded, 2, 1)?.arrivalMs ?? Number.POSITIVE_INFINITY,
+    expect(withTransientStorage.exitArrivalMs).toBe(
+      noTransientStorage.exitArrivalMs,
     )
-    expect(scheduleAt(split, 1, 0)?.arrivalMs).toBeGreaterThan(
-      scheduleAt(unimpeded, 1, 0)?.arrivalMs ?? Number.POSITIVE_INFINITY,
+    expect(scheduleAt(noTransientStorage, 1, 0)?.reachable).toBe(false)
+    expect(scheduleAt(withTransientStorage, 1, 0)?.peakLevel).toBeGreaterThan(
+      0,
     )
   })
 
@@ -174,9 +198,14 @@ describe('buildWaterSimulation', () => {
     expect(scheduleAt(model, 1, 0)?.drainage).toBe('drains')
     expect(scheduleAt(model, 2, 0)).toMatchObject({
       drainage: 'pools',
-      retainedLevel: 0.92,
       isDeadEnd: true,
     })
+    expect(scheduleAt(model, 2, 0)?.retainedLevel).toBe(
+      scheduleAt(model, 2, 0)?.peakLevel,
+    )
+    expect(scheduleAt(model, 2, 0)?.retainedLevel).toBeLessThan(
+      model.options.pooledLevel,
+    )
     expect(scheduleAt(model, 3, 1)?.drainage).toBe('exit')
   })
 
@@ -228,7 +257,7 @@ describe('buildWaterSimulation', () => {
     expect(graph).toEqual(before)
   })
 
-  it('handles a 150 by 150 maze without recursion or omitted corridors', () => {
+  it('handles a 150 by 150 maze without recursion or whole-maze flooding', () => {
     const generated = generateMaze({
       rows: 150,
       cols: 150,
@@ -242,8 +271,10 @@ describe('buildWaterSimulation', () => {
       { enforceVerticalEndpoints: false },
     )
 
-    expect(model.cells.filter((cell) => cell.reachable)).toHaveLength(22_500)
-    expect(model.segments).toHaveLength(22_499)
+    const wetCells = model.cells.filter((cell) => cell.reachable)
+    expect(wetCells.length).toBeGreaterThan(0)
+    expect(wetCells.length).toBeLessThan(10_000)
+    expect(model.segments).toHaveLength(wetCells.length - 1)
     expect(model.reachedExit).toBe(true)
     expect(model.totalDurationMs).toBeGreaterThan(model.exitArrivalMs ?? 0)
   })
@@ -330,6 +361,14 @@ describe('buildWaterSimulation', () => {
         { residualFilmLevel: 0.8, pooledLevel: 0.5 },
       ),
     ).toThrow('pooledLevel')
+    expect(() =>
+      buildWaterSimulation(
+        graph,
+        { row: 0, col: 0 },
+        { row: 1, col: 1 },
+        { sidePoolVolumeRatio: 1.1 },
+      ),
+    ).toThrow('sidePoolVolumeRatio')
   })
 })
 
@@ -366,9 +405,11 @@ describe('sampleWaterSimulation', () => {
       state: 'wet',
     })
     expect(frameAt(model, model.totalDurationMs, 2, 0)).toMatchObject({
-      level: 0.92,
       state: 'pooled',
     })
+    expect(frameAt(model, model.totalDurationMs, 2, 0)?.level).toBe(
+      scheduleAt(model, 2, 0)?.retainedLevel,
+    )
     expect(frameAt(model, model.totalDurationMs, 3, 1)).toMatchObject({
       level: 0,
       state: 'outlet',

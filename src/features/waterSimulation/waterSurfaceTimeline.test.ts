@@ -231,11 +231,18 @@ describe('buildWaterSurfaceTimeline', () => {
     })
     const deadEnd = texelForCell(timeline, graph, 2, 0)
     const offset = offsetAt(timeline, deadEnd.x, deadEnd.y)
+    const deadEndSchedule = model.cells.find(
+      (cell) => cell.position.row === 2 && cell.position.col === 0,
+    )
 
     expect(timeline.field[offset]).toBe(255)
     expect(timeline.schedule[offset + 2]).toBeCloseTo(
-      model.options.pooledLevel,
+      deadEndSchedule?.retainedLevel ?? 0,
       5,
+    )
+    expect(timeline.field[offset + 3] / 255).toBeCloseTo(
+      deadEndSchedule?.peakLevel ?? 0,
+      2,
     )
   })
 
