@@ -304,7 +304,11 @@ export class MazeCanvasRenderer {
     }
   }
 
-  hitTest(screenPoint: MazeScreenPoint, preferWall = false): MazeHit | null {
+  hitTest(
+    screenPoint: MazeScreenPoint,
+    preferWall = false,
+    wallHitSlopPixels = 8,
+  ): MazeHit | null {
     if (!this.model) return null
     const world = this.screenToWorld(screenPoint)
     const col = Math.floor(world.x)
@@ -321,11 +325,27 @@ export class MazeCanvasRenderer {
         ['top', localY],
         ['bottom', 1 - localY],
       ]
-      const [wall, distance] = distances.reduce((best, candidate) =>
-        candidate[1] < best[1] ? candidate : best,
+      const sortedDistances = [...distances].sort((left, right) => left[1] - right[1])
+      const [wall, distance] = sortedDistances[0]
+      const [secondWall, secondDistance] = sortedDistances[1]
+      const safeWallHitSlop = Number.isFinite(wallHitSlopPixels)
+        ? clamp(wallHitSlopPixels, 1, 24)
+        : 8
+      // Touch needs a forgiving target around a thin wall. The fractional cap
+      // deliberately leaves a dead zone around the cell centre, so increasing
+      // the CSS-pixel hit slop cannot turn an imprecise centre tap into a wall
+      // edit when cells are small.
+      const threshold = Math.min(
+        safeWallHitSlop / this.viewport.scale,
+        0.34,
       )
-      const threshold = clamp(8 / this.viewport.scale, 0.08, 0.28)
-      if (distance <= threshold) {
+      const wallIsHorizontal = wall === 'top' || wall === 'bottom'
+      const secondWallIsHorizontal = secondWall === 'top' || secondWall === 'bottom'
+      const ambiguousCorner =
+        secondDistance <= threshold &&
+        wallIsHorizontal !== secondWallIsHorizontal &&
+        Math.abs(secondDistance - distance) <= 0.08
+      if (distance <= threshold && !ambiguousCorner) {
         return { kind: 'wall', row, col, wall, x: world.x, y: world.y }
       }
     }

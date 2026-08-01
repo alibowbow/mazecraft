@@ -1,6 +1,8 @@
 import {
   ArrowRight,
   Clock3,
+  Copy,
+  Download,
   Droplets,
   FileText,
   FolderOpen,
@@ -16,7 +18,8 @@ import {
   Trash2,
   Type,
 } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
+import { BottomSheet } from '../../components/BottomSheet'
 import type { MazeProject } from '../../core/maze/types'
 
 export type ProjectTemplate = 'basic' | 'text' | 'image' | 'secret' | 'time-attack' | 'worksheet'
@@ -137,9 +140,23 @@ export function HomeScreen({
   loading,
 }: HomeScreenProps) {
   const importInputRef = useRef<HTMLInputElement>(null)
+  const [actionProject, setActionProject] = useState<MazeProject | null>(null)
+
+  const runProjectAction = (
+    action: (project: MazeProject) => void,
+  ) => {
+    if (!actionProject) return
+    const project = actionProject
+    setActionProject(null)
+    action(project)
+  }
 
   return (
-    <main className="home-shell">
+    <main
+      className="home-shell"
+      inert={actionProject ? '' : undefined}
+      aria-hidden={actionProject ? true : undefined}
+    >
       <input
         ref={importInputRef}
         className="sr-only"
@@ -240,14 +257,16 @@ export function HomeScreen({
                     <strong>{project.title}</strong>
                     <small>{relativeTime(project.updatedAt)} · {project.grid.cols}×{project.grid.rows}</small>
                   </button>
-                  <details className="project-menu">
-                    <summary aria-label={`${project.title} 메뉴`}><MoreHorizontal size={20} /></summary>
-                    <div className="project-menu-popover">
-                      <button onClick={() => onDuplicate(project)}>복제</button>
-                      <button onClick={() => onExport(project)}>내보내기</button>
-                      <button className="danger" onClick={() => onDelete(project)}><Trash2 size={15} /> 삭제</button>
-                    </div>
-                  </details>
+                  <button
+                    type="button"
+                    className="project-menu-trigger"
+                    aria-label={`${project.title} 메뉴`}
+                    aria-haspopup="dialog"
+                    aria-expanded={actionProject?.id === project.id}
+                    onClick={() => setActionProject(project)}
+                  >
+                    <MoreHorizontal size={20} />
+                  </button>
                 </div>
               </article>
             ))}
@@ -261,6 +280,39 @@ export function HomeScreen({
         )}
       </section>
       <footer className="home-footer">MAZECRAFT CORE 1.0 · LOCAL FIRST CREATIVE TOOL</footer>
+
+      <BottomSheet
+        open={Boolean(actionProject)}
+        onClose={() => setActionProject(null)}
+        title={actionProject?.title ?? '프로젝트 메뉴'}
+        description={
+          actionProject
+            ? `${relativeTime(actionProject.updatedAt)} · ${actionProject.grid.cols}×${actionProject.grid.rows}`
+            : undefined
+        }
+        className="project-actions-sheet"
+        maxHeight="min(72dvh, 520px)"
+        closeLabel="프로젝트 메뉴 닫기"
+      >
+        <div className="project-action-list">
+          <button type="button" onClick={() => runProjectAction(onOpen)}>
+            <ArrowRight size={19} />
+            <span><strong>계속 편집</strong><small>이 프로젝트를 제작기에서 엽니다</small></span>
+          </button>
+          <button type="button" onClick={() => runProjectAction(onDuplicate)}>
+            <Copy size={19} />
+            <span><strong>복제</strong><small>원본을 보존한 새 프로젝트를 만듭니다</small></span>
+          </button>
+          <button type="button" onClick={() => runProjectAction(onExport)}>
+            <Download size={19} />
+            <span><strong>내보내기</strong><small>이미지 또는 프로젝트 파일로 저장합니다</small></span>
+          </button>
+          <button className="danger" type="button" onClick={() => runProjectAction(onDelete)}>
+            <Trash2 size={19} />
+            <span><strong>삭제</strong><small>이 기기에서 프로젝트를 삭제합니다</small></span>
+          </button>
+        </div>
+      </BottomSheet>
     </main>
   )
 }
