@@ -119,7 +119,6 @@ export default function WaterSimulationDialog({
           horizontalTravelMs: 235,
           upwardTravelMs: 680,
           cellFillMs: 105,
-          branchSlowdown: 0.62,
           drainDelayMs: 620,
           drainDurationMs: 1_500,
           residualFilmLevel: 0.09,
@@ -217,10 +216,13 @@ export default function WaterSimulationDialog({
     setPaused(next)
   }
 
-  const progress =
-    status.totalCells > 0
-      ? Math.round((status.filledCells / status.totalCells) * 100)
-      : 0
+  const phaseProgress = status.complete
+    ? 100
+    : status.reachedExit
+      ? 78
+      : status.filledCells > 1
+        ? 42
+        : 12
   const statusLabel = paused
     ? '사용자가 일시정지함'
     : status.complete
@@ -255,8 +257,8 @@ export default function WaterSimulationDialog({
           className="water-simulation-stage"
           data-testid="water-simulation-stage"
           data-renderer={renderState}
-          data-fluid-renderer="displaced-timeline-surface"
-          data-fluid-model="continuous-feed-hydraulic"
+          data-fluid-renderer="bottom-up-hydraulic-surface"
+          data-fluid-model="mass-conserving-finite-volume"
           data-flow-mode="continuous-until-user-pauses"
           data-water-continuity="coupled-source-surface"
           data-phase={phase}
@@ -266,6 +268,7 @@ export default function WaterSimulationDialog({
           data-active-cells={activeCellCount}
           data-wettable-cells={reachableCellCount}
           data-filled-cells={status.filledCells}
+          data-conservation-error={model.massBalance.conservationError}
           data-reached-exit={status.reachedExit}
           data-settled={status.complete}
           data-atlas-width={metrics.atlasWidth}
@@ -285,7 +288,7 @@ export default function WaterSimulationDialog({
           aria-label={
             renderState === 'error'
               ? undefined
-              : `${project.title}의 물리 기반 물 미로 실험. 청록색 물이 상단에서 계속 유입되고 일부 통로를 적신 뒤 하단 출구 밖으로 떨어집니다.`
+              : `${project.title}의 물리 기반 물 미로 실험. 청록색 물이 열린 아래쪽과 옆 통로를 따라 바닥부터 차오른 뒤 하단 출구 밖으로 떨어집니다.`
           }
         >
           <div
@@ -319,8 +322,12 @@ export default function WaterSimulationDialog({
           )}
         </div>
 
-        <div className="water-simulation-progress" aria-hidden="true">
-          <span style={{ width: `${progress}%` }} />
+        <div
+          className="water-simulation-progress"
+          data-phase={phase}
+          aria-hidden="true"
+        >
+          <span style={{ width: `${phaseProgress}%` }} />
         </div>
 
         <div className="water-simulation-status">
@@ -331,7 +338,12 @@ export default function WaterSimulationDialog({
             </span>
             <small>
               젖은 셀 {status.filledCells.toLocaleString()} / 전체{' '}
-              {activeCellCount.toLocaleString()} · 흐름 {progress}%
+              {activeCellCount.toLocaleString()} ·{' '}
+              {status.complete
+                ? '정상 유동'
+                : status.reachedExit
+                  ? '수위 안정화'
+                  : '유로 형성'}
             </small>
           </div>
           <div className="water-simulation-controls">

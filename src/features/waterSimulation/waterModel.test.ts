@@ -100,9 +100,7 @@ describe('buildWaterSimulation', () => {
       reachable: true,
       drainage: 'drains',
     })
-    expect(horizontal?.peakLevel).toBeLessThan(
-      model.options.flowPeakLevel,
-    )
+    expect(horizontal?.peakLevel).toBe(model.options.minimumWetLevel)
     expect(upward).toMatchObject({
       reachable: false,
       arrivalMs: null,
@@ -111,7 +109,7 @@ describe('buildWaterSimulation', () => {
     expect(model.reachedExit).toBe(true)
   })
 
-  it('uses a finite symmetric volume instead of flooding whole blind branches', () => {
+  it('spreads one conserved wetting front through symmetric level branches', () => {
     const graph = createGraph(3, 5, [
       [{ row: 0, col: 2 }, { row: 1, col: 2 }],
       [{ row: 1, col: 2 }, { row: 2, col: 2 }],
@@ -127,31 +125,24 @@ describe('buildWaterSimulation', () => {
     )
 
     const reachable = model.cells.filter((cell) => cell.reachable)
-    expect(reachable).toHaveLength(5)
+    expect(reachable).toHaveLength(7)
     expect(scheduleAt(model, 2, 2)?.branch).toBe(0)
     expect(scheduleAt(model, 1, 1)?.peakLevel).toBeCloseTo(
       scheduleAt(model, 1, 3)?.peakLevel ?? 0,
       8,
     )
-    expect(scheduleAt(model, 1, 0)).toMatchObject({
-      reachable: false,
-      peakLevel: 0,
-    })
-    expect(scheduleAt(model, 1, 4)).toMatchObject({
-      reachable: false,
-      peakLevel: 0,
-    })
-    const storedSideVolume =
-      (scheduleAt(model, 1, 1)?.peakLevel ?? 0) +
-      (scheduleAt(model, 1, 3)?.peakLevel ?? 0)
-    expect(storedSideVolume).toBeCloseTo(
-      3 * model.options.sidePoolVolumeRatio,
+    expect(scheduleAt(model, 1, 0)?.peakLevel).toBeCloseTo(
+      scheduleAt(model, 1, 4)?.peakLevel ?? 0,
       8,
     )
-    expect(new Set(reachable.map((cell) => cell.order)).size).toBe(5)
+    expect(model.massBalance.injectedBeforeBreakthrough).toBe(
+      model.massBalance.storedAtBreakthrough,
+    )
+    expect(model.massBalance.conservationError).toBeLessThan(1e-8)
+    expect(new Set(reachable.map((cell) => cell.order)).size).toBe(7)
   })
 
-  it('wets every open side front before climbing an uphill outlet route', () => {
+  it('wets complete lower side passages before climbing an uphill outlet route', () => {
     const graph = createGraph(5, 5, [
       [{ row: 0, col: 2 }, { row: 1, col: 2 }],
       [{ row: 1, col: 2 }, { row: 2, col: 2 }],
@@ -162,16 +153,17 @@ describe('buildWaterSimulation', () => {
       [{ row: 2, col: 4 }, { row: 3, col: 4 }],
       [{ row: 3, col: 4 }, { row: 4, col: 4 }],
       [{ row: 1, col: 2 }, { row: 1, col: 1 }],
+      [{ row: 1, col: 1 }, { row: 2, col: 1 }],
       [{ row: 3, col: 2 }, { row: 3, col: 1 }],
+      [{ row: 3, col: 1 }, { row: 4, col: 1 }],
     ])
     const model = buildWaterSimulation(
       graph,
       { row: 0, col: 2 },
       { row: 4, col: 4 },
-      { sidePoolVolumeRatio: 0.01 },
     )
-    const earlySide = scheduleAt(model, 1, 1)
-    const lateSide = scheduleAt(model, 3, 1)
+    const earlySide = scheduleAt(model, 2, 1)
+    const lateSide = scheduleAt(model, 4, 1)
     const uphill = scheduleAt(model, 2, 3)
 
     expect(earlySide).toMatchObject({ reachable: true })
@@ -185,32 +177,29 @@ describe('buildWaterSimulation', () => {
     expect(lateSide?.arrivalMs).toBeLessThan(uphill?.arrivalMs ?? 0)
   })
 
-  it('does not let zero-discharge blind branches delay outlet through-flow', () => {
+  it('splits source volume fairly into level branches before outlet flow', () => {
     const graph = createGraph(3, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
       [{ row: 1, col: 1 }, { row: 2, col: 1 }],
       [{ row: 1, col: 1 }, { row: 1, col: 0 }],
       [{ row: 1, col: 1 }, { row: 1, col: 2 }],
     ])
-    const noTransientStorage = buildWaterSimulation(
+    const model = buildWaterSimulation(
       graph,
       { row: 0, col: 1 },
       { row: 2, col: 1 },
-      { sidePoolVolumeRatio: 0 },
-    )
-    const withTransientStorage = buildWaterSimulation(
-      graph,
-      { row: 0, col: 1 },
-      { row: 2, col: 1 },
-      { sidePoolVolumeRatio: 0.5 },
     )
 
-    expect(withTransientStorage.exitArrivalMs).toBe(
-      noTransientStorage.exitArrivalMs,
-    )
-    expect(scheduleAt(noTransientStorage, 1, 0)?.reachable).toBe(false)
-    expect(scheduleAt(withTransientStorage, 1, 0)?.peakLevel).toBeGreaterThan(
-      0,
+    expect(scheduleAt(model, 1, 0)).toMatchObject({
+      reachable: true,
+      peakLevel: model.options.minimumWetLevel,
+    })
+    expect(scheduleAt(model, 1, 2)).toMatchObject({
+      reachable: true,
+      peakLevel: model.options.minimumWetLevel,
+    })
+    expect(scheduleAt(model, 1, 0)?.arrivalMs).toBe(
+      scheduleAt(model, 1, 2)?.arrivalMs,
     )
   })
 
@@ -291,7 +280,7 @@ describe('buildWaterSimulation', () => {
     expect(graph).toEqual(before)
   })
 
-  it('handles a 150 by 150 maze without recursion or whole-maze flooding', () => {
+  it('handles a 150 by 150 maze without recursion or leaving the active graph', () => {
     const generated = generateMaze({
       rows: 150,
       cols: 150,
@@ -307,10 +296,11 @@ describe('buildWaterSimulation', () => {
 
     const wetCells = model.cells.filter((cell) => cell.reachable)
     expect(wetCells.length).toBeGreaterThan(0)
-    expect(wetCells.length).toBeLessThan(10_000)
+    expect(wetCells.length).toBeLessThanOrEqual(22_500)
     expect(model.segments).toHaveLength(wetCells.length - 1)
     expect(model.reachedExit).toBe(true)
     expect(model.totalDurationMs).toBeGreaterThan(model.exitArrivalMs ?? 0)
+    expect(model.massBalance.conservationError).toBeLessThan(1e-8)
   })
 
   it('uses the topmost and bottommost active mask rows for vertical endpoints', () => {
@@ -400,9 +390,9 @@ describe('buildWaterSimulation', () => {
         graph,
         { row: 0, col: 0 },
         { row: 1, col: 1 },
-        { sidePoolVolumeRatio: 1.1 },
+        { minimumWetLevel: 0.8 },
       ),
-    ).toThrow('sidePoolVolumeRatio')
+    ).toThrow('minimumWetLevel')
   })
 })
 
@@ -422,7 +412,7 @@ describe('sampleWaterSimulation', () => {
     )
 
     expect(frameAt(model, 60, 0, 1)).toMatchObject({
-      level: 0.5,
+      level: (scheduleAt(model, 0, 1)?.peakLevel ?? 0) / 2,
       state: 'filling',
     })
     expect(frameAt(model, 60, 1, 1)).toMatchObject({
@@ -435,7 +425,7 @@ describe('sampleWaterSimulation', () => {
     const completed = sampleWaterSimulation(model, model.totalDurationMs)
     expect(completed.progress).toBe(1)
     expect(frameAt(model, model.totalDurationMs, 0, 1)).toMatchObject({
-      level: model.options.steadyFlowLevel,
+      level: scheduleAt(model, 0, 1)?.retainedLevel,
       state: 'wet',
     })
     expect(frameAt(model, model.totalDurationMs, 2, 0)).toMatchObject({
@@ -445,7 +435,7 @@ describe('sampleWaterSimulation', () => {
       scheduleAt(model, 2, 0)?.retainedLevel,
     )
     expect(frameAt(model, model.totalDurationMs, 3, 1)).toMatchObject({
-      level: model.options.steadyFlowLevel,
+      level: scheduleAt(model, 3, 1)?.retainedLevel,
       state: 'outlet',
     })
   })
