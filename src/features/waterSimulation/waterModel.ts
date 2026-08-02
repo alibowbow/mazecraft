@@ -516,6 +516,25 @@ interface AllocatedSideStorage extends SideStorageCandidate {
   peakLevel: number
 }
 
+function compareHydraulicStoragePriority(
+  graph: MazeGraph,
+  left: SideStorageCandidate,
+  right: SideStorageCandidate,
+): number {
+  const leftDrop = graph.cells[left.index].row - left.attachmentRow
+  const rightDrop = graph.cells[right.index].row - right.attachmentRow
+  if (leftDrop !== rightDrop) return rightDrop - leftDrop
+
+  const directionDifference =
+    DIRECTION_PRIORITY[left.incomingDirection] -
+    DIRECTION_PRIORITY[right.incomingDirection]
+  if (directionDifference !== 0) return directionDifference
+  if (Math.abs(left.arrivalMs - right.arrivalMs) > EPSILON) {
+    return left.arrivalMs - right.arrivalMs
+  }
+  return left.index - right.index
+}
+
 /**
  * Calculates transient water stored in blind branches. The allocation is
  * deliberately finite: once the outlet establishes through-flow, only the
@@ -659,40 +678,83 @@ function calculateSideStorage(
     (count, value) => count + Number(Number.isFinite(value)),
     0,
   )
+  const rootCandidateCount = candidates.reduce(
+    (count, candidate) =>
+      count + Number(backbone.has(candidate.parentIndex)),
+    0,
+  )
   let availableVolume = options.sidePoolVolumeRatio === 0
     ? 0
     : Math.max(
       options.minimumWetLevel * 2,
+      options.minimumWetLevel * rootCandidateCount,
       flowingCellCount * options.sidePoolVolumeRatio,
     )
   const allocated = new Map<number, AllocatedSideStorage>()
 
-  for (let cursor = 0; cursor < candidates.length && availableVolume > 0;) {
-    const groupStart = cursor
-    const groupArrival = candidates[cursor].arrivalMs
-    while (
-      cursor < candidates.length &&
-      Math.abs(candidates[cursor].arrivalMs - groupArrival) <= EPSILON
-    ) {
-      cursor += 1
-    }
-    const group = candidates.slice(groupStart, cursor).filter((candidate) =>
-      backbone.has(candidate.parentIndex) || allocated.has(candidate.parentIndex),
+  const childrenByParent = new Map<number, SideStorageCandidate[]>()
+  for (const candidate of candidates) {
+    const children = childrenByParent.get(candidate.parentIndex)
+    if (children) children.push(candidate)
+    else childrenByParent.set(candidate.parentIndex, [candidate])
+  }
+
+  // Treat every passage directly open from the hydraulic backbone as one
+  // advancing water front. Giving each front its shallow wetting film before
+  // deepening any one branch prevents an early cul-de-sac from consuming the
+  // entire finite side volume while a later, visibly open side stays dry.
+  let frontier = Array.from(backbone).flatMap(
+    (index) => childrenByParent.get(index) ?? [],
+  )
+  while (
+    frontier.length > 0 &&
+    availableVolume + EPSILON >= options.minimumWetLevel
+  ) {
+    frontier.sort((left, right) =>
+      compareHydraulicStoragePriority(graph, left, right),
     )
-    if (!group.length) continue
-    const demand = group.reduce(
-      (total, candidate) => total + candidate.targetLevel,
+    const wettableCount = Math.min(
+      frontier.length,
+      Math.floor((availableVolume + EPSILON) / options.minimumWetLevel),
+    )
+    if (wettableCount === 0) break
+
+    const selected = frontier.slice(0, wettableCount)
+    const minimumAllocation =
+      selected.length * options.minimumWetLevel
+    const extraDemand = selected.reduce(
+      (total, candidate) =>
+        total + Math.max(0, candidate.targetLevel - options.minimumWetLevel),
       0,
     )
-    const allocationRatio = Math.min(1, availableVolume / demand)
-    const groupAllocation = group.reduce((total, candidate) => {
-      const peakLevel = candidate.targetLevel * allocationRatio
-      if (peakLevel + EPSILON < options.minimumWetLevel) return total
+    const extraAllocation = Math.min(
+      Math.max(0, availableVolume - minimumAllocation),
+      extraDemand,
+    )
+
+    let groupAllocation = 0
+    for (const candidate of selected) {
+      const candidateExtra = extraDemand <= EPSILON
+        ? 0
+        : extraAllocation *
+          Math.max(0, candidate.targetLevel - options.minimumWetLevel) /
+          extraDemand
+      const peakLevel = Math.min(
+        candidate.targetLevel,
+        options.minimumWetLevel + candidateExtra,
+      )
       allocated.set(candidate.index, { ...candidate, peakLevel })
-      return total + peakLevel
-    }, 0)
+      groupAllocation += peakLevel
+    }
     availableVolume = Math.max(0, availableVolume - groupAllocation)
-    if (allocationRatio < 1) break
+
+    const filledWholeFront =
+      wettableCount === frontier.length &&
+      extraAllocation + EPSILON >= extraDemand
+    if (!filledWholeFront) break
+    frontier = selected.flatMap(
+      (candidate) => childrenByParent.get(candidate.index) ?? [],
+    )
   }
 
   return allocated
