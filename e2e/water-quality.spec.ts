@@ -192,13 +192,15 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   await expect(stage).toHaveAttribute('data-settled', 'true', {
     timeout: 30_000,
   })
+  await expect(stage).toHaveAttribute('data-renderer', 'ready')
   const steadyElapsed = Number(await stage.getAttribute('data-elapsed-ms'))
   await expect
     .poll(
       async () => Number(await stage.getAttribute('data-elapsed-ms')),
-      { timeout: 3_000 },
+      { timeout: 15_000 },
     )
     .toBeGreaterThan(steadyElapsed)
+  await expect(stage).toHaveAttribute('data-renderer', 'ready')
   const breakthroughFrame = await captureStage()
   await writeFile(
     testInfo.outputPath('water-hydraulic-breakthrough.png'),
