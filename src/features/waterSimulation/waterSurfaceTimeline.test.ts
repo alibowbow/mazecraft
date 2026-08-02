@@ -120,6 +120,42 @@ describe('buildWaterSurfaceTimeline', () => {
     expect(timeline.field[centerSample]).toBe(0)
   })
 
+  it('keeps a physically thin through-flow legible without changing its conserved volume', () => {
+    const graph = createGraph(3, 1, [
+      [{ row: 0, col: 0 }, { row: 1, col: 0 }],
+      [{ row: 1, col: 0 }, { row: 2, col: 0 }],
+    ])
+    const model = buildWaterSimulation(
+      graph,
+      { row: 0, col: 0 },
+      { row: 2, col: 0 },
+    )
+    const middleCell = model.cells.find(
+      (cell) => cell.position.row === 1 && cell.position.col === 0,
+    )
+    expect(middleCell?.peakLevel).toBe(model.options.minimumWetLevel)
+
+    const timeline = buildWaterSurfaceTimeline(graph, model, {
+      pixelsPerCell: 16,
+    })
+    const middle = texelForCell(timeline, graph, 1, 0)
+    const cellBottom = middle.y - Math.floor(timeline.pixelsPerCell / 2)
+    const visibleFlowSample = offsetAt(
+      timeline,
+      middle.x - 4,
+      cellBottom + 5,
+    )
+
+    expect(timeline.field[visibleFlowSample]).toBeGreaterThan(0)
+    expect(timeline.field[visibleFlowSample + 3]).toBeGreaterThanOrEqual(
+      Math.floor(model.options.steadyFlowLevel * 255),
+    )
+    expect(timeline.schedule[visibleFlowSample + 2]).toBeGreaterThanOrEqual(
+      model.options.steadyFlowLevel,
+    )
+    expect(middleCell?.peakLevel).toBe(model.options.minimumWetLevel)
+  })
+
   it('creates one continuous floor-filled channel from the top inlet to the bottom outlet', () => {
     const graph = createGraph(4, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
@@ -245,7 +281,7 @@ describe('buildWaterSurfaceTimeline', () => {
     ).toBe(0)
   })
 
-  it('stores the retained water level at a pooled dead end', () => {
+  it('keeps a pooled film visible while preserving its physical retained level', () => {
     const graph = createGraph(4, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
       [{ row: 1, col: 1 }, { row: 2, col: 1 }],
@@ -272,14 +308,11 @@ describe('buildWaterSurfaceTimeline', () => {
     )
 
     expect(timeline.field[offset]).toBe(255)
-    expect(timeline.schedule[offset + 2]).toBeCloseTo(
-      deadEndSchedule?.retainedLevel ?? 0,
-      5,
+    expect(deadEndSchedule?.retainedLevel).toBe(
+      model.options.minimumWetLevel,
     )
-    expect(timeline.field[offset + 3] / 255).toBeCloseTo(
-      deadEndSchedule?.peakLevel ?? 0,
-      2,
-    )
+    expect(timeline.schedule[offset + 2]).toBeGreaterThanOrEqual(0.18)
+    expect(timeline.field[offset + 3] / 255).toBeGreaterThanOrEqual(0.17)
   })
 
   it('paints a later side opening before an uphill channel in the GPU atlas', () => {
