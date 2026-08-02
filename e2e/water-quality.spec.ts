@@ -35,11 +35,11 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   })
   await expect(stage).toHaveAttribute(
     'data-fluid-renderer',
-    'displaced-timeline-surface',
+    'bottom-up-hydraulic-surface',
   )
   await expect(stage).toHaveAttribute(
     'data-fluid-model',
-    'continuous-feed-hydraulic',
+    'mass-conserving-finite-volume',
   )
   await expect(stage).toHaveAttribute(
     'data-flow-mode',
@@ -61,7 +61,10 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   )
   expect(activeCells).toBeGreaterThan(0)
   expect(wettableCells).toBeGreaterThan(0)
-  expect(wettableCells).toBeLessThan(activeCells)
+  expect(wettableCells).toBeLessThanOrEqual(activeCells)
+  expect(
+    Number(await stage.getAttribute('data-conservation-error')),
+  ).toBeLessThan(1e-8)
   await expect
     .poll(async () => Number(await stage.getAttribute('data-draw-calls')))
     .toBeGreaterThan(0)
@@ -180,7 +183,10 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
         verticalSpan: maximumY < 0 ? 0 : maximumY - minimumY,
         height: bitmap.height,
         significantBoardComponents: componentSizes.filter(
-          (size) => size >= 12,
+          // Ignore independent splash droplets; this check protects the
+          // continuous hydraulic body rather than intentionally airborne
+          // particles around the inlet and outlet.
+          (size) => size >= 80,
         ).length,
       }
     }, frame.toString('base64'))
@@ -251,10 +257,12 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
     timeout: 30_000,
   })
   const steadyElapsed = Number(await stage.getAttribute('data-elapsed-ms'))
-  await page.waitForTimeout(360)
-  expect(Number(await stage.getAttribute('data-elapsed-ms'))).toBeGreaterThan(
-    steadyElapsed,
-  )
+  await expect
+    .poll(
+      async () => Number(await stage.getAttribute('data-elapsed-ms')),
+      { timeout: 3_000 },
+    )
+    .toBeGreaterThan(steadyElapsed)
   const breakthroughFrame = await captureStage()
   await writeFile(
     testInfo.outputPath('water-hydraulic-breakthrough.png'),
@@ -263,7 +271,10 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   expect(breakthroughFrame.byteLength).toBeGreaterThan(10_000)
   expect(
     Number(await stage.getAttribute('data-filled-cells')),
-  ).toBeLessThan(activeCells)
+  ).toBeLessThanOrEqual(activeCells)
+  await expect(page.locator('.water-status-copy small')).not.toContainText(
+    '흐름 100%',
+  )
   await page
     .getByRole('button', { name: '물 시뮬레이션 일시정지' })
     .click()

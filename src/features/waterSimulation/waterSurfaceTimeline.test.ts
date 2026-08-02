@@ -91,7 +91,36 @@ function maskConnects(
 }
 
 describe('buildWaterSurfaceTimeline', () => {
-  it('creates one continuous rounded channel from the top inlet to the bottom outlet', () => {
+  it('fills a shallow side cell from its floor instead of stamping a centered blob', () => {
+    const graph = createGraph(3, 3, [
+      [{ row: 0, col: 1 }, { row: 1, col: 1 }],
+      [{ row: 1, col: 1 }, { row: 2, col: 1 }],
+      [{ row: 1, col: 1 }, { row: 1, col: 0 }],
+    ])
+    const model = buildWaterSimulation(
+      graph,
+      { row: 0, col: 1 },
+      { row: 2, col: 1 },
+    )
+    const side = model.cells.find(
+      (cell) => cell.position.row === 1 && cell.position.col === 0,
+    )
+    expect(side?.reachable).toBe(true)
+    expect(side?.peakLevel).toBeLessThan(0.2)
+
+    const timeline = buildWaterSurfaceTimeline(graph, model, {
+      pixelsPerCell: 16,
+    })
+    const center = texelForCell(timeline, graph, 1, 0)
+    const cellBottom = center.y - Math.floor(timeline.pixelsPerCell / 2)
+    const floorSample = offsetAt(timeline, center.x, cellBottom + 2)
+    const centerSample = offsetAt(timeline, center.x, center.y)
+
+    expect(timeline.field[floorSample]).toBeGreaterThan(0)
+    expect(timeline.field[centerSample]).toBe(0)
+  })
+
+  it('creates one continuous floor-filled channel from the top inlet to the bottom outlet', () => {
     const graph = createGraph(4, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
       [{ row: 1, col: 1 }, { row: 2, col: 1 }],
@@ -126,7 +155,10 @@ describe('buildWaterSurfaceTimeline', () => {
           texelForCell(timeline, graph, 2, 1).x) /
           2,
       ),
-      y: texelForCell(timeline, graph, 2, 0).y,
+      y:
+        texelForCell(timeline, graph, 2, 0).y -
+        Math.floor(timeline.pixelsPerCell / 2) +
+        1,
     }
     expect(
       timeline.field[
@@ -230,7 +262,11 @@ describe('buildWaterSurfaceTimeline', () => {
       pixelsPerCell: 8,
     })
     const deadEnd = texelForCell(timeline, graph, 2, 0)
-    const offset = offsetAt(timeline, deadEnd.x, deadEnd.y)
+    const offset = offsetAt(
+      timeline,
+      deadEnd.x,
+      deadEnd.y - Math.floor(timeline.pixelsPerCell / 2) + 1,
+    )
     const deadEndSchedule = model.cells.find(
       (cell) => cell.position.row === 2 && cell.position.col === 0,
     )
@@ -263,7 +299,6 @@ describe('buildWaterSurfaceTimeline', () => {
       graph,
       { row: 0, col: 2 },
       { row: 4, col: 4 },
-      { sidePoolVolumeRatio: 0.01 },
     )
     const timeline = buildWaterSurfaceTimeline(graph, model, {
       pixelsPerCell: 8,
@@ -273,14 +308,19 @@ describe('buildWaterSurfaceTimeline', () => {
     const uphill = texelForCell(timeline, graph, 2, 3)
     const sidePassage = {
       x: Math.round((branchParent.x + side.x) / 2),
-      y: side.y,
+      y:
+        side.y - Math.floor(timeline.pixelsPerCell / 2) + 1,
     }
     const sideOffset = offsetAt(
       timeline,
       sidePassage.x,
       sidePassage.y,
     )
-    const uphillOffset = offsetAt(timeline, uphill.x, uphill.y)
+    const uphillOffset = offsetAt(
+      timeline,
+      uphill.x,
+      uphill.y - Math.floor(timeline.pixelsPerCell / 2) + 1,
+    )
 
     expect(timeline.field[sideOffset]).toBeGreaterThan(0)
     expect(timeline.field[sideOffset + 1]).toBeLessThan(128)

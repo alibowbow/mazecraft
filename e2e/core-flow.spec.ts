@@ -266,6 +266,19 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
   await importFixture(page)
   const canvas = page.locator('canvas')
   const image = () => canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())
+  const waitForChangedImage = async (previous: string, timeout = 5_000) => {
+    let current = previous
+    await expect
+      .poll(
+        async () => {
+          current = await image()
+          return current
+        },
+        { timeout },
+      )
+      .not.toBe(previous)
+    return current
+  }
   const hidden = await image()
 
   const solutionButton = page.getByRole('button', { name: '정답 경로 그리기' })
@@ -275,23 +288,14 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
     'true',
   )
 
-  await page.waitForTimeout(40)
-  const start = await image()
-  await page.waitForTimeout(360)
-  const middle = await image()
-  await page.waitForTimeout(900)
-  const complete = await image()
-
-  expect(start).not.toBe(hidden)
-  expect(middle).not.toBe(start)
-  expect(complete).not.toBe(middle)
+  const start = await waitForChangedImage(hidden)
+  const middle = await waitForChangedImage(start)
+  const complete = await waitForChangedImage(middle)
 
   await page.getByRole('button', { name: '정답 경로 숨기기' }).click()
   await expect(solutionButton).toHaveAttribute('aria-pressed', 'false')
   await solutionButton.click()
-  await page.waitForTimeout(40)
-  const replayStart = await image()
-  expect(replayStart).not.toBe(complete)
+  await waitForChangedImage(complete)
 })
 
 test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른다', async ({ page }) => {
@@ -315,8 +319,11 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
   await expect(stage).toHaveAttribute('data-quality', 'low')
   await expect(stage).toHaveAttribute(
     'data-fluid-model',
-    'continuous-feed-hydraulic',
+    'mass-conserving-finite-volume',
   )
+  expect(
+    Number(await stage.getAttribute('data-conservation-error')),
+  ).toBeLessThan(1e-8)
   await expect(stage).toHaveAttribute(
     'data-inlet-renderer',
     'coupled-gravity-jet',
