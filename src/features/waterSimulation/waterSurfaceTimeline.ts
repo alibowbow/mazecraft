@@ -54,6 +54,11 @@ const DEFAULT_PIXELS_PER_CELL = 12
 const DEFAULT_MAX_TEXTURE_SIZE = 2_048
 const MIN_PIXELS_PER_CELL = 2
 const LEVEL_EPSILON = 1e-6
+// A physically correct six-percent film is less than one texel on the
+// low-quality atlas and almost disappears against the pale maze floor. Keep
+// the conserved level in the model, but exaggerate its rendered cross-section
+// just enough for a person to follow the connected wet passage.
+const MINIMUM_VISIBLE_FILM_LEVEL = 0.18
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value))
@@ -111,6 +116,7 @@ function vectorForDirection(direction: WallDirection): FlowVector {
 
 function asSurfaceSample(
   cell: WaterSimulationCell | undefined,
+  steadyFlowLevel: number,
 ): SurfaceSample | null {
   if (
     !cell?.reachable ||
@@ -122,11 +128,21 @@ function asSurfaceSample(
   ) {
     return null
   }
+  const physicalPeakLevel = clamp(cell.peakLevel, 0, 1)
+  const physicalRetainedLevel = clamp(cell.retainedLevel, 0, 1)
+  const visualFloor =
+    cell.drainage === 'drains' || cell.drainage === 'exit'
+      ? Math.max(MINIMUM_VISIBLE_FILM_LEVEL, steadyFlowLevel)
+      : MINIMUM_VISIBLE_FILM_LEVEL
   return {
     arrivalMs: Math.max(0, cell.arrivalMs),
     fullMs: Math.max(cell.arrivalMs + 1, cell.fullMs),
-    peakLevel: clamp(cell.peakLevel, 0, 1),
-    retainedLevel: clamp(cell.retainedLevel, 0, 1),
+    peakLevel: clamp(Math.max(physicalPeakLevel, visualFloor), 0, 1),
+    retainedLevel: clamp(
+      Math.max(physicalRetainedLevel, visualFloor),
+      0,
+      1,
+    ),
   }
 }
 
@@ -299,7 +315,10 @@ export function buildWaterSurfaceTimeline(
   const boundsByIndex = new Map<number, CellBounds>()
   for (const cell of graph.cells) {
     const cellSchedule = scheduleByIndex.get(cell.index)
-    const sample = asSurfaceSample(cellSchedule)
+    const sample = asSurfaceSample(
+      cellSchedule,
+      model.options.steadyFlowLevel,
+    )
     if (!cell.active || !cellSchedule || !sample) continue
     const bounds = boundsForCell(
       graph,
@@ -434,14 +453,20 @@ export function buildWaterSurfaceTimeline(
 
   for (const cell of graph.cells) {
     const cellSchedule = scheduleByIndex.get(cell.index)
-    const cellSample = asSurfaceSample(cellSchedule)
+    const cellSample = asSurfaceSample(
+      cellSchedule,
+      model.options.steadyFlowLevel,
+    )
     const cellBounds = boundsByIndex.get(cell.index)
     if (!cell.active || !cellSchedule || !cellSample || !cellBounds) continue
 
     for (const { cell: neighbor } of getPassageNeighbors(graph, cell)) {
       if (neighbor.index <= cell.index) continue
       const neighborSchedule = scheduleByIndex.get(neighbor.index)
-      const neighborSample = asSurfaceSample(neighborSchedule)
+      const neighborSample = asSurfaceSample(
+        neighborSchedule,
+        model.options.steadyFlowLevel,
+      )
       const neighborBounds = boundsByIndex.get(neighbor.index)
       if (!neighborSchedule || !neighborSample || !neighborBounds) continue
 
@@ -516,7 +541,10 @@ export function buildWaterSurfaceTimeline(
   }
 
   const sourceSchedule = scheduleByIndex.get(model.sourceIndex)
-  const sourceSample = asSurfaceSample(sourceSchedule)
+  const sourceSample = asSurfaceSample(
+    sourceSchedule,
+    model.options.steadyFlowLevel,
+  )
   const sourceBounds = boundsByIndex.get(model.sourceIndex)
   if (sourceSchedule && sourceSample && sourceBounds) {
     paintImpactDisk(sourceBounds, sourceSample, pixelsPerCell * 0.18)
@@ -545,7 +573,10 @@ export function buildWaterSurfaceTimeline(
   }
 
   const exitSchedule = scheduleByIndex.get(model.exitIndex)
-  const exitSample = asSurfaceSample(exitSchedule)
+  const exitSample = asSurfaceSample(
+    exitSchedule,
+    model.options.steadyFlowLevel,
+  )
   const exitBounds = boundsByIndex.get(model.exitIndex)
   if (exitSchedule && exitSample && exitBounds) {
     const halfWidth = Math.max(0, Math.round(pixelsPerCell * 0.11))

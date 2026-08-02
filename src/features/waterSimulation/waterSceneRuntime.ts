@@ -311,8 +311,8 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
       11.0
     );
 
-    vec3 shallowCyan = vec3(0.035, 0.76, 0.86);
-    vec3 deepCyan = vec3(0.005, 0.46, 0.62);
+    vec3 shallowCyan = vec3(0.015, 0.67, 0.88);
+    vec3 deepCyan = vec3(0.004, 0.36, 0.64);
     vec3 bodyColor = mix(
       shallowCyan,
       deepCyan,
@@ -329,7 +329,10 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
       smoothstep(0.54, 0.96, mask);
     bodyColor += vec3(0.025, 0.2, 0.31) * contactRim * 0.28;
 
-    float alpha = mask * visibleWater * mix(0.12, 0.79, sqrt(level));
+    // Thin through-flow must remain readable on the pale maze floor. Depth is
+    // still expressed by opacity, but even the shallowest wet film has enough
+    // optical density to look like water instead of an empty cell.
+    float alpha = mask * visibleWater * mix(0.34, 0.88, sqrt(level));
     alpha *= mix(0.92, 1.03, broadNoise);
     alpha = max(alpha, edgeAeration * mask * 0.48);
     alpha = max(alpha, impactRing * mask * 0.42);
@@ -1024,7 +1027,7 @@ export class WaterSceneRuntime {
         0.1,
       ),
       new THREE.MeshStandardMaterial({
-        color: 0xeaf3f5,
+        color: 0xf6f7f3,
         roughness: 0.36,
         metalness: 0,
         envMapIntensity: 0.9,
