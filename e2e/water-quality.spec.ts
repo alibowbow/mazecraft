@@ -24,7 +24,7 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
     mimeType: 'application/vnd.mazecraft+json',
     buffer: Buffer.from(JSON.stringify(project)),
   })
-  await page.locator('.studio-workflow button').filter({ hasText: '테스트' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('high')
   await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
 

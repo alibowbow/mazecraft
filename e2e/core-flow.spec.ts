@@ -42,14 +42,14 @@ async function createBasic(page: Page) {
 }
 
 async function enterMazeStep(page: Page) {
-  await page.locator('.studio-workflow button').filter({ hasText: '미로' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '미로' }).click()
   await expect(page.getByText('MAZE IQ · 품질 분석')).toBeVisible()
 }
 
 async function completeFixture(page: Page, project: MazeProject) {
   const beginButton = page.getByRole('button', { name: /혼자 플레이/ })
   if (!page.url().includes('#/play')) {
-    const workflowTest = page.locator('.studio-workflow button').filter({ hasText: '테스트' })
+    const workflowTest = page.locator('.studio-stage-rail button').filter({ hasText: '테스트' })
     await workflowTest.click()
     await page.getByRole('button', { name: '직접 플레이 테스트' }).click()
   }
@@ -102,7 +102,7 @@ test('5. 자동 저장 후 새로고침해 프로젝트를 복구한다', async 
 
 test('6. 프로젝트 파일을 내보내고 다시 불러온다', async ({ page }) => {
   await importFixture(page)
-  await page.locator('.studio-workflow button').filter({ hasText: '공유' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '공유' }).click()
   await page.getByRole('button', { name: /파일로 내보내기/ }).click()
   await page.getByRole('button', { name: '프로젝트' }).click()
   const download = page.waitForEvent('download')
@@ -164,7 +164,7 @@ test('9. 벽 편집 뒤 실행 취소와 다시 실행을 제공한다', async (
 
 test('10. PNG와 SVG 파일을 실제 다운로드한다', async ({ page }) => {
   await importFixture(page)
-  await page.locator('.studio-workflow button').filter({ hasText: '공유' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '공유' }).click()
   await page.getByRole('button', { name: /파일로 내보내기/ }).click()
   const pngDownload = page.waitForEvent('download')
   await page.getByRole('button', { name: /파일 저장/ }).click()

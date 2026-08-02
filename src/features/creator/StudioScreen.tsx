@@ -1312,22 +1312,6 @@ export function StudioScreen({
             {saveStatus.state === 'saving' ? '저장 중…' : saveStatus.state === 'error' ? '저장 실패' : saveStatus.state === 'saved' ? <><CheckCircle2 size={13} />저장됨</> : ''}
           </span>
         </div>
-        <nav className="studio-workflow" aria-label="제작 단계">
-          {steps.map(({ id, title, icon: Icon }) => (
-            <button
-              key={id}
-              className={step === id ? 'active' : ''}
-              aria-current={step === id ? 'step' : undefined}
-              aria-label={`${id}단계 ${title}`}
-              data-ready={id < step || (id >= 5 && validation.valid)}
-              onClick={() => selectStep(id)}
-            >
-              <span><Icon size={15} /></span>
-              <small>{id}</small>
-              <strong>{title}</strong>
-            </button>
-          ))}
-        </nav>
         <div className="studio-header-actions">
           <button
             className={`icon-button focus-button ${focusMode ? 'active' : ''}`}
@@ -1345,6 +1329,23 @@ export function StudioScreen({
       </header>
 
       <div className="studio-layout">
+        <nav className="studio-stage-rail no-print" aria-label="제작 단계">
+          <div className="stage-rail-heading"><span>BUILD</span><small>01—06</small></div>
+          {steps.map(({ id, title, icon: Icon }) => (
+            <button
+              key={id}
+              className={step === id ? 'active' : ''}
+              aria-current={step === id ? 'step' : undefined}
+              aria-label={`${id}단계 ${title}`}
+              data-ready={id < step || (id >= 5 && validation.valid)}
+              data-step-number={String(id).padStart(2, '0')}
+              onClick={() => selectStep(id)}
+            >
+              <span><Icon size={17} /></span>
+              <strong>{title}</strong>
+            </button>
+          ))}
+        </nav>
         <section className="canvas-workspace" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
           <div className="canvas-toolbar no-print">
             <div className="toolbar-group editing-controls">
@@ -1398,6 +1399,7 @@ export function StudioScreen({
                 title={inspectorPanelOpen ? '설정 패널 접기' : '설정 패널 펼치기'}
               >
                 {inspectorPanelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+                <span>설정</span>
               </button>
             </div>
           </div>
@@ -1535,7 +1537,7 @@ export function StudioScreen({
           {mobileSteps.map((id) => {
             const item = steps.find((candidate) => candidate.id === id)!
             const Icon = item.icon
-            return <button key={id} className={step === id ? 'active' : ''} aria-current={step === id ? 'step' : undefined} onClick={(event) => selectStep(id, true, event.currentTarget)}><Icon size={19} />{item.title}</button>
+            return <button key={id} className={step === id ? 'active' : ''} aria-current={step === id ? 'step' : undefined} aria-label={item.title} data-step-number={String(id).padStart(2, '0')} onClick={(event) => selectStep(id, true, event.currentTarget)}><Icon size={19} />{item.title}</button>
           })}
         </nav>
       </div>

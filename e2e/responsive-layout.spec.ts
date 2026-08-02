@@ -38,7 +38,7 @@ for (const viewport of responsiveViewports) {
     )
 
     await expect(page.locator('.left-rail')).toHaveCount(0)
-    await expect(page.locator('.studio-workflow')).toBeHidden()
+    await expect(page.locator('.studio-stage-rail')).toBeHidden()
     await expect(page.locator('.mobile-tabs')).toBeVisible()
 
     const closedInspector = await page.locator('.inspector').evaluate((element) => {
