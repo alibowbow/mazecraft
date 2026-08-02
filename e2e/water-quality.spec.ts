@@ -159,14 +159,16 @@ test('연속 수면 렌더러가 시네마틱 장면을 움직이며 그린다',
   const pausedFrame = await captureStage()
   expect(pausedFrame.equals(impactFrame)).toBe(true)
 
-  const impactedFilledCells = Number(
-    await stage.getAttribute('data-filled-cells'),
-  )
+  const impactedElapsed = Number(await stage.getAttribute('data-elapsed-ms'))
   await page.getByLabel('물 흐름 속도').selectOption('1')
   await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
+  await expect(stage).toHaveAttribute('data-renderer', 'ready')
   await expect
-    .poll(async () => Number(await stage.getAttribute('data-filled-cells')))
-    .toBeGreaterThan(impactedFilledCells)
+    .poll(
+      async () => Number(await stage.getAttribute('data-elapsed-ms')),
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(impactedElapsed)
   expect(Number(await stage.getAttribute('data-atlas-width'))).toBeGreaterThan(
     0,
   )
