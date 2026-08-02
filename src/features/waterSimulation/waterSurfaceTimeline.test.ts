@@ -246,6 +246,49 @@ describe('buildWaterSurfaceTimeline', () => {
     )
   })
 
+  it('paints a later side opening before an uphill channel in the GPU atlas', () => {
+    const graph = createGraph(5, 5, [
+      [{ row: 0, col: 2 }, { row: 1, col: 2 }],
+      [{ row: 1, col: 2 }, { row: 2, col: 2 }],
+      [{ row: 2, col: 2 }, { row: 3, col: 2 }],
+      [{ row: 3, col: 2 }, { row: 3, col: 3 }],
+      [{ row: 3, col: 3 }, { row: 2, col: 3 }],
+      [{ row: 2, col: 3 }, { row: 2, col: 4 }],
+      [{ row: 2, col: 4 }, { row: 3, col: 4 }],
+      [{ row: 3, col: 4 }, { row: 4, col: 4 }],
+      [{ row: 1, col: 2 }, { row: 1, col: 1 }],
+      [{ row: 3, col: 2 }, { row: 3, col: 1 }],
+    ])
+    const model = buildWaterSimulation(
+      graph,
+      { row: 0, col: 2 },
+      { row: 4, col: 4 },
+      { sidePoolVolumeRatio: 0.01 },
+    )
+    const timeline = buildWaterSurfaceTimeline(graph, model, {
+      pixelsPerCell: 8,
+    })
+    const branchParent = texelForCell(timeline, graph, 3, 2)
+    const side = texelForCell(timeline, graph, 3, 1)
+    const uphill = texelForCell(timeline, graph, 2, 3)
+    const sidePassage = {
+      x: Math.round((branchParent.x + side.x) / 2),
+      y: side.y,
+    }
+    const sideOffset = offsetAt(
+      timeline,
+      sidePassage.x,
+      sidePassage.y,
+    )
+    const uphillOffset = offsetAt(timeline, uphill.x, uphill.y)
+
+    expect(timeline.field[sideOffset]).toBeGreaterThan(0)
+    expect(timeline.field[sideOffset + 1]).toBeLessThan(128)
+    expect(timeline.schedule[sideOffset]).toBeLessThan(
+      timeline.schedule[uphillOffset],
+    )
+  })
+
   it('produces byte-for-byte deterministic atlases', () => {
     const graph = createGraph(3, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],

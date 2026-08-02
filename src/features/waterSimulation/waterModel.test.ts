@@ -151,6 +151,40 @@ describe('buildWaterSimulation', () => {
     expect(new Set(reachable.map((cell) => cell.order)).size).toBe(5)
   })
 
+  it('wets every open side front before climbing an uphill outlet route', () => {
+    const graph = createGraph(5, 5, [
+      [{ row: 0, col: 2 }, { row: 1, col: 2 }],
+      [{ row: 1, col: 2 }, { row: 2, col: 2 }],
+      [{ row: 2, col: 2 }, { row: 3, col: 2 }],
+      [{ row: 3, col: 2 }, { row: 3, col: 3 }],
+      [{ row: 3, col: 3 }, { row: 2, col: 3 }],
+      [{ row: 2, col: 3 }, { row: 2, col: 4 }],
+      [{ row: 2, col: 4 }, { row: 3, col: 4 }],
+      [{ row: 3, col: 4 }, { row: 4, col: 4 }],
+      [{ row: 1, col: 2 }, { row: 1, col: 1 }],
+      [{ row: 3, col: 2 }, { row: 3, col: 1 }],
+    ])
+    const model = buildWaterSimulation(
+      graph,
+      { row: 0, col: 2 },
+      { row: 4, col: 4 },
+      { sidePoolVolumeRatio: 0.01 },
+    )
+    const earlySide = scheduleAt(model, 1, 1)
+    const lateSide = scheduleAt(model, 3, 1)
+    const uphill = scheduleAt(model, 2, 3)
+
+    expect(earlySide).toMatchObject({ reachable: true })
+    expect(lateSide).toMatchObject({ reachable: true })
+    expect(earlySide?.peakLevel).toBeGreaterThanOrEqual(
+      model.options.minimumWetLevel,
+    )
+    expect(lateSide?.peakLevel).toBeGreaterThanOrEqual(
+      model.options.minimumWetLevel,
+    )
+    expect(lateSide?.arrivalMs).toBeLessThan(uphill?.arrivalMs ?? 0)
+  })
+
   it('does not let zero-discharge blind branches delay outlet through-flow', () => {
     const graph = createGraph(3, 3, [
       [{ row: 0, col: 1 }, { row: 1, col: 1 }],
