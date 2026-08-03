@@ -11,15 +11,17 @@ async function capture(page: Page, testInfo: TestInfo, name: string, fullPage = 
   await page.screenshot({ path: testInfo.outputPath(name), fullPage })
 }
 
-test('홈에서 핵심 가치와 하나의 프로젝트 가져오기 경로를 제공한다', async ({ page }, testInfo) => {
+test('홈에서 간결한 브랜드와 하나의 프로젝트 가져오기 경로를 제공한다', async ({ page }, testInfo) => {
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { name: /미로를 만들고.*이야기를 숨기세요/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'MazeCraft', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /새 미로 만들기/ })).toBeVisible()
+  await expect(page.getByRole('img', { name: '제도용 종이 위에 자와 샤프가 놓인 작업대' })).toBeVisible()
   await expect(page.getByLabel('메이즈크래프트 미로 미리보기')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: '무엇을 만들까요?' })).toBeVisible()
-  await expect(page.getByLabel('주요 기능')).toContainText('기기 안에 자동 저장')
-  await expect(page.getByLabel('주요 기능')).toContainText('3D 물 시뮬레이션')
+  await expect(page.getByText('풀어야 열리는 이야기', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/형태 제작부터 난이도 분석/)).toHaveCount(0)
+  await expect(page.getByText('연속형 3D 물 시뮬레이션', { exact: true })).toHaveCount(0)
   await expect(page.getByPlaceholder('프로젝트 검색')).toBeVisible()
   await expect(page.getByLabel('프로젝트 정렬')).toBeVisible()
   await expect(page.getByText('LIVE PATH', { exact: true })).toHaveCount(0)
@@ -98,7 +100,7 @@ test('소형 태블릿 홈에서 간결한 히어로와 템플릿 선반을 제�
 
     await expect.poll(() => page.locator('.home-hero').evaluate((element) =>
       getComputedStyle(element).display,
-    )).toBe('block')
+    )).toBe('grid')
     await expect.poll(() => page.locator('.template-grid').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
     )).toBe(3)

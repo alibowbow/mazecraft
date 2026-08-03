@@ -14,7 +14,6 @@ import {
   Printer,
   Search,
   Shapes,
-  Sparkles,
   Sun,
   Trash2,
   Type,
@@ -168,9 +167,7 @@ export function HomeScreen({
 
       <section className="home-hero" aria-labelledby="home-hero-title">
         <div className="home-hero-copy">
-          <p className="eyebrow"><Sparkles size={13} /> 풀어야 열리는 이야기</p>
-          <h1 id="home-hero-title">미로를 만들고,<br /><span>이야기를 숨기세요.</span></h1>
-          <p>형태 제작부터 난이도 분석, 플레이 검증, 링크 공유까지 한 작업실에서 끝냅니다.</p>
+          <h1 id="home-hero-title">MazeCraft</h1>
           <div className="home-hero-actions">
             <button className="button hero-primary" onClick={() => onCreate('basic')}>새 미로 만들기 <ArrowRight size={17} /></button>
             {latestProject ? (
@@ -183,12 +180,17 @@ export function HomeScreen({
               </button>
             )}
           </div>
-          <div className="home-capabilities" aria-label="주요 기능">
-            <span>기기 안에 자동 저장</span>
-            <span>연속형 3D 물 시뮬레이션</span>
-            <span>링크·QR 공유</span>
-          </div>
         </div>
+        <figure className="home-hero-visual">
+          <img
+            src="/assets/drafting-desk.webp"
+            width="1536"
+            height="1024"
+            alt="제도용 종이 위에 자와 샤프가 놓인 작업대"
+            decoding="async"
+            fetchPriority="high"
+          />
+        </figure>
       </section>
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">
