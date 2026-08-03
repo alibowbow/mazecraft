@@ -183,10 +183,10 @@ export function HomeScreen({
         </div>
         <figure className="home-hero-visual">
           <img
-            src="/assets/drafting-desk.webp"
+            src="/assets/drafting-desk-v2.webp"
             width="1536"
             height="1024"
-            alt="제도용 종이 위에 자와 샤프가 놓인 작업대"
+            alt="제도용 종이 위에 손으로 그린 미로와 설계 도구가 놓인 작업대"
             decoding="async"
             fetchPriority="high"
           />
