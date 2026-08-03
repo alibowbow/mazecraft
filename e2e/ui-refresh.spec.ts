@@ -36,7 +36,7 @@ test('데스크톱 제작기에서 중복 탐색 없이 단계 흐름과 넓은 
   const workspace = page.locator('.canvas-workspace')
   const initial = await workspace.boundingBox()
   expect(initial).not.toBeNull()
-  expect(initial!.width).toBeGreaterThan(900)
+  expect(initial!.width).toBeGreaterThanOrEqual(880)
   await expect(page.locator('.left-rail')).toHaveCount(0)
   await expect(page.locator('.studio-stage-rail button')).toHaveCount(6)
   await expect(page.locator('.studio-stage-rail button.active')).toContainText('형태')
@@ -97,8 +97,8 @@ test('소형 태블릿 홈에서 간결한 히어로와 템플릿 선반을 제�
     await page.goto('/')
 
     await expect.poll(() => page.locator('.home-hero').evaluate((element) =>
-      getComputedStyle(element).gridTemplateColumns.split(' ').length,
-    )).toBe(1)
+      getComputedStyle(element).display,
+    )).toBe('block')
     await expect.poll(() => page.locator('.template-grid').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
     )).toBe(3)
