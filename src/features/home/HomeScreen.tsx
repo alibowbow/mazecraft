@@ -78,60 +78,6 @@ const ProjectMiniature = memo(function ProjectMiniature({ project }: { project: 
   )
 })
 
-const HeroMazePreview = memo(function HeroMazePreview() {
-  return (
-    <div className="hero-maze-preview-shell">
-      <header className="hero-maze-meta">
-        <span><i /> HYDRAULIC PROOF</span>
-        <small>12×8 · LIVE PATH</small>
-      </header>
-      <svg
-        className="hero-maze-preview"
-        viewBox="0 0 640 430"
-        role="img"
-        aria-label="메이즈크래프트 미로 미리보기"
-      >
-        <defs>
-          <pattern id="hero-drafting-grid" width="24" height="24" patternUnits="userSpaceOnUse">
-            <path d="M24 0H0V24" fill="none" stroke="currentColor" strokeWidth="0.55" />
-          </pattern>
-          <filter id="hero-water-glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="3.5" result="blur" />
-            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-        </defs>
-        <rect className="hero-maze-paper-grid" x="18" y="16" width="604" height="398" rx="9" fill="url(#hero-drafting-grid)" />
-        <path
-          className="hero-maze-water-bed"
-          d="M70 72H184V126H240V76H330V132H394V72H544V174H480V226H548V340H432V286H354V352H246V296H166V348H72V238H126V182H70Z"
-        />
-        <path
-          className="hero-maze-water"
-          pathLength="1"
-          d="M70 72H184V126H240V76H330V132H394V72H544V174H480V226H548V340H432V286H354V352H246V296H166V348H72V238H126V182H70"
-        />
-        <path
-          className="hero-maze-walls"
-          d="M42 44H596V386H42V44ZM98 44V100H154V154H98V210H42M210 44V100H266V44M322 44V100H378V156H434V100H490V44M546 44V100H596M42 156H98M154 100V210H210V156H266V212H322V156M378 156V212H434V156H490V212H546V156H596M42 266H98V322H154V266H210V322H266V266H322V322H378V266H434V322H490V266H546V322H596M98 210V266M210 212V266M322 212V266M434 212V266M546 212V266M154 322V386M266 322V386M378 322V386M490 322V386"
-        />
-        <g className="hero-maze-start" transform="translate(70 72)">
-          <circle r="15" />
-          <circle r="5" />
-        </g>
-        <g className="hero-maze-end" transform="translate(548 340)">
-          <circle r="15" />
-          <path d="M-4 0h8M0-4v8" />
-        </g>
-      </svg>
-      <footer className="hero-maze-legend" aria-hidden="true">
-        <span><i className="start" /> START</span>
-        <span><i className="flow" /> WATER ROUTE</span>
-        <span><i className="end" /> EXIT</span>
-      </footer>
-    </div>
-  )
-})
-
 interface HomeScreenProps {
   projects: MazeProject[]
   onCreate: (template: ProjectTemplate) => void
@@ -243,7 +189,6 @@ export function HomeScreen({
             <span>링크·QR 공유</span>
           </div>
         </div>
-        <HeroMazePreview />
       </section>
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">

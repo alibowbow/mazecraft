@@ -4392,23 +4392,21 @@ svg {
   }
 }
 
-/* Frontend Polish Director: drafting table, live waterway, and focused studio. */
+/* Frontend Polish Director: focused home and studio. */
 .home-shell {
   width: min(1440px, calc(100% - 56px));
 }
 
 .home-hero {
-  min-height: min(690px, calc(100dvh - 76px));
-  display: grid;
-  grid-template-columns: minmax(420px, 0.82fr) minmax(560px, 1.18fr);
-  align-items: center;
-  gap: clamp(38px, 5vw, 82px);
-  padding: clamp(48px, 6vw, 82px) 0;
+  min-height: auto;
+  display: block;
+  padding: clamp(52px, 6vw, 84px) 0 clamp(44px, 5vw, 68px);
   text-align: left;
 }
 
 .home-hero-copy {
   width: auto;
+  max-width: 760px;
   margin: 0;
 }
 
@@ -4430,147 +4428,6 @@ svg {
 .home-hero-actions,
 .home-capabilities {
   justify-content: flex-start;
-}
-
-.hero-maze-preview-shell {
-  position: relative;
-  min-width: 0;
-  overflow: hidden;
-  padding: 20px 22px 16px;
-  border: 1px solid color-mix(in srgb, var(--line-strong) 76%, transparent);
-  border-radius: 24px;
-  color: #707971;
-  background:
-    linear-gradient(110deg, rgba(255, 252, 244, 0.28), rgba(255, 252, 244, 0.06)),
-    url('/assets/drafting-desk.webp') center / cover no-repeat;
-  box-shadow: 0 28px 78px rgba(31, 38, 33, 0.16);
-  isolation: isolate;
-}
-
-.hero-maze-preview-shell::after {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  content: "";
-  background: radial-gradient(circle at 48% 44%, transparent 35%, rgba(71, 65, 52, 0.08));
-  pointer-events: none;
-}
-
-.hero-maze-meta,
-.hero-maze-legend {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #56605a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-}
-
-.hero-maze-meta span,
-.hero-maze-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.hero-maze-meta i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #1fb4ca;
-  box-shadow: 0 0 0 5px rgba(31, 180, 202, 0.15);
-}
-
-.hero-maze-meta small {
-  font: inherit;
-}
-
-.hero-maze-preview {
-  width: 100%;
-  height: auto;
-  display: block;
-  margin: 3px 0 0;
-  filter: drop-shadow(0 12px 16px rgba(43, 47, 43, 0.09));
-}
-
-.hero-maze-paper-grid {
-  color: rgba(55, 63, 58, 0.28);
-  fill: rgba(250, 247, 237, 0.26);
-}
-
-.hero-maze-walls {
-  fill: none;
-  stroke: #252c28;
-  stroke-width: 5;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-}
-
-.hero-maze-water-bed,
-.hero-maze-water {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.hero-maze-water-bed {
-  stroke: rgba(20, 124, 145, 0.28);
-  stroke-width: 30;
-}
-
-.hero-maze-water {
-  stroke: #21b9d0;
-  stroke-width: 16;
-  stroke-dasharray: 0.16 0.025;
-  filter: url('#hero-water-glow');
-  animation: hero-water-flow 5.5s linear infinite;
-}
-
-.hero-maze-start circle:first-child {
-  fill: var(--acid);
-  stroke: #252c28;
-  stroke-width: 4;
-}
-
-.hero-maze-start circle:last-child {
-  fill: #252c28;
-}
-
-.hero-maze-end circle {
-  fill: var(--accent);
-  stroke: #252c28;
-  stroke-width: 4;
-}
-
-.hero-maze-end path {
-  fill: none;
-  stroke: #252c28;
-  stroke-width: 3;
-}
-
-.hero-maze-legend {
-  justify-content: flex-start;
-  padding-top: 11px;
-  border-top: 1px solid rgba(61, 68, 63, 0.2);
-}
-
-.hero-maze-legend i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.hero-maze-legend .start { background: var(--acid); border: 1px solid #252c28; }
-.hero-maze-legend .flow { width: 24px; border-radius: 99px; background: #21b9d0; }
-.hero-maze-legend .end { background: var(--accent); border: 1px solid #252c28; }
-
-@keyframes hero-water-flow {
-  to { stroke-dashoffset: -1; }
 }
 
 .template-grid {
@@ -4772,9 +4629,7 @@ svg {
 
 @media (max-width: 1180px) {
   .home-hero {
-    min-height: auto;
-    grid-template-columns: minmax(0, 0.84fr) minmax(430px, 1.16fr);
-    gap: 32px;
+    padding: 50px 0 60px;
   }
 
   .home-hero h1 {
@@ -4814,18 +4669,11 @@ svg {
 
 @media (max-width: 900px) {
   .home-hero {
-    grid-template-columns: 1fr;
-    gap: 34px;
     padding: 46px 0 60px;
   }
 
   .home-hero-copy {
     max-width: 720px;
-  }
-
-  .hero-maze-preview-shell {
-    width: min(760px, 100%);
-    justify-self: center;
   }
 }
 
@@ -4877,16 +4725,6 @@ svg {
 
   .home-hero h1 {
     font-size: clamp(2.55rem, 12.2vw, 3.75rem);
-  }
-
-  .hero-maze-preview-shell {
-    padding: 14px 14px 11px;
-    border-radius: 18px;
-  }
-
-  .hero-maze-meta,
-  .hero-maze-legend {
-    font-size: 0.48rem;
   }
 
   .template-grid {

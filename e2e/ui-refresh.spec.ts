@@ -16,12 +16,13 @@ test('홈에서 핵심 가치와 하나의 프로젝트 가져오기 경로를 �
 
   await expect(page.getByRole('heading', { name: /미로를 만들고.*이야기를 숨기세요/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /새 미로 만들기/ })).toBeVisible()
-  await expect(page.getByLabel('메이즈크래프트 미로 미리보기')).toBeVisible()
+  await expect(page.getByLabel('메이즈크래프트 미로 미리보기')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '무엇을 만들까요?' })).toBeVisible()
   await expect(page.getByLabel('주요 기능')).toContainText('기기 안에 자동 저장')
   await expect(page.getByLabel('주요 기능')).toContainText('3D 물 시뮬레이션')
   await expect(page.getByPlaceholder('프로젝트 검색')).toBeVisible()
   await expect(page.getByLabel('프로젝트 정렬')).toBeVisible()
-  await expect(page.getByText('LIVE MAZE', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('LIVE PATH', { exact: true })).toHaveCount(0)
   const projectInput = page.locator('input[type="file"][accept*=".mazecraft"]')
   await expect(projectInput).toHaveCount(1)
   await expect(projectInput).toHaveAttribute('tabindex', '-1')
@@ -90,14 +91,14 @@ test('모바일 제작기에서 여섯 단계를 빠짐없이 바텀 시트로 �
   await expect(testTab).toBeFocused()
 })
 
-test('소형 태블릿 홈에서 히어로와 템플릿 선반이 읽을 수 있는 열로 재배치된다', async ({ page }) => {
+test('소형 태블릿 홈에서 간결한 히어로와 템플릿 선반을 제공한다', async ({ page }) => {
   for (const width of [827, 980, 1024]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/')
 
     await expect.poll(() => page.locator('.home-hero').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
-    )).toBe(width <= 900 ? 1 : 2)
+    )).toBe(1)
     await expect.poll(() => page.locator('.template-grid').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
     )).toBe(3)
