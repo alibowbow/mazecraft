@@ -21,8 +21,7 @@ import {
   type WaterPlaybackStatus,
   type WaterRuntimeMetrics,
 } from './waterSceneRuntime'
-import { buildWaterSimulation } from './waterModel'
-import { fitWaterSimulationToBudget } from './waterPlaybackTiming'
+import type { WaterSurfaceStyle } from './rendering'
 
 export type WaterEffectQuality = 'auto' | 'low' | 'high'
 
@@ -35,6 +34,7 @@ interface WaterSimulationDialogProps {
 
 const EMPTY_STATUS: WaterPlaybackStatus = {
   elapsedMs: 0,
+  simulationTime: 0,
   filledCells: 0,
   totalCells: 0,
   reachedExit: false,
@@ -42,16 +42,30 @@ const EMPTY_STATUS: WaterPlaybackStatus = {
   inletState: 'off',
   inletVisible: false,
   outletVisible: false,
+  activeFlowEdgeCount: 0,
+  cumulativeInjectedVolume: 0,
+  cumulativeOutletVolume: 0,
+  currentStoredVolume: 0,
+  absoluteMassError: 0,
+  relativeMassError: 0,
+  maxVelocity: 0,
+  outletDischarge: 0,
 }
 
 const EMPTY_METRICS: WaterRuntimeMetrics = {
   atlasWidth: 0,
   atlasHeight: 0,
+  closedWallLeakTexels: 0,
   drawCalls: 0,
   triangles: 0,
   inletDropHeight: 0,
   inletContactGap: 0,
   outletDropHeight: 0,
+  physicsStepHz: 120,
+  snapshotHz: 25,
+  solverMode: 'main-thread',
+  waveBands: 2,
+  foamMode: 'procedural',
 }
 
 const resolveQuality = (
@@ -67,17 +81,6 @@ const resolveQuality = (
   return constrainedDevice || activeCellCount > 3_600 ? 'low' : 'high'
 }
 
-const resolvePlaybackBudget = (activeCellCount: number) => {
-  const maxExitMs = Math.min(
-    13_500,
-    Math.max(9_000, 7_800 + Math.log2(activeCellCount + 1) * 650),
-  )
-  return {
-    maxExitMs,
-    maxFlowMs: maxExitMs + 3_500,
-  }
-}
-
 export default function WaterSimulationDialog({
   open,
   project,
@@ -90,6 +93,10 @@ export default function WaterSimulationDialog({
   const [metrics, setMetrics] = useState<WaterRuntimeMetrics>(EMPTY_METRICS)
   const [paused, setPaused] = useState(false)
   const [speed, setSpeed] = useState(1)
+  const [surfaceStyle, setSurfaceStyle] =
+    useState<WaterSurfaceStyle>('natural')
+  const surfaceStyleRef = useRef(surfaceStyle)
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [renderState, setRenderState] = useState<
     'initializing' | 'ready' | 'error'
   >('initializing')
@@ -108,65 +115,40 @@ export default function WaterSimulationDialog({
       window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     [],
   )
-  const model = useMemo(
-    () => {
-      const baseModel = buildWaterSimulation(
-        project.mazeGraph,
-        project.startCell,
-        project.endCell,
-        {
-          downwardTravelMs: 125,
-          horizontalTravelMs: 235,
-          upwardTravelMs: 680,
-          cellFillMs: 105,
-          drainDelayMs: 620,
-          drainDurationMs: 1_500,
-          residualFilmLevel: 0.09,
-          pooledLevel: 0.86,
-        },
-      )
-      return fitWaterSimulationToBudget(
-        baseModel,
-        resolvePlaybackBudget(activeCellCount),
-      )
-    },
-    [
-      activeCellCount,
-      project.mazeGraph,
-      project.startCell,
-      project.endCell,
-    ],
-  )
-  const reachableCellCount = useMemo(
-    () => model.cells.filter((cell) => cell.reachable).length,
-    [model],
-  )
-
   useEffect(() => {
     if (!open || !canvasMountRef.current) return
     const mount = canvasMountRef.current
-    setStatus({ ...EMPTY_STATUS, totalCells: reachableCellCount })
+    let disposed = false
+    let runtime: WaterSceneRuntime | null = null
+    setStatus({ ...EMPTY_STATUS, totalCells: activeCellCount })
     setMetrics(EMPTY_METRICS)
     setPaused(false)
     setRenderState('initializing')
     setErrorMessage('')
     try {
-      const runtime = new WaterSceneRuntime(
+      runtime = new WaterSceneRuntime(
         mount,
         project,
-        model,
         resolvedQuality,
-        setStatus,
+        surfaceStyleRef.current,
+        () => {
+          if (!disposed) setRenderState('ready')
+        },
+        (nextStatus) => {
+          if (!disposed) setStatus(nextStatus)
+        },
         (message) => {
+          if (disposed) return
           setRenderState('error')
           setErrorMessage(message)
         },
-        setMetrics,
+        (nextMetrics) => {
+          if (!disposed) setMetrics(nextMetrics)
+        },
         reducedMotion,
       )
       runtime.setSpeed(speed)
       runtimeRef.current = runtime
-      setRenderState('ready')
     } catch (error) {
       // If Three.js throws part-way through construction, its runtime instance
       // is not available to dispose. Explicitly lose the orphaned context so a
@@ -189,14 +171,14 @@ export default function WaterSimulationDialog({
       )
     }
     return () => {
-      runtimeRef.current?.dispose()
-      runtimeRef.current = null
+      disposed = true
+      runtime?.dispose()
+      if (runtimeRef.current === runtime) runtimeRef.current = null
     }
   }, [
-    model,
+    activeCellCount,
     open,
     project,
-    reachableCellCount,
     reducedMotion,
     resolvedQuality,
   ])
@@ -204,6 +186,11 @@ export default function WaterSimulationDialog({
   useEffect(() => {
     runtimeRef.current?.setSpeed(speed)
   }, [speed])
+
+  useEffect(() => {
+    surfaceStyleRef.current = surfaceStyle
+    if (open) runtimeRef.current?.setSurfaceStyle(surfaceStyle)
+  }, [open, surfaceStyle])
 
   const restart = useCallback(() => {
     runtimeRef.current?.restart()
@@ -216,13 +203,12 @@ export default function WaterSimulationDialog({
     setPaused(next)
   }
 
-  const phaseProgress = status.complete
-    ? 100
-    : status.reachedExit
-      ? 78
-      : status.filledCells > 1
-        ? 42
-        : 12
+  const wetFraction = status.totalCells > 0
+    ? status.filledCells / status.totalCells
+    : 0
+  const phaseProgress = status.reachedExit
+    ? Math.min(100, 82 + wetFraction * 18)
+    : Math.max(8, Math.min(78, wetFraction * 78))
   const statusLabel = paused
     ? '사용자가 일시정지함'
     : status.complete
@@ -257,8 +243,8 @@ export default function WaterSimulationDialog({
           className="water-simulation-stage"
           data-testid="water-simulation-stage"
           data-renderer={renderState}
-          data-fluid-renderer="bottom-up-hydraulic-surface"
-          data-fluid-model="mass-conserving-finite-volume"
+          data-fluid-renderer="dynamic-topology-depth-velocity-foam"
+          data-fluid-model="dynamic-head-discharge-network"
           data-flow-mode="continuous-until-user-pauses"
           data-water-continuity="coupled-source-surface"
           data-phase={phase}
@@ -266,13 +252,29 @@ export default function WaterSimulationDialog({
           data-start-edge="top"
           data-end-edge="bottom"
           data-active-cells={activeCellCount}
-          data-wettable-cells={reachableCellCount}
+          data-wettable-cells={activeCellCount}
           data-filled-cells={status.filledCells}
-          data-conservation-error={model.massBalance.conservationError}
           data-reached-exit={status.reachedExit}
+          data-through-flow={status.complete}
           data-settled={status.complete}
+          data-solver-mode={
+            metrics.solverMode === 'worker'
+              ? 'worker'
+              : 'main-thread-fallback'
+          }
+          data-physics-step-hz={metrics.physicsStepHz}
+          data-snapshot-hz={metrics.snapshotHz}
+          data-active-flow-edges={status.activeFlowEdgeCount}
+          data-injected-volume={status.cumulativeInjectedVolume}
+          data-outlet-volume={status.cumulativeOutletVolume}
+          data-stored-volume={status.currentStoredVolume}
+          data-mass-absolute-error={status.absoluteMassError}
+          data-mass-relative-error={status.relativeMassError}
+          data-max-velocity={status.maxVelocity}
+          data-outlet-discharge={status.outletDischarge}
           data-atlas-width={metrics.atlasWidth}
           data-atlas-height={metrics.atlasHeight}
+          data-closed-wall-leak-texels={metrics.closedWallLeakTexels}
           data-draw-calls={metrics.drawCalls}
           data-triangles={metrics.triangles}
           data-inlet-renderer="coupled-gravity-jet"
@@ -283,7 +285,12 @@ export default function WaterSimulationDialog({
           data-outlet-renderer="continuous-waterfall-and-catch-basin"
           data-outlet-visible={status.outletVisible}
           data-outlet-drop-height={metrics.outletDropHeight.toFixed(2)}
-          data-elapsed-ms={Math.round(status.elapsedMs)}
+          data-water-surface-renderer="directional-multi-band"
+          data-water-surface-style={surfaceStyle}
+          data-wave-bands={metrics.waveBands}
+          data-foam-mode={metrics.foamMode}
+          data-elapsed-ms={Math.round(status.simulationTime * 1_000)}
+          data-scene-elapsed-ms={Math.round(status.elapsedMs)}
           role={renderState === 'error' ? undefined : 'img'}
           aria-label={
             renderState === 'error'
@@ -396,8 +403,72 @@ export default function WaterSimulationDialog({
                 <option value={4}>4×</option>
               </select>
             </label>
+            <label className="water-speed-control water-surface-control">
+              <Waves size={16} aria-hidden="true" />
+              <span>수면 표현</span>
+              <select
+                aria-label="수면 표현"
+                value={surfaceStyle}
+                disabled={renderState !== 'ready'}
+                onChange={(event) =>
+                  setSurfaceStyle(event.target.value as WaterSurfaceStyle)
+                }
+              >
+                <option value="calm">잔잔함</option>
+                <option value="natural">자연</option>
+                <option value="dynamic">역동</option>
+              </select>
+            </label>
+            {import.meta.env.DEV && (
+              <button
+                className="button secondary water-diagnostics-toggle"
+                type="button"
+                aria-expanded={showDiagnostics}
+                onClick={() => setShowDiagnostics((visible) => !visible)}
+              >
+                <Gauge size={17} />
+                물리 진단
+              </button>
+            )}
           </div>
         </div>
+
+        {import.meta.env.DEV && showDiagnostics && (
+          <dl className="water-physics-diagnostics">
+            <div>
+              <dt>솔버</dt>
+              <dd>
+                {metrics.solverMode} · {metrics.physicsStepHz} Hz
+              </dd>
+            </div>
+            <div>
+              <dt>시뮬레이션</dt>
+              <dd>{status.simulationTime.toFixed(3)} s</dd>
+            </div>
+            <div>
+              <dt>부피</dt>
+              <dd>
+                유입 {status.cumulativeInjectedVolume.toExponential(3)} / 저장{' '}
+                {status.currentStoredVolume.toExponential(3)} / 유출{' '}
+                {status.cumulativeOutletVolume.toExponential(3)} m³
+              </dd>
+            </div>
+            <div>
+              <dt>질량 오차</dt>
+              <dd>
+                {status.absoluteMassError.toExponential(3)} m³ ·{' '}
+                {(status.relativeMassError * 100).toFixed(4)}%
+              </dd>
+            </div>
+            <div>
+              <dt>활성 유로</dt>
+              <dd>
+                {status.activeFlowEdgeCount} · 최고{' '}
+                {status.maxVelocity.toFixed(3)} m/s
+              </dd>
+            </div>
+          </dl>
+        )}
 
         <div className="water-simulation-legend">
           <span>드래그: 미세 시점 조절</span>

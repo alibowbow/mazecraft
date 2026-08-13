@@ -1926,6 +1926,41 @@ svg {
   background: #20373d;
 }
 
+.water-surface-control select {
+  min-width: 78px;
+}
+
+.water-physics-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  color: #dff6f8;
+  background: rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.water-physics-diagnostics > div {
+  min-width: 0;
+  padding: 8px 10px;
+  background: #15272c;
+}
+
+.water-physics-diagnostics dt {
+  margin-bottom: 3px;
+  color: #7f999f;
+  font-size: 0.56rem;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+}
+
+.water-physics-diagnostics dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.61rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .water-simulation-legend {
   min-height: 31px;
   display: flex;
@@ -2297,7 +2332,7 @@ svg {
 
   .water-simulation-controls {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .water-simulation-controls .button.secondary {
@@ -2315,6 +2350,10 @@ svg {
   .water-speed-control > span,
   .water-simulation-controls .button.secondary:nth-of-type(2) {
     font-size: 0;
+  }
+
+  .water-physics-diagnostics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .water-simulation-controls .button.secondary:nth-of-type(2) svg {
@@ -2416,6 +2455,14 @@ svg {
 
   .water-simulation-controls .button.secondary:first-child {
     font-size: 0.62rem;
+  }
+
+  .water-simulation-controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .water-surface-control {
+    grid-column: span 2;
   }
 
   .water-simulation-legend {

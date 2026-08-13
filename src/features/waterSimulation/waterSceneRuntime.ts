@@ -11,15 +11,31 @@ import {
   type WallDirection,
 } from '../../core/maze'
 import {
-  buildWaterSurfaceTimeline,
-  type WaterSurfaceTimeline,
-} from './waterSurfaceTimeline'
-import type {
-  WaterCellSchedule,
-  WaterSimulationModel,
-} from './waterModel'
+  buildHydraulicNetwork,
+  createHydraulicBridge,
+  type HydraulicBridge,
+  type HydraulicBridgeMode,
+  type HydraulicDiagnosticsSnapshot,
+  type HydraulicSnapshotMessage,
+} from './hydraulics'
 import {
-  getWaterFlowElapsedMs,
+  buildWaterTopologyAtlas,
+  countClosedWallLeakTexels,
+  createDynamicStateTextureBuffer,
+  createWaterDetailTextureData,
+  createWaterSurfaceProfile,
+  EdgeVelocityAggregator,
+  resetDynamicStateTexture,
+  updateDynamicStateTexture,
+  WaterFoamRenderTargets,
+  writeFlowFoamSource,
+  type DynamicStateTextureBuffer,
+  type WaterFoamMode,
+  type WaterSurfaceProfile,
+  type WaterSurfaceStyle,
+  type WaterTopologyAtlas,
+} from './rendering'
+import {
   resolveWaterInletLayout,
   sampleWaterHandoff,
   sampleWaterInlet,
@@ -30,6 +46,7 @@ import {
 
 export interface WaterPlaybackStatus {
   elapsedMs: number
+  simulationTime: number
   filledCells: number
   totalCells: number
   reachedExit: boolean
@@ -37,16 +54,30 @@ export interface WaterPlaybackStatus {
   inletState: WaterInletState
   inletVisible: boolean
   outletVisible: boolean
+  activeFlowEdgeCount: number
+  cumulativeInjectedVolume: number
+  cumulativeOutletVolume: number
+  currentStoredVolume: number
+  absoluteMassError: number
+  relativeMassError: number
+  maxVelocity: number
+  outletDischarge: number
 }
 
 export interface WaterRuntimeMetrics {
   atlasWidth: number
   atlasHeight: number
+  closedWallLeakTexels: number
   drawCalls: number
   triangles: number
   inletDropHeight: number
   inletContactGap: number
   outletDropHeight: number
+  physicsStepHz: number
+  snapshotHz: number
+  solverMode: HydraulicBridgeMode
+  waveBands: number
+  foamMode: WaterFoamMode
 }
 
 export type ResolvedWaterQuality = 'low' | 'high'
@@ -68,7 +99,7 @@ interface ParticleSeed {
 }
 
 interface BubbleSeed extends ParticleSeed {
-  cell: WaterCellSchedule
+  nodeIndex: number
 }
 
 const WATER_BODY_COLOR = 0x16bad8
@@ -80,60 +111,52 @@ const WATER_JET_MIN_CONTACT_RADIUS = 0.074
 const WATER_OUTLET_DROP_HEIGHT = 1.58
 
 const WATER_VERTEX_SHADER = /* glsl */ `
-  uniform sampler2D uSchedule;
-  uniform sampler2D uField;
-  uniform float uTimelineTime;
-  uniform float uMotionTime;
-  uniform float uDrainStart;
-  uniform float uDrainDuration;
+  uniform sampler2D uTopology;
+  uniform sampler2D uDynamicState;
+  uniform float uWaveTime;
   uniform vec2 uBoardSize;
   uniform vec2 uImpactCenter;
   uniform float uImpactStrength;
   uniform float uFlowGate;
+  uniform vec3 uBandAmplitude;
+  uniform vec3 uBandFrequency;
+  uniform vec3 uBandSpeed;
+  uniform float uBandCount;
   varying vec2 vUv;
   varying vec3 vWorldPosition;
+  varying float vDepth;
+  varying float vMask;
+  varying vec2 vVelocity;
 
   void main() {
-    vec4 schedule = texture2D(uSchedule, uv);
-    vec4 field = texture2D(uField, uv);
-    float validity = schedule.a;
-    float mask = smoothstep(0.08, 0.86, field.r) *
-      smoothstep(0.04, 0.82, validity);
-    float arrival = schedule.r / max(validity, 0.001);
-    float fullAt = max(
-      schedule.g / max(validity, 0.001),
-      arrival + 1.0
-    );
-    float retained = clamp(
-      schedule.b / max(validity, 0.001),
-      0.0,
-      1.0
-    );
-    float peak = clamp(field.a, 0.0, 1.0);
-    float fill = smoothstep(
-      arrival - 24.0,
-      fullAt + 72.0,
-      uTimelineTime
-    );
-    float localDrainStart = max(fullAt, uDrainStart);
-    float draining = smoothstep(
-      localDrainStart,
-      localDrainStart + max(1.0, uDrainDuration),
-      uTimelineTime
-    );
-    float localLevel = mix(peak * fill, retained, draining) * uFlowGate;
+    float mask = texture2D(uTopology, uv).r;
+    vec4 dynamicState = texture2D(uDynamicState, uv);
+    float depth = clamp(dynamicState.r, 0.0, 1.0) * uFlowGate;
+    vec2 velocity = dynamicState.gb;
+    float speed = length(velocity);
+    vec2 flow = speed > 0.001
+      ? normalize(velocity)
+      : vec2(0.0, -1.0);
     vec2 channelUv = uv * uBoardSize;
-    vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
-    float broadWave = sin(
-      dot(channelUv, flow * 4.8) - uMotionTime * 0.0065
-    );
-    float crossWave = sin(
-      dot(channelUv, vec2(-flow.y, flow.x) * 7.2) +
-      uMotionTime * 0.0042
-    );
+    float motion = smoothstep(0.002, 0.12, speed);
+    float wave = sin(
+      dot(channelUv, flow) * uBandFrequency.x -
+      uWaveTime * uBandSpeed.x
+    ) * uBandAmplitude.x;
+    if (uBandCount > 1.5) {
+      vec2 crossFlow = normalize(flow + vec2(-flow.y, flow.x) * 0.22);
+      wave += sin(
+        dot(channelUv, crossFlow) * uBandFrequency.y -
+        uWaveTime * uBandSpeed.y
+      ) * uBandAmplitude.y;
+    }
+    if (uBandCount > 2.5) {
+      wave += sin(
+        dot(channelUv, flow) * uBandFrequency.z -
+        uWaveTime * uBandSpeed.z
+      ) * uBandAmplitude.z;
+    }
     float impactDistance = length((uv - uImpactCenter) * uBoardSize);
-    float impactBody = exp(-pow(impactDistance / 0.46, 4.0)) *
-      uImpactStrength;
     float impactDimple = exp(-pow(impactDistance / 0.12, 2.0)) *
       uImpactStrength;
     float impactShoulder = exp(-pow(
@@ -142,12 +165,14 @@ const WATER_VERTEX_SHADER = /* glsl */ `
     )) * uImpactStrength;
     vec3 transformed = position;
     transformed.z += mask * (
-      localLevel * (0.014 + broadWave * 0.012 + crossWave * 0.006) +
-      impactBody * 0.018 -
+      depth * (0.012 + wave * motion * mix(0.035, 0.12, motion)) -
       impactDimple * 0.026 +
       impactShoulder * 0.026
     );
     vUv = uv;
+    vDepth = depth;
+    vMask = mask;
+    vVelocity = velocity;
     vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
     vWorldPosition = worldPosition.xyz;
     gl_Position = projectionMatrix * viewMatrix * worldPosition;
@@ -157,186 +182,82 @@ const WATER_VERTEX_SHADER = /* glsl */ `
 const WATER_FRAGMENT_SHADER = /* glsl */ `
   precision highp float;
 
-  uniform sampler2D uSchedule;
-  uniform sampler2D uField;
-  uniform float uTimelineTime;
-  uniform float uMotionTime;
-  uniform float uDrainStart;
-  uniform float uDrainDuration;
+  uniform sampler2D uTopology;
+  uniform sampler2D uDynamicState;
+  uniform sampler2D uDetail;
+  uniform sampler2D uFoamHistory;
+  uniform float uFoamHistoryEnabled;
+  uniform float uWaveTime;
   uniform vec2 uBoardSize;
   uniform vec2 uImpactCenter;
   uniform float uImpactStrength;
   uniform float uFlowGate;
+  uniform float uDetailStrength;
+  uniform float uFresnelPower;
+  uniform float uGlitterStrength;
   uniform vec3 uCameraPosition;
   varying vec2 vUv;
   varying vec3 vWorldPosition;
-
-  float hash21(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-  }
-
-  float valueNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
-      mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0)), f.x),
-      f.y
-    );
-  }
+  varying float vDepth;
+  varying float vMask;
+  varying vec2 vVelocity;
 
   void main() {
-    vec4 schedule = texture2D(uSchedule, vUv);
-    vec4 field = texture2D(uField, vUv);
-    float validity = schedule.a;
-    float mask = smoothstep(0.08, 0.86, field.r) *
-      smoothstep(0.04, 0.82, validity);
-    if (mask < 0.01 || validity < 0.01) discard;
+    vec4 dynamicState = texture2D(uDynamicState, vUv);
+    float mask = smoothstep(0.08, 0.92, vMask);
+    float depth = clamp(vDepth, 0.0, 1.0);
+    if (mask < 0.01 || depth < 0.0001 || uFlowGate < 0.001) discard;
 
-    float arrival = schedule.r / max(validity, 0.001);
-    float fullAt = max(
-      schedule.g / max(validity, 0.001),
-      arrival + 1.0
-    );
-    float retained = clamp(
-      schedule.b / max(validity, 0.001),
-      0.0,
-      1.0
-    );
-    float peak = clamp(field.a, 0.0, 1.0);
-    vec2 flow = normalize(field.gb * 2.0 - 1.0 + vec2(0.0001));
+    float speed = length(vVelocity);
+    vec2 flow = speed > 0.001 ? normalize(vVelocity) : vec2(0.0, -1.0);
     vec2 channelUv = vUv * uBoardSize;
-    float frontNoise =
-      valueNoise(channelUv * 1.55 + flow * uMotionTime * 0.00016) * 0.68 +
-      valueNoise(channelUv * 0.42 - flow * uMotionTime * 0.00009) * 0.32;
-    float frontRipple = sin(
-      dot(channelUv, vec2(-flow.y, flow.x) * 4.8) +
-      valueNoise(channelUv * 0.31) * 3.4
-    ) * 7.0;
-    float frontTime =
-      uTimelineTime + (frontNoise - 0.5) * 44.0 + frontRipple;
-
-    float baseWet = smoothstep(
-      arrival - 28.0,
-      arrival + 132.0,
-      uTimelineTime
-    );
-    float irregularWet = smoothstep(
-      arrival - 32.0,
-      arrival + 138.0,
-      frontTime
-    );
-    float wet = baseWet * mix(0.74, 1.0, irregularWet);
-    float fill = smoothstep(arrival + 20.0, fullAt + 90.0, frontTime);
-    float localDrainStart = max(fullAt, uDrainStart);
-    float draining = smoothstep(
-      localDrainStart,
-      localDrainStart + max(1.0, uDrainDuration),
-      uTimelineTime
-    );
-    float fillingLevel = mix(min(peak, 0.12), peak, fill);
-    float level = mix(fillingLevel, retained, draining);
+    vec2 detailUvA = channelUv * 0.36 + flow * uWaveTime * 0.035;
+    vec2 detailUvB = channelUv * 1.18 - flow * uWaveTime * 0.072;
+    vec3 detailA = texture2D(uDetail, detailUvA).rgb;
+    vec3 detailB = texture2D(uDetail, detailUvB).rgb;
+    float detail = ((detailA.r + detailB.g) * 0.5 - 0.5) * uDetailStrength;
     float impactDistance = length((vUv - uImpactCenter) * uBoardSize);
-    float sourceInjection = exp(-pow(impactDistance / 0.46, 4.0)) *
-      uImpactStrength;
-    float visibleWater = max(
-      wet * smoothstep(0.015, 0.12, level),
-      sourceInjection * (0.76 + fill * 0.24)
-    );
-    float causalGate = smoothstep(
-      arrival - 72.0,
-      arrival + 108.0,
-      uTimelineTime
-    );
-    visibleWater *= max(causalGate, sourceInjection);
-
-    float frontAge = max(0.0, frontTime - arrival);
-    float leadingFoam =
-      exp(-pow(frontAge / 108.0, 2.0)) *
-      step(arrival, uTimelineTime) *
-      (1.0 - draining);
-    float turnAeration = 1.0 - abs(flow.y);
-    float edgeAeration = leadingFoam * (
-      0.08 + sourceInjection * 0.28 + turnAeration * 0.1
-    ) * smoothstep(0.08, 0.68, visibleWater);
-
-    float directionalWave = sin(
-      dot(channelUv, flow * 11.0) -
-      uMotionTime * 0.0085 +
-      valueNoise(channelUv * 0.22) * 4.0
-    );
-    float crossWave = sin(
-      dot(channelUv, vec2(-flow.y, flow.x) * 17.0) +
-      uMotionTime * 0.005
-    );
-    float broadNoise = valueNoise(
-      channelUv * 0.58 + flow * uMotionTime * 0.00022
-    );
-    float fineNoise = valueNoise(
-      channelUv * 2.25 - flow * uMotionTime * 0.00072
-    );
-    float flowStreak = pow(
-      max(
-        0.0,
-        sin(
-          dot(channelUv, flow * 5.2) - uMotionTime * 0.008 +
-          broadNoise * 4.6
-        ) * 0.5 + 0.5
-      ),
-      6.0
-    );
-    float impactPhase = fract(uMotionTime * 0.00128);
+    float impactPhase = fract(uWaveTime * 0.72);
     float impactRing = exp(-pow(
       (impactDistance - (0.08 + impactPhase * 0.42)) / 0.045,
       2.0
     )) * (1.0 - impactPhase) * uImpactStrength;
-    float impactChurn = sin(
-      impactDistance * 34.0 - uMotionTime * 0.022
-    ) * exp(-impactDistance * 5.4) * uImpactStrength;
-    float surface = directionalWave * 0.44 + crossWave * 0.2 +
-      (broadNoise - 0.5) * 1.15 + (fineNoise - 0.5) * 0.32 +
-      impactChurn * 0.52;
+    float surface = depth + detail * smoothstep(0.002, 0.12, speed) +
+      impactRing * 0.18;
     vec3 normal = normalize(vec3(
-      dFdx(surface) * 1.8,
-      dFdy(surface) * 1.8,
+      -dFdx(surface) * 3.0,
+      -dFdy(surface) * 3.0,
       1.0
     ));
     vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
-    float fresnel = pow(1.0 - clamp(dot(normal, viewDirection), 0.0, 1.0), 2.5);
-    float studioHighlight = pow(
+    float fresnel = 0.02 + 0.98 * pow(
+      1.0 - clamp(dot(normal, viewDirection), 0.0, 1.0),
+      uFresnelPower
+    );
+    float glitter = pow(
       max(dot(normal, normalize(vec3(-0.35, 0.58, 0.74))), 0.0),
-      11.0
-    );
+      18.0
+    ) * uGlitterStrength;
 
-    vec3 shallowCyan = vec3(0.015, 0.67, 0.88);
-    vec3 deepCyan = vec3(0.004, 0.36, 0.64);
-    vec3 bodyColor = mix(
-      shallowCyan,
-      deepCyan,
-      clamp(0.19 + level * 0.25 + broadNoise * 0.13, 0.0, 1.0)
-    );
-    bodyColor += vec3(0.04, 0.25, 0.32) * (broadNoise - 0.5) * 0.5;
-    bodyColor += vec3(0.55, 0.93, 1.0) * flowStreak * 0.14;
-    bodyColor += vec3(0.16, 0.43, 0.55) * fresnel;
-    bodyColor += vec3(0.78, 0.96, 1.0) * studioHighlight * 0.34;
-    bodyColor = mix(bodyColor, vec3(0.75, 0.96, 0.98), edgeAeration * 0.48);
+    vec3 shallowCyan = vec3(0.025, 0.73, 0.9);
+    vec3 deepBlue = vec3(0.005, 0.28, 0.59);
+    vec3 bodyColor = mix(shallowCyan, deepBlue, smoothstep(0.08, 0.86, depth));
+    bodyColor += vec3(0.18, 0.43, 0.56) * fresnel;
+    bodyColor += vec3(0.82, 0.97, 1.0) * glitter;
     bodyColor = mix(bodyColor, vec3(0.15, 0.76, 0.84), impactRing * 0.18);
 
-    float contactRim = smoothstep(0.08, 0.5, mask) -
-      smoothstep(0.54, 0.96, mask);
-    bodyColor += vec3(0.025, 0.2, 0.31) * contactRim * 0.28;
+    float foam = uFoamHistoryEnabled > 0.5
+      ? texture2D(uFoamHistory, vUv).r
+      : clamp(dynamicState.a, 0.0, 1.0);
+    float bubbleStructure = mix(0.72, 1.08, detailA.b * detailB.r);
+    bodyColor = mix(
+      bodyColor,
+      vec3(0.82, 0.97, 0.98) * bubbleStructure,
+      smoothstep(0.18, 0.88, foam)
+    );
 
-    // Thin through-flow must remain readable on the pale maze floor. Depth is
-    // still expressed by opacity, but even the shallowest wet film has enough
-    // optical density to look like water instead of an empty cell.
-    float alpha = mask * visibleWater * mix(0.34, 0.88, sqrt(level));
-    alpha *= mix(0.92, 1.03, broadNoise);
-    alpha = max(alpha, edgeAeration * mask * 0.48);
-    alpha = max(alpha, impactRing * mask * 0.42);
-    alpha *= uFlowGate;
+    float alpha = mask * mix(0.38, 0.9, sqrt(depth));
+    alpha = max(alpha, foam * mask * 0.76);
     if (alpha < 0.018) discard;
     gl_FragColor = vec4(bodyColor, alpha);
   }
@@ -474,45 +395,96 @@ function createStudioGradientTexture() {
   return texture
 }
 
-function createWaterSurfaceMaterial(timeline: WaterSurfaceTimeline) {
-  const schedule = new THREE.DataTexture(
-    timeline.schedule,
-    timeline.width,
-    timeline.height,
-    THREE.RGBAFormat,
-    THREE.FloatType,
-  )
-  schedule.minFilter = THREE.LinearFilter
-  schedule.magFilter = THREE.LinearFilter
-  schedule.generateMipmaps = false
-  schedule.flipY = false
-  schedule.needsUpdate = true
+function applyWaterSurfaceProfile(
+  material: THREE.ShaderMaterial,
+  profile: WaterSurfaceProfile,
+): void {
+  const amplitudes = new THREE.Vector3()
+  const frequencies = new THREE.Vector3()
+  const speeds = new THREE.Vector3()
+  profile.waveBands.forEach((band, index) => {
+    amplitudes.setComponent(index, band.amplitude)
+    frequencies.setComponent(index, (Math.PI * 2) / band.wavelengthCells)
+    speeds.setComponent(index, band.speed)
+  })
+  material.uniforms.uBandAmplitude.value.copy(amplitudes)
+  material.uniforms.uBandFrequency.value.copy(frequencies)
+  material.uniforms.uBandSpeed.value.copy(speeds)
+  material.uniforms.uBandCount.value = profile.waveBands.length
+  material.uniforms.uDetailStrength.value = profile.detailStrength
+  material.uniforms.uFresnelPower.value = profile.fresnelPower
+  material.uniforms.uGlitterStrength.value = profile.glitterStrength
+}
 
-  const field = new THREE.DataTexture(
-    timeline.field,
-    timeline.width,
-    timeline.height,
+function createWaterSurfaceMaterial(
+  topology: WaterTopologyAtlas,
+  dynamicState: DynamicStateTextureBuffer,
+  profile: WaterSurfaceProfile,
+  seed: string,
+) {
+  const topologyTexture = new THREE.DataTexture(
+    topology.data,
+    topology.width,
+    topology.height,
     THREE.RGBAFormat,
     THREE.UnsignedByteType,
   )
-  field.minFilter = THREE.LinearFilter
-  field.magFilter = THREE.LinearFilter
-  field.generateMipmaps = false
-  field.flipY = false
-  field.needsUpdate = true
+  topologyTexture.minFilter = THREE.LinearFilter
+  topologyTexture.magFilter = THREE.LinearFilter
+  topologyTexture.generateMipmaps = false
+  topologyTexture.flipY = false
+  topologyTexture.needsUpdate = true
+
+  const dynamicTexture = new THREE.DataTexture(
+    dynamicState.data,
+    dynamicState.width,
+    dynamicState.height,
+    THREE.RGBAFormat,
+    THREE.FloatType,
+  )
+  dynamicTexture.minFilter = THREE.NearestFilter
+  dynamicTexture.magFilter = THREE.NearestFilter
+  dynamicTexture.generateMipmaps = false
+  dynamicTexture.flipY = false
+  dynamicTexture.needsUpdate = true
+
+  const detailData = createWaterDetailTextureData({
+    size: profile.quality === 'high' ? 128 : 64,
+    seed,
+  })
+  const detailTexture = new THREE.DataTexture(
+    detailData.data,
+    detailData.width,
+    detailData.height,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  )
+  detailTexture.wrapS = THREE.RepeatWrapping
+  detailTexture.wrapT = THREE.RepeatWrapping
+  detailTexture.minFilter = THREE.LinearFilter
+  detailTexture.magFilter = THREE.LinearFilter
+  detailTexture.generateMipmaps = false
+  detailTexture.needsUpdate = true
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
-      uSchedule: { value: schedule },
-      uField: { value: field },
-      uTimelineTime: { value: 0 },
-      uMotionTime: { value: 0 },
-      uDrainStart: { value: Number.MAX_SAFE_INTEGER },
-      uDrainDuration: { value: 1 },
+      uTopology: { value: topologyTexture },
+      uDynamicState: { value: dynamicTexture },
+      uDetail: { value: detailTexture },
+      uFoamHistory: { value: dynamicTexture },
+      uFoamHistoryEnabled: { value: profile.foamMode === 'history' ? 1 : 0 },
+      uWaveTime: { value: 0 },
       uBoardSize: { value: new THREE.Vector2(1, 1) },
       uImpactCenter: { value: new THREE.Vector2(0.5, 0.5) },
       uImpactStrength: { value: 0 },
       uFlowGate: { value: 0 },
+      uBandAmplitude: { value: new THREE.Vector3() },
+      uBandFrequency: { value: new THREE.Vector3() },
+      uBandSpeed: { value: new THREE.Vector3() },
+      uBandCount: { value: 1 },
+      uDetailStrength: { value: 0 },
+      uFresnelPower: { value: 2.65 },
+      uGlitterStrength: { value: 0.3 },
       uCameraPosition: { value: new THREE.Vector3() },
     },
     vertexShader: WATER_VERTEX_SHADER,
@@ -522,7 +494,8 @@ function createWaterSurfaceMaterial(timeline: WaterSurfaceTimeline) {
     side: THREE.FrontSide,
     toneMapped: true,
   })
-  return { material, schedule, field }
+  applyWaterSurfaceProfile(material, profile)
+  return { material, topologyTexture, dynamicTexture, detailTexture }
 }
 
 interface FallingJetGeometryData {
@@ -673,10 +646,30 @@ export class WaterSceneRuntime {
   private readonly controls: OrbitControls
   private readonly resizeObserver: ResizeObserver
   private readonly clock = new THREE.Clock()
-  private readonly timeline: WaterSurfaceTimeline
+  private readonly network: ReturnType<typeof buildHydraulicNetwork>
+  private readonly bridge: HydraulicBridge
+  private readonly topology: WaterTopologyAtlas
+  private readonly closedWallLeakTexels: number
+  private readonly dynamicState: DynamicStateTextureBuffer
+  private readonly velocityAggregator: EdgeVelocityAggregator
+  private readonly foamSource: Float32Array
+  private readonly foamHistory: WaterFoamRenderTargets | null
+  private readonly previousDepth: Float32Array
+  private readonly previousVelocityX: Float32Array
+  private readonly previousVelocityY: Float32Array
+  private readonly previousFoam: Float32Array
+  private readonly targetDepth: Float32Array
+  private readonly targetVelocityX: Float32Array
+  private readonly targetVelocityY: Float32Array
+  private readonly targetFoam: Float32Array
+  private readonly interpolatedDepth: Float32Array
+  private readonly interpolatedVelocityX: Float32Array
+  private readonly interpolatedVelocityY: Float32Array
+  private readonly interpolatedFoam: Float32Array
   private readonly waterSurfaceMaterial: THREE.ShaderMaterial
-  private readonly scheduleTexture: THREE.DataTexture
-  private readonly fieldTexture: THREE.DataTexture
+  private readonly topologyTexture: THREE.DataTexture
+  private readonly dynamicTexture: THREE.DataTexture
+  private readonly detailTexture: THREE.DataTexture
   private readonly inletJet: THREE.Mesh
   private readonly outletJet: THREE.Mesh
   private readonly reservoirWater: THREE.Mesh
@@ -696,20 +689,40 @@ export class WaterSceneRuntime {
   private readonly sourcePosition: { x: number; y: number }
   private readonly exitPosition: { x: number; y: number }
   private readonly inletLayout: WaterInletLayout
-  private readonly reachableCells: WaterCellSchedule[]
   private readonly environmentTarget: THREE.WebGLRenderTarget
   private readonly pmremGenerator: THREE.PMREMGenerator
-  private readonly completeAt: number
   private readonly introCameraPosition = new THREE.Vector3()
   private readonly introTarget = new THREE.Vector3()
+  private surfaceProfile: WaterSurfaceProfile
+  private latestSnapshot: HydraulicSnapshotMessage | null = null
+  private latestDiagnostics: HydraulicDiagnosticsSnapshot = {
+    simulationTime: 0,
+    cumulativeInjectedVolume: 0,
+    cumulativeOutletVolume: 0,
+    currentStoredVolume: 0,
+    absoluteMassError: 0,
+    relativeMassError: 0,
+    maxVelocity: 0,
+    activeFlowEdgeCount: 0,
+    outletDischarge: 0,
+  }
+  private latestOutletDischarge = 0
+  private lastFoamSimulationTime = 0
+  private interpolationStartTime = 0
+  private interpolationStartSimulationTime = 0
+  private interpolationTargetSimulationTime = 0
+  private lastInterpolationAlpha = -1
+  private physicsStepHz = 120
+  private snapshotHz = 25
+  private renderReadyEmitted = false
   private startLabel!: THREE.Sprite
   private frameId = 0
   private elapsedMs = 0
+  private waveTimeSeconds = 0
   private speed = 1
   private paused = false
   private requestedPaused = false
   private disposed = false
-  private visibleCursor = 0
   private lastStatusAt = -Infinity
   private lastAspect = 0
   private lastParticleAt = -Infinity
@@ -723,8 +736,9 @@ export class WaterSceneRuntime {
   constructor(
     private readonly mount: HTMLDivElement,
     private readonly project: MazeProject,
-    private readonly model: WaterSimulationModel,
     private readonly quality: ResolvedWaterQuality,
+    private surfaceStyle: WaterSurfaceStyle,
+    private readonly onReady: () => void,
     private readonly onStatus: (status: WaterPlaybackStatus) => void,
     private readonly onError: (message: string) => void,
     private readonly onMetrics: (metrics: WaterRuntimeMetrics) => void,
@@ -735,6 +749,7 @@ export class WaterSceneRuntime {
       alpha: false,
       powerPreference: quality === 'high' ? 'high-performance' : 'low-power',
     })
+    try {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 0.94
@@ -756,10 +771,12 @@ export class WaterSceneRuntime {
     this.mount.replaceChildren(this.renderer.domElement)
 
     this.pmremGenerator = new THREE.PMREMGenerator(this.renderer)
+    const roomEnvironment = new RoomEnvironment()
     this.environmentTarget = this.pmremGenerator.fromScene(
-      new RoomEnvironment(),
+      roomEnvironment,
       quality === 'high' ? 0.05 : 0.1,
     )
+    roomEnvironment.dispose()
     this.scene.environment = this.environmentTarget.texture
 
     this.sourcePosition = cellScenePosition(
@@ -771,14 +788,80 @@ export class WaterSceneRuntime {
       project.mazeGraph.rows,
       this.sourcePosition.y,
     )
-    this.timeline = buildWaterSurfaceTimeline(project.mazeGraph, model, {
+    this.network = buildHydraulicNetwork(
+      project.mazeGraph,
+      project.startCell,
+      project.endCell,
+    )
+    const sourceCellIndex =
+      project.startCell.row * project.mazeGraph.cols + project.startCell.col
+    const outletCellIndex =
+      project.endCell.row * project.mazeGraph.cols + project.endCell.col
+    this.topology = buildWaterTopologyAtlas(project.mazeGraph, {
       pixelsPerCell: quality === 'high' ? 16 : 5,
       maxTextureSize: 1_024,
+      sourceCellIndex,
+      outletCellIndex,
+      nodeCellIndices: this.network.nodeCellIndex,
     })
-    const waterSurface = createWaterSurfaceMaterial(this.timeline)
+    this.closedWallLeakTexels = countClosedWallLeakTexels(
+      project.mazeGraph,
+      this.topology,
+    )
+    this.dynamicState = createDynamicStateTextureBuffer(
+      project.mazeGraph.rows,
+      project.mazeGraph.cols,
+      this.network.nodeCellIndex,
+      {
+        depthScale: this.network.geometry.maxOpeningDepthMeters * 2,
+        velocityScale: 4,
+      },
+    )
+    this.velocityAggregator = new EdgeVelocityAggregator({
+      cols: project.mazeGraph.cols,
+      nodeCellIndex: this.network.nodeCellIndex,
+      edgeFrom: this.network.edgeFrom,
+      edgeTo: this.network.edgeTo,
+    })
+    this.foamSource = new Float32Array(this.network.nodeCount)
+    this.previousDepth = new Float32Array(this.network.nodeCount)
+    this.previousVelocityX = new Float32Array(this.network.nodeCount)
+    this.previousVelocityY = new Float32Array(this.network.nodeCount)
+    this.previousFoam = new Float32Array(this.network.nodeCount)
+    this.targetDepth = new Float32Array(this.network.nodeCount)
+    this.targetVelocityX = new Float32Array(this.network.nodeCount)
+    this.targetVelocityY = new Float32Array(this.network.nodeCount)
+    this.targetFoam = new Float32Array(this.network.nodeCount)
+    this.interpolatedDepth = new Float32Array(this.network.nodeCount)
+    this.interpolatedVelocityX = new Float32Array(this.network.nodeCount)
+    this.interpolatedVelocityY = new Float32Array(this.network.nodeCount)
+    this.interpolatedFoam = new Float32Array(this.network.nodeCount)
+    this.surfaceProfile = createWaterSurfaceProfile(
+      surfaceStyle,
+      quality,
+      project.mazeGraph.seed,
+    )
+    this.foamHistory = quality === 'high'
+      ? new WaterFoamRenderTargets(
+          Math.min(512, project.mazeGraph.cols),
+          Math.min(512, project.mazeGraph.rows),
+        )
+      : null
+    const waterSurface = createWaterSurfaceMaterial(
+      this.topology,
+      this.dynamicState,
+      this.surfaceProfile,
+      project.mazeGraph.seed,
+    )
     this.waterSurfaceMaterial = waterSurface.material
-    this.scheduleTexture = waterSurface.schedule
-    this.fieldTexture = waterSurface.field
+    this.topologyTexture = waterSurface.topologyTexture
+    this.dynamicTexture = waterSurface.dynamicTexture
+    this.detailTexture = waterSurface.detailTexture
+    this.foamHistory?.reset(this.renderer)
+    if (this.foamHistory) {
+      this.waterSurfaceMaterial.uniforms.uFoamHistory.value =
+        this.foamHistory.texture
+    }
     this.waterSurfaceMaterial.uniforms.uBoardSize.value.set(
       project.mazeGraph.cols,
       project.mazeGraph.rows,
@@ -789,29 +872,10 @@ export class WaterSceneRuntime {
       (this.sourcePosition.y + project.mazeGraph.rows / 2) /
         project.mazeGraph.rows,
     )
-    this.waterSurfaceMaterial.uniforms.uDrainStart.value =
-      model.exitArrivalMs === null
-        ? Number.MAX_SAFE_INTEGER
-        : model.exitArrivalMs + model.options.drainDelayMs
-    this.waterSurfaceMaterial.uniforms.uDrainDuration.value =
-      model.options.drainDurationMs
-
-    this.reachableCells = model.cells
-      .filter(
-        (cell) =>
-          cell.reachable &&
-          cell.arrivalMs !== null &&
-          Number.isFinite(cell.arrivalMs),
-      )
-      .sort(
-        (left, right) =>
-          (left.arrivalMs ?? 0) - (right.arrivalMs ?? 0) ||
-          left.index - right.index,
-      )
-    this.completeAt = Math.max(
-      model.totalDurationMs + WATER_INLET_IMPACT_MS,
-      (model.exitArrivalMs ?? 0) + WATER_INLET_IMPACT_MS + 1_450,
-    )
+    this.bridge = createHydraulicBridge({
+      onSnapshot: this.handleHydraulicSnapshot,
+      onError: (error) => this.onError(error.message),
+    })
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.enableDamping = !reducedMotion
@@ -857,28 +921,115 @@ export class WaterSceneRuntime {
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
     this.resize()
     this.clock.start()
+    void this.bridge
+      .initialize({
+        graph: project.mazeGraph,
+        source: project.startCell,
+        outlet: project.endCell,
+        solverOptions: {
+          physicsStepSeconds: 1 / 120,
+          source: {
+            targetFlowRateCubicMetersPerSecond: 0.018,
+            rampDurationSeconds: 0.75,
+          },
+        },
+        snapshotHz: 25,
+      })
+      .then((ready) => {
+        if (this.disposed) return
+        this.physicsStepHz = ready.physicsStepHz
+        this.snapshotHz = ready.snapshotHz
+        this.metricsEmitted = false
+      })
+      .catch((error) => {
+        if (!this.disposed) {
+          this.onError(
+            error instanceof Error
+              ? error.message
+              : '수리 시뮬레이션을 시작할 수 없습니다.',
+          )
+        }
+      })
     this.tick()
+    } catch (error) {
+      // A constructor that throws is never returned to React, so reclaim every
+      // resource allocated up to the failing statement before propagating it.
+      this.dispose()
+      throw error
+    }
   }
 
   setPaused(paused: boolean) {
     this.requestedPaused = paused
     this.paused = paused || document.hidden
+    if (this.paused) this.bridge.pause()
+    else this.bridge.resume()
+    this.controls.enabled = !this.paused
     this.clock.getDelta()
     if (paused) this.emitStatus(performance.now(), true)
     this.needsRender = true
   }
 
   setSpeed(speed: number) {
+    if (![0.1, 0.5, 1, 2, 4].includes(speed)) {
+      throw new RangeError('Water speed must be 0.1, 0.5, 1, 2, or 4.')
+    }
     this.speed = speed
+  }
+
+  setSurfaceStyle(style: WaterSurfaceStyle) {
+    this.surfaceStyle = style
+    this.surfaceProfile = createWaterSurfaceProfile(
+      style,
+      this.quality,
+      this.project.mazeGraph.seed,
+    )
+    applyWaterSurfaceProfile(this.waterSurfaceMaterial, this.surfaceProfile)
+    this.metricsEmitted = false
+    this.needsRender = true
   }
 
   restart() {
     this.elapsedMs = 0
-    this.visibleCursor = 0
+    this.waveTimeSeconds = 0
     this.paused = false
     this.requestedPaused = false
-    this.waterSurfaceMaterial.uniforms.uTimelineTime.value = 0
-    this.waterSurfaceMaterial.uniforms.uMotionTime.value = 0
+    this.controls.enabled = true
+    this.bridge.reset()
+    resetDynamicStateTexture(this.dynamicState)
+    this.dynamicTexture.needsUpdate = true
+    this.foamHistory?.reset(this.renderer)
+    this.lastFoamSimulationTime = 0
+    this.previousDepth.fill(0)
+    this.previousVelocityX.fill(0)
+    this.previousVelocityY.fill(0)
+    this.previousFoam.fill(0)
+    this.targetDepth.fill(0)
+    this.targetVelocityX.fill(0)
+    this.targetVelocityY.fill(0)
+    this.targetFoam.fill(0)
+    this.interpolatedDepth.fill(0)
+    this.interpolatedVelocityX.fill(0)
+    this.interpolatedVelocityY.fill(0)
+    this.interpolatedFoam.fill(0)
+    this.interpolationStartTime = 0
+    this.interpolationStartSimulationTime = 0
+    this.interpolationTargetSimulationTime = 0
+    this.lastInterpolationAlpha = -1
+    this.latestSnapshot = null
+    this.latestDiagnostics = {
+      simulationTime: 0,
+      cumulativeInjectedVolume: 0,
+      cumulativeOutletVolume: 0,
+      currentStoredVolume: 0,
+      absoluteMassError: 0,
+      relativeMassError: 0,
+      maxVelocity: 0,
+      activeFlowEdgeCount: 0,
+      outletDischarge: 0,
+    }
+    this.latestOutletDischarge = 0
+    this.waterSurfaceMaterial.uniforms.uWaveTime.value = 0
     this.lastVisualElapsedMs = -1
     this.lastStatusAt = -Infinity
     this.lastStatusSignature = ''
@@ -887,13 +1038,22 @@ export class WaterSceneRuntime {
     this.fitCamera()
     this.onStatus({
       elapsedMs: 0,
+      simulationTime: 0,
       filledCells: 0,
-      totalCells: this.reachableCells.length,
+      totalCells: this.network.nodeCount,
       reachedExit: false,
       complete: false,
       inletState: 'off',
       inletVisible: false,
       outletVisible: false,
+      activeFlowEdgeCount: 0,
+      cumulativeInjectedVolume: 0,
+      cumulativeOutletVolume: 0,
+      currentStoredVolume: 0,
+      absoluteMassError: 0,
+      relativeMassError: 0,
+      maxVelocity: 0,
+      outletDischarge: 0,
     })
   }
 
@@ -906,9 +1066,11 @@ export class WaterSceneRuntime {
   }
 
   dispose() {
+    if (this.disposed) return
     this.disposed = true
     cancelAnimationFrame(this.frameId)
-    this.resizeObserver.disconnect()
+    this.bridge?.dispose()
+    this.resizeObserver?.disconnect()
     document.removeEventListener(
       'visibilitychange',
       this.handleVisibilityChange,
@@ -918,11 +1080,13 @@ export class WaterSceneRuntime {
       this.handleContextLost,
       false,
     )
-    this.controls.dispose()
-    this.scheduleTexture.dispose()
-    this.fieldTexture.dispose()
-    this.environmentTarget.dispose()
-    this.pmremGenerator.dispose()
+    this.controls?.dispose()
+    this.topologyTexture?.dispose()
+    this.dynamicTexture?.dispose()
+    this.detailTexture?.dispose()
+    this.foamHistory?.dispose()
+    this.environmentTarget?.dispose()
+    this.pmremGenerator?.dispose()
     this.scene.traverse((object) => {
       if (
         object instanceof THREE.Mesh ||
@@ -949,8 +1113,117 @@ export class WaterSceneRuntime {
     this.mount.replaceChildren()
   }
 
+  private handleHydraulicSnapshot = (snapshot: HydraulicSnapshotMessage) => {
+    if (this.disposed || this.paused) return
+    const hadSnapshot = this.latestSnapshot !== null
+    this.velocityAggregator.update(
+      snapshot.edgeDischarge,
+      snapshot.edgeVelocity,
+    )
+    const outletStrength = clamp01(
+      snapshot.diagnostics.outletDischarge / 0.018,
+    )
+    writeFlowFoamSource(
+      this.velocityAggregator,
+      this.foamSource,
+      {
+        velocityScale: 2.2,
+        fluxScale: 0.018,
+        sourceNodeIndex: this.network.sourceNode,
+        outletNodeIndex: this.network.outletNode,
+        impactStrength: sampleWaterInlet(this.elapsedMs).impactStrength,
+        outletStrength,
+      },
+    )
+    const foam = this.foamSource
+    if (hadSnapshot) {
+      this.previousDepth.set(this.interpolatedDepth)
+      this.previousVelocityX.set(this.interpolatedVelocityX)
+      this.previousVelocityY.set(this.interpolatedVelocityY)
+      this.previousFoam.set(this.interpolatedFoam)
+      this.interpolationStartSimulationTime = this.dynamicState.stats.simulationTime
+    } else {
+      this.previousDepth.set(snapshot.depth)
+      this.previousVelocityX.set(this.velocityAggregator.velocityX)
+      this.previousVelocityY.set(this.velocityAggregator.velocityY)
+      this.previousFoam.set(foam)
+      this.interpolatedDepth.set(this.previousDepth)
+      this.interpolatedVelocityX.set(this.previousVelocityX)
+      this.interpolatedVelocityY.set(this.previousVelocityY)
+      this.interpolatedFoam.set(this.previousFoam)
+      this.interpolationStartSimulationTime = snapshot.diagnostics.simulationTime
+    }
+    this.targetDepth.set(snapshot.depth)
+    this.targetVelocityX.set(this.velocityAggregator.velocityX)
+    this.targetVelocityY.set(this.velocityAggregator.velocityY)
+    this.targetFoam.set(foam)
+    this.interpolationTargetSimulationTime = snapshot.diagnostics.simulationTime
+    this.interpolationStartTime = performance.now()
+    this.lastInterpolationAlpha = -1
+    this.latestSnapshot = snapshot
+    this.latestDiagnostics = snapshot.diagnostics
+    this.latestOutletDischarge = snapshot.diagnostics.outletDischarge
+    this.needsRender = true
+  }
+
+  private updateInterpolatedWaterState(now: number): boolean {
+    if (!this.latestSnapshot) return false
+    const transitionDurationMs = 1_000 / Math.max(1, this.snapshotHz)
+    const alpha = this.interpolationTargetSimulationTime <=
+      this.interpolationStartSimulationTime
+      ? 1
+      : clamp01((now - this.interpolationStartTime) / transitionDurationMs)
+    if (Math.abs(alpha - this.lastInterpolationAlpha) < 1e-5) return false
+    const inverseAlpha = 1 - alpha
+    for (let index = 0; index < this.network.nodeCount; index += 1) {
+      this.interpolatedDepth[index] =
+        this.previousDepth[index] * inverseAlpha + this.targetDepth[index] * alpha
+      this.interpolatedVelocityX[index] =
+        this.previousVelocityX[index] * inverseAlpha +
+        this.targetVelocityX[index] * alpha
+      this.interpolatedVelocityY[index] =
+        this.previousVelocityY[index] * inverseAlpha +
+        this.targetVelocityY[index] * alpha
+      this.interpolatedFoam[index] =
+        this.previousFoam[index] * inverseAlpha + this.targetFoam[index] * alpha
+    }
+    updateDynamicStateTexture(this.dynamicState, {
+      simulationTime:
+        this.interpolationStartSimulationTime * inverseAlpha +
+        this.interpolationTargetSimulationTime * alpha,
+      depth: this.interpolatedDepth,
+      velocityX: this.interpolatedVelocityX,
+      velocityY: this.interpolatedVelocityY,
+      foamSource: this.interpolatedFoam,
+    })
+    this.dynamicTexture.needsUpdate = true
+    if (this.foamHistory) {
+      const foamDelta = Math.max(
+        0,
+        Math.min(
+          1,
+          this.dynamicState.stats.simulationTime - this.lastFoamSimulationTime,
+        ),
+      )
+      const texture = this.foamHistory.step(
+        this.renderer,
+        this.dynamicTexture,
+        foamDelta,
+        this.surfaceProfile.foamBuildRate,
+        this.surfaceProfile.foamDecayRate,
+      )
+      this.waterSurfaceMaterial.uniforms.uFoamHistory.value = texture
+      this.lastFoamSimulationTime = this.dynamicState.stats.simulationTime
+    }
+    this.lastInterpolationAlpha = alpha
+    return true
+  }
+
   private handleVisibilityChange = () => {
     this.paused = this.requestedPaused || document.hidden
+    if (this.paused) this.bridge.pause()
+    else this.bridge.resume()
+    this.controls.enabled = !this.paused
     this.clock.getDelta()
   }
 
@@ -958,6 +1231,7 @@ export class WaterSceneRuntime {
     event.preventDefault()
     this.paused = true
     this.requestedPaused = true
+    this.bridge.pause()
     this.onError('그래픽 컨텍스트가 종료되었습니다. 창을 닫고 다시 열어 주세요.')
   }
 
@@ -1337,7 +1611,7 @@ export class WaterSceneRuntime {
     const splashCount = this.quality === 'high' ? 64 : 16
     const bubbleCount = Math.min(
       this.quality === 'high' ? 62 : 22,
-      Math.max(10, Math.ceil(this.reachableCells.length * 0.48)),
+      Math.max(10, Math.ceil(this.network.nodeCount * 0.48)),
     )
 
     const inletDroplets = new THREE.InstancedMesh(
@@ -1409,12 +1683,10 @@ export class WaterSceneRuntime {
       71,
     ).map((seed, index) => ({
       ...seed,
-      cell:
-        this.reachableCells[
-          Math.floor(
-            seededUnit(index, 83) * Math.max(1, this.reachableCells.length),
-          )
-        ] ?? this.reachableCells[0],
+      nodeIndex: Math.min(
+        this.network.nodeCount - 1,
+        Math.floor(seededUnit(index, 83) * this.network.nodeCount),
+      ),
     }))
 
     return {
@@ -1474,7 +1746,6 @@ export class WaterSceneRuntime {
   private updateStreams() {
     const graph = this.project.mazeGraph
     const inlet = sampleWaterHandoff(this.elapsedMs)
-    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
     updateFallingJetGeometry(
       this.inletJet.geometry,
       this.inletLayout.dropHeight,
@@ -1498,13 +1769,16 @@ export class WaterSceneRuntime {
     )
     this.waterSurfaceMaterial.uniforms.uFlowGate.value = inlet.surfaceGate
 
-    const outletStart = this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER
-    const outletStrength =
-      smoothstep(outletStart, outletStart + 360, flowElapsedMs)
+    const outletStrength = smoothstep(
+      0.00005,
+      0.012,
+      this.latestOutletDischarge,
+    )
+    const flowElapsedMs = this.latestDiagnostics.simulationTime * 1_000
     updateFallingJetGeometry(
       this.outletJet.geometry,
       WATER_OUTLET_DROP_HEIGHT,
-      Math.max(0, flowElapsedMs - outletStart),
+      flowElapsedMs,
       outletStrength,
       outletStrength,
       1.28,
@@ -1638,18 +1912,19 @@ export class WaterSceneRuntime {
   private updateOutletParticles() {
     const graph = this.project.mazeGraph
     const bottomEdge = -graph.rows / 2
-    const outletStart = this.model.exitArrivalMs ?? Number.MAX_SAFE_INTEGER
-    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
-    const outletStrength =
-      smoothstep(outletStart, outletStart + 360, flowElapsedMs)
+    const flowElapsedMs = this.latestDiagnostics.simulationTime * 1_000
+    const outletStrength = smoothstep(
+      0.00005,
+      0.012,
+      this.latestOutletDischarge,
+    )
     for (let index = 0; index < this.outletSeeds.length; index += 1) {
       const seed = this.outletSeeds[index]
       if (outletStrength < 0.02) {
         this.hideParticle(this.outletDroplets, index)
         continue
       }
-      const phase =
-        ((flowElapsedMs - outletStart) * 0.0018 + seed.phase + 10) % 1
+      const phase = (flowElapsedMs * 0.0018 + seed.phase + 10) % 1
       const fan = Math.sin(phase * Math.PI)
       this.particleDummy.position.set(
         this.exitPosition.x + seed.drift * fan * 0.38,
@@ -1670,21 +1945,22 @@ export class WaterSceneRuntime {
   }
 
   private updateBubbles() {
-    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
+    const flowElapsedMs = this.latestDiagnostics.simulationTime * 1_000
     for (let index = 0; index < this.bubbleSeeds.length; index += 1) {
       const seed = this.bubbleSeeds[index]
-      const arrival = seed.cell?.arrivalMs
-      if (
-        arrival === null ||
-        arrival === undefined ||
-        flowElapsedMs < arrival + 80
-      ) {
+      const nodeIndex = seed.nodeIndex
+      const depth = this.interpolatedDepth[nodeIndex]
+      if (depth <= 1e-5) {
         this.hideParticle(this.bubbles, index)
         continue
       }
+      const cellIndex = this.network.nodeCellIndex[nodeIndex]
       const position = cellScenePosition(
         this.project.mazeGraph,
-        seed.cell.position,
+        {
+          row: Math.floor(cellIndex / this.project.mazeGraph.cols),
+          col: cellIndex % this.project.mazeGraph.cols,
+        },
       )
       const phase = (flowElapsedMs * 0.00042 + seed.phase) % 1
       this.particleDummy.position.set(
@@ -1695,8 +1971,12 @@ export class WaterSceneRuntime {
         0.22 + seed.depth * 0.08,
       )
       this.particleDummy.rotation.set(0, 0, 0)
+      const activity = Math.max(
+        0.28,
+        this.foamSource[nodeIndex] ?? 0,
+      )
       const pulse = 0.62 + Math.sin(flowElapsedMs * 0.006 + index) * 0.16
-      this.particleDummy.scale.setScalar(seed.size * pulse)
+      this.particleDummy.scale.setScalar(seed.size * pulse * activity)
       this.particleDummy.updateMatrix()
       this.bubbles.setMatrixAt(index, this.particleDummy.matrix)
     }
@@ -1723,31 +2003,27 @@ export class WaterSceneRuntime {
   private emitStatus(now: number, force = false) {
     if (!force && now - this.lastStatusAt < 140) return
     this.lastStatusAt = now
-    const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
-    if (this.elapsedMs >= WATER_INLET_IMPACT_MS) {
-      while (
-        this.visibleCursor < this.reachableCells.length &&
-        (this.reachableCells[this.visibleCursor].arrivalMs ?? Number.MAX_SAFE_INTEGER) <=
-          flowElapsedMs
-      ) {
-        this.visibleCursor += 1
-      }
-    }
-    const complete = this.elapsedMs >= this.completeAt
     const inlet = sampleWaterInlet(this.elapsedMs)
+    const reachedExit = this.latestDiagnostics.cumulativeOutletVolume > 1e-8
     const status: WaterPlaybackStatus = {
       elapsedMs: this.elapsedMs,
-      filledCells: this.visibleCursor,
-      totalCells: this.reachableCells.length,
-      reachedExit:
-        this.model.exitArrivalMs !== null &&
-        flowElapsedMs >= this.model.exitArrivalMs,
-      complete,
+      simulationTime: this.latestDiagnostics.simulationTime,
+      filledCells: this.dynamicState.stats.wetCellCount,
+      totalCells: this.network.nodeCount,
+      reachedExit,
+      complete: reachedExit,
       inletState: inlet.state,
       inletVisible: inlet.strength > 0.01,
-      outletVisible:
-        this.model.exitArrivalMs !== null &&
-        flowElapsedMs >= this.model.exitArrivalMs + 80,
+      outletVisible: this.latestOutletDischarge > 1e-5,
+      activeFlowEdgeCount: this.latestDiagnostics.activeFlowEdgeCount,
+      cumulativeInjectedVolume:
+        this.latestDiagnostics.cumulativeInjectedVolume,
+      cumulativeOutletVolume: this.latestDiagnostics.cumulativeOutletVolume,
+      currentStoredVolume: this.latestDiagnostics.currentStoredVolume,
+      absoluteMassError: this.latestDiagnostics.absoluteMassError,
+      relativeMassError: this.latestDiagnostics.relativeMassError,
+      maxVelocity: this.latestDiagnostics.maxVelocity,
+      outletDischarge: this.latestOutletDischarge,
     }
     const signature = [
       Math.round(status.elapsedMs),
@@ -1757,6 +2033,9 @@ export class WaterSceneRuntime {
       status.inletState,
       status.inletVisible,
       status.outletVisible,
+      status.activeFlowEdgeCount,
+      status.cumulativeInjectedVolume.toFixed(8),
+      status.cumulativeOutletVolume.toFixed(8),
     ].join(':')
     if (signature === this.lastStatusSignature) return
     this.lastStatusSignature = signature
@@ -1767,13 +2046,19 @@ export class WaterSceneRuntime {
     if (this.metricsEmitted || this.renderer.info.render.calls < 1) return
     this.metricsEmitted = true
     this.onMetrics({
-      atlasWidth: this.timeline.width,
-      atlasHeight: this.timeline.height,
+      atlasWidth: this.topology.width,
+      atlasHeight: this.topology.height,
+      closedWallLeakTexels: this.closedWallLeakTexels,
       drawCalls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
       inletDropHeight: this.inletLayout.dropHeight,
       inletContactGap: resolveFallingJetContactGap(this.elapsedMs),
       outletDropHeight: WATER_OUTLET_DROP_HEIGHT,
+      physicsStepHz: this.physicsStepHz,
+      snapshotHz: this.snapshotHz,
+      solverMode: this.bridge.mode,
+      waveBands: this.surfaceProfile.waveBands.length,
+      foamMode: this.surfaceProfile.foamMode,
     })
   }
 
@@ -1862,37 +2147,59 @@ export class WaterSceneRuntime {
   private tick = () => {
     if (this.disposed) return
     this.frameId = requestAnimationFrame(this.tick)
-    // Advance by wall time, not frame count. A tight 50 ms cap made the water
-    // run in slow motion on low-FPS mobile GPUs and software WebGL.
+    // Wall time only contributes a budget. The bridge always consumes that
+    // budget with the solver's fixed 1/120 s step, including at 4x playback.
     const deltaMs = Math.min(5_000, this.clock.getDelta() * 1_000)
     if (!this.paused) {
+      const previousElapsedMs = this.elapsedMs
       this.elapsedMs += deltaMs * this.speed
+      this.waveTimeSeconds =
+        (this.waveTimeSeconds + (deltaMs * this.speed) / 1_000) % 3_600
+
+      // The source remains physically dry during the reservoir/nozzle pre-roll.
+      // If this frame crosses the impact instant, only the post-impact slice is
+      // handed to the hydraulic solver.
+      const previousActiveMs = Math.max(
+        0,
+        previousElapsedMs - WATER_INLET_IMPACT_MS,
+      )
+      const nextActiveMs = Math.max(0, this.elapsedMs - WATER_INLET_IMPACT_MS)
+      const activeSimulationMs = nextActiveMs - previousActiveMs
+      if (activeSimulationMs > 0 && this.bridge.ready) {
+        this.bridge.advance(
+          activeSimulationMs / (1_000 * this.speed),
+          this.speed,
+        )
+      }
     }
     const now = performance.now()
+    const waterStateChanged = this.paused
+      ? false
+      : this.updateInterpolatedWaterState(now)
     const visualTimeChanged = this.elapsedMs !== this.lastVisualElapsedMs
     if (visualTimeChanged) {
-      const flowElapsedMs = getWaterFlowElapsedMs(this.elapsedMs)
-      this.waterSurfaceMaterial.uniforms.uTimelineTime.value = Math.min(
-        flowElapsedMs,
-        this.model.totalDurationMs,
-      )
-      // Keep surface waves moving after the hydraulic front has settled. The
-      // bounded clock avoids long-running float precision loss in WebGL.
-      this.waterSurfaceMaterial.uniforms.uMotionTime.value =
-        flowElapsedMs % 3_600_000
+      this.waterSurfaceMaterial.uniforms.uWaveTime.value = this.waveTimeSeconds
       this.updateEffects(now)
       this.updateCameraIntro()
       this.lastVisualElapsedMs = this.elapsedMs
     }
-    const controlsChanged = this.controls.update()
+    const controlsChanged = this.paused ? false : this.controls.update()
     this.emitStatus(now)
-    if (!visualTimeChanged && !controlsChanged && !this.needsRender) return
+    if (
+      !visualTimeChanged &&
+      !waterStateChanged &&
+      !controlsChanged &&
+      !this.needsRender
+    ) return
     this.waterSurfaceMaterial.uniforms.uCameraPosition.value.copy(
       this.camera.position,
     )
     this.renderer.render(this.scene, this.camera)
     this.emitMetrics()
     this.needsRender = false
-
+    if (!this.renderReadyEmitted && this.latestSnapshot) {
+      this.renderReadyEmitted = true
+      this.onReady()
+    }
   }
 }
