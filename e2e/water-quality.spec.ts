@@ -45,7 +45,9 @@ const numericAttribute = async (stage: Locator, name: string) =>
 test('동적 수리 네트워크가 Worker 스냅샷과 보존 진단을 렌더링한다', async ({
   page,
 }) => {
-  test.setTimeout(150_000)
+  // Software WebGL on CI can spend most of the original 150 s budget while
+  // advancing the winding outlet fixture and taking byte-identical frames.
+  test.setTimeout(210_000)
   await page.setViewportSize({ width: 1280, height: 900 })
   const consoleErrors: string[] = []
   const externalRequests: string[] = []
