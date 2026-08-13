@@ -120,9 +120,13 @@ relativeMassError = absoluteMassError
 
 정적 고해상도 통로 mask가 닫힌 벽을 차단하고, 동적 깊이가 실제 물의 가시 영역을 결정한다. 고해상도 atlas 전체를 매 프레임 CPU에서 다시 만들지 않는다.
 
-수면은 넓은 방향성 파동, 중간 잔물결, 미세 디테일을 합성하고 실제 속도 방향에 정렬한다. Fresnel 반사와 조명 glitter, 수심 기반 색을 적용한다. 포말은 source 충돌, 급회전, 합류·압축, outlet에서 강해지며 고화질은 build/decay 이력을, 저화질은 절차형 포말을 사용한다. 정지한 웅덩이는 흐르는 줄무늬가 계속 지나가지 않고, 얕은 곳은 파동 진폭도 작다.
+수면은 넓은 방향성 파동, 중간 잔물결, 미세 디테일을 합성하고 실제 속도 방향에 정렬한다. 각 파장대는 미로 seed와 수면 스타일로부터 결정되는 고유한 위상과 횡방향 편차를 가진다. 같은 seed·스타일이면 항상 같은 수면을 만들고, Low와 High가 공유하는 파장대는 품질과 무관하게 같은 값을 사용한다. 각 파장대의 시간 위상에는 선형 중력파의 deep-water-normalized 유한 수심 계수 `sqrt(tanh(kh))`를 적용한다. 여기서 `k`는 셀 폭을 실제 미터로 환산한 파수이고 `h`는 셀 단위 동적 hydraulic depth다. 이는 전체 파동 solver가 아니라 렌더링 위상 보정이다. 따라서 정지한 웅덩이는 흐르는 줄무늬가 계속 지나가지 않고, 얕은 셀은 파동 진폭뿐 아니라 위상 속도도 작아진다.
 
-Poseidon은 넓고 주기적인 WebGPU FFT 해수면이므로 MazeCraft의 내부 유체 solver로 사용하지 않는다. 다중 파장, 방향성, Fresnel, 잔류 포말이라는 시각 원리만 독자 구현하며 Poseidon 소스는 복사하지 않는다.
+한 번 생성해 재사용하는 반복 가능 디테일 texture는 RG에 중앙 차분으로 구한 signed normal XY perturbation을, BA에 서로 다른 저주파·고주파 포말 구조를 담는다. fragment shader는 RG를 기존처럼 두 크기로 샘플해 변형된 수면 법선에 합성하고, BA는 포말 덩어리의 밝기 변화에만 쓴다. 동일한 두 texture sample의 채널을 재활용하므로 texture fetch, draw call, geometry는 추가하지 않는다.
+
+`flow-coupled multiband optics`는 변형된 수면 위치에서 법선을 다시 구해 파동 기하와 조명을 일치시킨다. 그 법선으로 Fresnel과 analytic studio-sky approximation을 계산하고, 햇빛을 향한 crest에는 스타일별 subsurface-scatter approximation을 더한다. 따라서 반사와 glitter가 평면 위를 따로 미끄러지지 않고 실제 파동의 방향과 crest를 따라 움직인다. 이 단계는 렌더 pass나 mesh를 추가하지 않는 shader 작업이며 수리 solver의 깊이·속도 상태를 변경하지 않는다.
+
+[Poseidon](https://github.com/owenyuwono/poseidon)은 넓고 주기적인 WebGPU FFT 해수면이므로 MazeCraft의 내부 유체 solver로 사용하지 않는다. 다중 파장, 방향성, Fresnel, analytic sky reflection, crest scatter, 잔류 포말이라는 시각 원리만 참고했다. 해당 저장소에는 명시적인 루트 라이선스 파일이 없으므로 Poseidon 소스 코드 재사용 없이 MazeCraft의 WebGL 경로와 hydraulic state에 맞춰 독자 구현했다.
 
 ## 일시정지와 수명 주기
 

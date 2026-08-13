@@ -121,12 +121,29 @@ const WATER_VERTEX_SHADER = /* glsl */ `
   uniform vec3 uBandAmplitude;
   uniform vec3 uBandFrequency;
   uniform vec3 uBandSpeed;
+  uniform vec3 uBandCrossFlow;
+  uniform vec3 uBandPhase;
   uniform float uBandCount;
+  uniform float uDepthScaleMeters;
+  uniform float uCellWidthMeters;
   varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying float vDepth;
   varying float vMask;
+  varying float vWaveCrest;
   varying vec2 vVelocity;
+
+  float finiteDepthPhaseScale(float waveNumberPerCell, float normalizedDepth) {
+    float waveNumberPerMeter = waveNumberPerCell / max(0.001, uCellWidthMeters);
+    float kh = min(
+      10.0,
+      max(0.0, waveNumberPerMeter * normalizedDepth * uDepthScaleMeters)
+    );
+    float negativeExponential = exp(-2.0 * kh);
+    float finiteDepthTanh =
+      (1.0 - negativeExponential) / (1.0 + negativeExponential);
+    return sqrt(max(0.0, finiteDepthTanh));
+  }
 
   void main() {
     float mask = texture2D(uTopology, uv).r;
@@ -139,21 +156,32 @@ const WATER_VERTEX_SHADER = /* glsl */ `
       : vec2(0.0, -1.0);
     vec2 channelUv = uv * uBoardSize;
     float motion = smoothstep(0.002, 0.12, speed);
+    vec2 flowPerpendicular = vec2(-flow.y, flow.x);
+    vec2 broadDirection = normalize(flow + flowPerpendicular * uBandCrossFlow.x);
     float wave = sin(
-      dot(channelUv, flow) * uBandFrequency.x -
-      uWaveTime * uBandSpeed.x
+      dot(channelUv, broadDirection) * uBandFrequency.x -
+      uWaveTime * uBandSpeed.x *
+        finiteDepthPhaseScale(uBandFrequency.x, depth) +
+      uBandPhase.x
     ) * uBandAmplitude.x;
     if (uBandCount > 1.5) {
-      vec2 crossFlow = normalize(flow + vec2(-flow.y, flow.x) * 0.22);
+      vec2 mediumDirection = normalize(
+        flow + flowPerpendicular * uBandCrossFlow.y
+      );
       wave += sin(
-        dot(channelUv, crossFlow) * uBandFrequency.y -
-        uWaveTime * uBandSpeed.y
+        dot(channelUv, mediumDirection) * uBandFrequency.y -
+        uWaveTime * uBandSpeed.y *
+          finiteDepthPhaseScale(uBandFrequency.y, depth) +
+        uBandPhase.y
       ) * uBandAmplitude.y;
     }
     if (uBandCount > 2.5) {
+      vec2 fineDirection = normalize(flow + flowPerpendicular * uBandCrossFlow.z);
       wave += sin(
-        dot(channelUv, flow) * uBandFrequency.z -
-        uWaveTime * uBandSpeed.z
+        dot(channelUv, fineDirection) * uBandFrequency.z -
+        uWaveTime * uBandSpeed.z *
+          finiteDepthPhaseScale(uBandFrequency.z, depth) +
+        uBandPhase.z
       ) * uBandAmplitude.z;
     }
     float impactDistance = length((uv - uImpactCenter) * uBoardSize);
@@ -172,6 +200,14 @@ const WATER_VERTEX_SHADER = /* glsl */ `
     vUv = uv;
     vDepth = depth;
     vMask = mask;
+    float totalAmplitude = max(
+      0.0001,
+      uBandAmplitude.x + uBandAmplitude.y + uBandAmplitude.z
+    );
+    vWaveCrest = max(
+      clamp(wave / totalAmplitude * 0.5 + 0.5, 0.0, 1.0) * motion,
+      impactShoulder * 0.72
+    );
     vVelocity = velocity;
     vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
     vWorldPosition = worldPosition.xyz;
@@ -195,11 +231,14 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
   uniform float uDetailStrength;
   uniform float uFresnelPower;
   uniform float uGlitterStrength;
+  uniform float uReflectionStrength;
+  uniform float uSubsurfaceStrength;
   uniform vec3 uCameraPosition;
   varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying float vDepth;
   varying float vMask;
+  varying float vWaveCrest;
   varying vec2 vVelocity;
 
   void main() {
@@ -210,49 +249,87 @@ const WATER_FRAGMENT_SHADER = /* glsl */ `
 
     float speed = length(vVelocity);
     vec2 flow = speed > 0.001 ? normalize(vVelocity) : vec2(0.0, -1.0);
+    float motion = smoothstep(0.002, 0.12, speed);
     vec2 channelUv = vUv * uBoardSize;
-    vec2 detailUvA = channelUv * 0.36 + flow * uWaveTime * 0.035;
-    vec2 detailUvB = channelUv * 1.18 - flow * uWaveTime * 0.072;
-    vec3 detailA = texture2D(uDetail, detailUvA).rgb;
-    vec3 detailB = texture2D(uDetail, detailUvB).rgb;
-    float detail = ((detailA.r + detailB.g) * 0.5 - 0.5) * uDetailStrength;
+    vec2 detailUvA =
+      channelUv * 0.36 + flow * uWaveTime * 0.035 * motion;
+    vec2 detailUvB =
+      channelUv * 1.18 - flow * uWaveTime * 0.072 * motion;
+    vec4 detailA = texture2D(uDetail, detailUvA);
+    vec4 detailB = texture2D(uDetail, detailUvB);
     float impactDistance = length((vUv - uImpactCenter) * uBoardSize);
     float impactPhase = fract(uWaveTime * 0.72);
     float impactRing = exp(-pow(
       (impactDistance - (0.08 + impactPhase * 0.42)) / 0.045,
       2.0
     )) * (1.0 - impactPhase) * uImpactStrength;
-    float surface = depth + detail * smoothstep(0.002, 0.12, speed) +
-      impactRing * 0.18;
+    vec3 geometricNormal = normalize(cross(
+      dFdx(vWorldPosition),
+      dFdy(vWorldPosition)
+    ));
+    geometricNormal *= geometricNormal.z < 0.0 ? -1.0 : 1.0;
+    vec2 detailNormal =
+      ((detailA.rg * 2.0 - 1.0) +
+        (detailB.rg * 2.0 - 1.0) * 0.48) *
+      uDetailStrength * motion;
     vec3 normal = normalize(vec3(
-      -dFdx(surface) * 3.0,
-      -dFdy(surface) * 3.0,
-      1.0
+      geometricNormal.xy + detailNormal * 0.24,
+      max(0.2, geometricNormal.z)
     ));
     vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
     float fresnel = 0.02 + 0.98 * pow(
       1.0 - clamp(dot(normal, viewDirection), 0.0, 1.0),
       uFresnelPower
     );
-    float glitter = pow(
-      max(dot(normal, normalize(vec3(-0.35, 0.58, 0.74))), 0.0),
-      18.0
-    ) * uGlitterStrength;
+    vec3 sunDirection = normalize(vec3(-0.35, 0.58, 0.74));
+    vec3 reflectedSun = reflect(-sunDirection, normal);
+    float glitter = pow(max(dot(reflectedSun, viewDirection), 0.0), 48.0) *
+      uGlitterStrength;
+    vec3 reflectedView = reflect(-viewDirection, normal);
+    float skyHeight = clamp(reflectedView.z, -1.0, 1.0);
+    vec3 belowHorizon = vec3(0.19, 0.34, 0.39);
+    vec3 horizon = vec3(0.7, 0.87, 0.91);
+    vec3 zenith = vec3(0.12, 0.39, 0.67);
+    vec3 skyReflection = mix(
+      belowHorizon,
+      horizon,
+      smoothstep(-0.22, 0.08, skyHeight)
+    );
+    skyReflection = mix(
+      skyReflection,
+      zenith,
+      pow(max(0.0, skyHeight), 0.62)
+    );
+    float sunHalo = pow(max(dot(reflectedView, sunDirection), 0.0), 96.0);
+    skyReflection += vec3(1.0, 0.88, 0.66) * sunHalo * 0.7;
 
     vec3 shallowCyan = vec3(0.025, 0.73, 0.9);
     vec3 deepBlue = vec3(0.005, 0.28, 0.59);
     vec3 bodyColor = mix(shallowCyan, deepBlue, smoothstep(0.08, 0.86, depth));
-    bodyColor += vec3(0.18, 0.43, 0.56) * fresnel;
+    bodyColor = mix(
+      bodyColor,
+      skyReflection,
+      clamp(fresnel * uReflectionStrength, 0.0, 0.92)
+    );
     bodyColor += vec3(0.82, 0.97, 1.0) * glitter;
+    float forwardLight = pow(
+      max(dot(viewDirection, normalize(sunDirection - normal * 0.38)), 0.0),
+      3.0
+    );
+    float thinWater = 1.0 - smoothstep(0.16, 0.82, depth);
+    float subsurface = vWaveCrest * thinWater *
+      (0.3 + forwardLight * 0.7) * uSubsurfaceStrength;
+    bodyColor += vec3(0.04, 0.7, 0.68) * subsurface;
     bodyColor = mix(bodyColor, vec3(0.15, 0.76, 0.84), impactRing * 0.18);
 
     float foam = uFoamHistoryEnabled > 0.5
       ? texture2D(uFoamHistory, vUv).r
       : clamp(dynamicState.a, 0.0, 1.0);
-    float bubbleStructure = mix(0.72, 1.08, detailA.b * detailB.r);
+    float bubbleStructure = mix(0.72, 1.08, detailA.b * detailB.a);
+    float foamLighting = mix(0.82, 1.12, max(dot(normal, sunDirection), 0.0));
     bodyColor = mix(
       bodyColor,
-      vec3(0.82, 0.97, 0.98) * bubbleStructure,
+      vec3(0.82, 0.97, 0.98) * bubbleStructure * foamLighting,
       smoothstep(0.18, 0.88, foam)
     );
 
@@ -402,18 +479,26 @@ function applyWaterSurfaceProfile(
   const amplitudes = new THREE.Vector3()
   const frequencies = new THREE.Vector3()
   const speeds = new THREE.Vector3()
+  const crossFlows = new THREE.Vector3()
+  const phases = new THREE.Vector3()
   profile.waveBands.forEach((band, index) => {
     amplitudes.setComponent(index, band.amplitude)
     frequencies.setComponent(index, (Math.PI * 2) / band.wavelengthCells)
     speeds.setComponent(index, band.speed)
+    crossFlows.setComponent(index, band.crossFlow)
+    phases.setComponent(index, band.phase)
   })
   material.uniforms.uBandAmplitude.value.copy(amplitudes)
   material.uniforms.uBandFrequency.value.copy(frequencies)
   material.uniforms.uBandSpeed.value.copy(speeds)
+  material.uniforms.uBandCrossFlow.value.copy(crossFlows)
+  material.uniforms.uBandPhase.value.copy(phases)
   material.uniforms.uBandCount.value = profile.waveBands.length
   material.uniforms.uDetailStrength.value = profile.detailStrength
   material.uniforms.uFresnelPower.value = profile.fresnelPower
   material.uniforms.uGlitterStrength.value = profile.glitterStrength
+  material.uniforms.uReflectionStrength.value = profile.reflectionStrength
+  material.uniforms.uSubsurfaceStrength.value = profile.subsurfaceStrength
 }
 
 function createWaterSurfaceMaterial(
@@ -421,6 +506,7 @@ function createWaterSurfaceMaterial(
   dynamicState: DynamicStateTextureBuffer,
   profile: WaterSurfaceProfile,
   seed: string,
+  cellWidthMeters: number,
 ) {
   const topologyTexture = new THREE.DataTexture(
     topology.data,
@@ -481,10 +567,16 @@ function createWaterSurfaceMaterial(
       uBandAmplitude: { value: new THREE.Vector3() },
       uBandFrequency: { value: new THREE.Vector3() },
       uBandSpeed: { value: new THREE.Vector3() },
+      uBandCrossFlow: { value: new THREE.Vector3() },
+      uBandPhase: { value: new THREE.Vector3() },
       uBandCount: { value: 1 },
+      uDepthScaleMeters: { value: dynamicState.encoding.depthScale },
+      uCellWidthMeters: { value: cellWidthMeters },
       uDetailStrength: { value: 0 },
       uFresnelPower: { value: 2.65 },
       uGlitterStrength: { value: 0.3 },
+      uReflectionStrength: { value: 0.68 },
+      uSubsurfaceStrength: { value: 0.32 },
       uCameraPosition: { value: new THREE.Vector3() },
     },
     vertexShader: WATER_VERTEX_SHADER,
@@ -852,6 +944,7 @@ export class WaterSceneRuntime {
       this.dynamicState,
       this.surfaceProfile,
       project.mazeGraph.seed,
+      this.network.geometry.cellWidthMeters,
     )
     this.waterSurfaceMaterial = waterSurface.material
     this.topologyTexture = waterSurface.topologyTexture

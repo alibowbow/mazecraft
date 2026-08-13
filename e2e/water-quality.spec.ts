@@ -76,10 +76,26 @@ test('동적 수리 네트워크가 Worker 스냅샷과 보존 진단을 렌더�
   )
   await expect(stage).toHaveAttribute(
     'data-water-surface-renderer',
-    'directional-multi-band',
+    'flow-coupled-multiband-optics',
   )
   await expect(stage).toHaveAttribute('data-water-surface-style', 'natural')
   await expect(stage).toHaveAttribute('data-wave-bands', '3')
+  await expect(stage).toHaveAttribute(
+    'data-wave-dispersion',
+    'finite-depth-phase-modulation',
+  )
+  await expect(stage).toHaveAttribute(
+    'data-water-reflection',
+    'analytic-studio-sky-approximation',
+  )
+  await expect(stage).toHaveAttribute(
+    'data-water-scattering',
+    'crest-subsurface-approximation',
+  )
+  await expect(stage).toHaveAttribute(
+    'data-detail-normal-texture',
+    'dual-scale-rg',
+  )
   await expect(stage).toHaveAttribute('data-foam-mode', 'history')
   expect(await numericAttribute(stage, 'data-physics-step-hz')).toBe(120)
   expect(await numericAttribute(stage, 'data-closed-wall-leak-texels')).toBe(0)

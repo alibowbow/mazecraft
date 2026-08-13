@@ -9,6 +9,7 @@ export interface WaterDetailTextureData {
   readonly height: number
   readonly data: Uint8Array
   readonly seed: number
+  readonly encoding: 'normal-rg-structure-ba'
 }
 
 function hashSeed(seed: string | number): number {
@@ -75,7 +76,14 @@ function fractalNoise(
   return sum / amplitudeSum
 }
 
-/** Creates one deterministic, repeatable RGBA detail texture for a scene. */
+const clampByte = (value: number): number =>
+  Math.round(Math.max(0, Math.min(1, value)) * 255)
+
+/**
+ * Creates one deterministic, repeatable surface-detail texture for a scene.
+ * RG stores periodic normal-XY perturbation components while BA stores
+ * independent low/high-frequency structure for foam breakup.
+ */
 export function createWaterDetailTextureData(
   options: WaterDetailTextureOptions = {},
 ): WaterDetailTextureData {
@@ -88,11 +96,15 @@ export function createWaterDetailTextureData(
     throw new RangeError('Detail texture octaves must be an integer from 1 to 6.')
   }
   const seed = hashSeed(options.seed ?? 'mazecraft-water')
+  const heights = new Float32Array(size * size)
+  const lowStructure = new Float32Array(size * size)
+  const highStructure = new Float32Array(size * size)
   const data = new Uint8Array(size * size * 4)
   for (let y = 0; y < size; y += 1) {
     const v = y / size
     for (let x = 0; x < size; x += 1) {
       const u = x / size
+      const texel = y * size + x
       const first = fractalNoise(u, v, octaves, seed)
       const second = fractalNoise(
         (u + 0.371) % 1,
@@ -101,12 +113,40 @@ export function createWaterDetailTextureData(
         seed ^ 0xa5a5a5a5,
       )
       const fine = periodicValueNoise(u * 32, v * 32, 32, seed ^ 0x51ed270b)
-      const offset = (y * size + x) * 4
-      data[offset] = Math.round(first * 255)
-      data[offset + 1] = Math.round(second * 255)
-      data[offset + 2] = Math.round(fine * 255)
-      data[offset + 3] = 255
+      heights[texel] = first
+      lowStructure[texel] = second
+      highStructure[texel] = fine
     }
   }
-  return { width: size, height: size, data, seed }
+
+  const wrappedIndex = (x: number, y: number): number =>
+    (((y + size) % size) * size + ((x + size) % size))
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const texel = y * size + x
+      const slopeX =
+        (heights[wrappedIndex(x + 1, y)] -
+          heights[wrappedIndex(x - 1, y)]) *
+        size *
+        0.18
+      const slopeY =
+        (heights[wrappedIndex(x, y + 1)] -
+          heights[wrappedIndex(x, y - 1)]) *
+        size *
+        0.18
+      const inverseLength = 1 / Math.hypot(slopeX, slopeY, 1)
+      const offset = texel * 4
+      data[offset] = clampByte(-slopeX * inverseLength * 0.5 + 0.5)
+      data[offset + 1] = clampByte(-slopeY * inverseLength * 0.5 + 0.5)
+      data[offset + 2] = clampByte(lowStructure[texel])
+      data[offset + 3] = clampByte(highStructure[texel])
+    }
+  }
+  return {
+    width: size,
+    height: size,
+    data,
+    seed,
+    encoding: 'normal-rg-structure-ba',
+  }
 }
