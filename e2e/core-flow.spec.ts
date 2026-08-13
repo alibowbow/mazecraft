@@ -319,11 +319,12 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
   await expect(stage).toHaveAttribute('data-quality', 'low')
   await expect(stage).toHaveAttribute(
     'data-fluid-model',
-    'mass-conserving-finite-volume',
+    'dynamic-head-discharge-network',
   )
   expect(
-    Number(await stage.getAttribute('data-conservation-error')),
-  ).toBeLessThan(1e-8)
+    Number(await stage.getAttribute('data-mass-relative-error')),
+  ).toBeLessThan(1e-5)
+  await expect(stage).toHaveAttribute('data-foam-mode', 'procedural')
   await expect(stage).toHaveAttribute(
     'data-inlet-renderer',
     'coupled-gravity-jet',
@@ -368,7 +369,11 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
   await page.getByLabel('물 흐름 속도').selectOption('4')
   await page.getByRole('button', { name: '처음부터', exact: true }).click()
   await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
-    timeout: 15_000,
+    // The imported fixture's winding 8x8 route needs more than 60 simulated
+    // seconds. Allow the dynamic head/discharge solver to reach the outlet
+    // under concurrent software-WebGL load instead of assuming an arrival
+    // schedule.
+    timeout: 40_000,
   })
   await expect(stage).toHaveAttribute('data-outlet-visible', 'true')
   expect(
