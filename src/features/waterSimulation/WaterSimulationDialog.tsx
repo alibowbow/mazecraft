@@ -285,9 +285,13 @@ export default function WaterSimulationDialog({
           data-outlet-renderer="continuous-waterfall-and-catch-basin"
           data-outlet-visible={status.outletVisible}
           data-outlet-drop-height={metrics.outletDropHeight.toFixed(2)}
-          data-water-surface-renderer="directional-multi-band"
+          data-water-surface-renderer="flow-coupled-multiband-optics"
           data-water-surface-style={surfaceStyle}
           data-wave-bands={metrics.waveBands}
+          data-wave-dispersion="finite-depth-phase-modulation"
+          data-water-reflection="analytic-studio-sky-approximation"
+          data-water-scattering="crest-subsurface-approximation"
+          data-detail-normal-texture="dual-scale-rg"
           data-foam-mode={metrics.foamMode}
           data-elapsed-ms={Math.round(status.simulationTime * 1_000)}
           data-scene-elapsed-ms={Math.round(status.elapsedMs)}
