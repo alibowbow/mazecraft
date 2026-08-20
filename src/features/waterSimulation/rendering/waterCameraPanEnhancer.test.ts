@@ -1,7 +1,10 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { afterEach, describe, expect, it } from 'vitest'
-import { configureWaterCameraNavigation } from './waterCameraPanEnhancer'
+import {
+  activateWaterCameraNavigation,
+  configureWaterCameraNavigation,
+} from './waterCameraPanEnhancer'
 
 function createControls(waterCanvas = true) {
   const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100)
@@ -41,19 +44,14 @@ describe('water camera navigation enhancer', () => {
   })
 
   it('re-enables camera inspection input while the water simulation is paused', () => {
-    const { canvas, controls } = createControls()
+    const { controls } = createControls()
     controls.enabled = false
+    controls.enablePan = false
 
-    canvas.dispatchEvent(
-      new WheelEvent('wheel', {
-        bubbles: true,
-        cancelable: true,
-        deltaY: -20,
-      }),
-    )
-
+    expect(activateWaterCameraNavigation(controls)).toBe(true)
     expect(controls.enabled).toBe(true)
     expect(controls.enablePan).toBe(true)
+
     controls.dispose()
   })
 
@@ -62,6 +60,7 @@ describe('water camera navigation enhancer', () => {
     controls.enablePan = false
 
     expect(configureWaterCameraNavigation(controls)).toBe(false)
+    expect(activateWaterCameraNavigation(controls)).toBe(false)
     expect(controls.enablePan).toBe(false)
 
     controls.dispose()
