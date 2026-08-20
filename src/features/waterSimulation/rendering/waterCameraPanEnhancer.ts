@@ -96,6 +96,18 @@ function schedulePausedCameraRender(
   }
 }
 
+/** Re-enables user camera inspection even when the water flow is paused. */
+export function activateWaterCameraNavigation(
+  controls: OrbitControls,
+): boolean {
+  if (!isWaterCanvas(controls.domElement)) return false
+  if (typeof document === 'undefined' || !document.hidden) {
+    controls.enabled = true
+    controls.enablePan = true
+  }
+  return true
+}
+
 /**
  * Makes the water-maze camera behave like a movable canvas:
  * one pointer drags the view, and two pointers pinch while panning.
@@ -122,12 +134,8 @@ export function configureWaterCameraNavigation(
   if (augmented.__mazeCraftWaterPanCleanup) return true
 
   const wakeForInput = () => {
-    // The simulation may be paused, but the user must still be able to inspect
-    // a zoomed-in maze. Pointer capture runs before OrbitControls' own handler.
-    if (typeof document === 'undefined' || !document.hidden) {
-      controls.enabled = true
-      controls.enablePan = true
-    }
+    // Capture runs before OrbitControls' own pointer/wheel listener.
+    activateWaterCameraNavigation(controls)
   }
   canvas.addEventListener('pointerdown', wakeForInput, { capture: true })
   canvas.addEventListener('wheel', wakeForInput, {
