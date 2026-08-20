@@ -1,10 +1,12 @@
 import './waterShaderEnhancer'
+import './waterCameraPanEnhancer'
 import '../bakedTiles/blenderBakedWater'
 
 export * from './dynamicStateTexture'
 export * from './surfaceProfiles'
 export * from './topologyAtlas'
 export * from './velocityAggregation'
+export * from './waterCameraPanEnhancer'
 export * from './waterDetailTexture'
 export * from './waterFoamHistory'
 export * from './waterFoamRenderTargets'
