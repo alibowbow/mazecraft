@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createDefaultProject } from '../src/core/maze'
 
 const project = createDefaultProject({
@@ -27,9 +27,7 @@ async function openWater(page: Page) {
   return stage
 }
 
-const readCamera = async (
-  canvas: ReturnType<ReturnType<Page['locator']>['locator']>,
-) =>
+const readCamera = async (canvas: Locator) =>
   canvas.evaluate((element) => ({
     x: Number((element as HTMLElement).dataset.cameraTargetX),
     y: Number((element as HTMLElement).dataset.cameraTargetY),
