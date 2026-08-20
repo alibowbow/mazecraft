@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -49,7 +48,12 @@ def clear_scene() -> None:
     bpy.ops.object.delete(use_global=False)
 
 
-def box(name: str, location: tuple[float, float, float], size: tuple[float, float, float], bevel: float = 0.0) -> bpy.types.Object:
+def box(
+    name: str,
+    location: tuple[float, float, float],
+    size: tuple[float, float, float],
+    bevel: float = 0.0,
+) -> bpy.types.Object:
     bpy.ops.mesh.primitive_cube_add(location=location)
     obj = bpy.context.object
     if obj is None:
@@ -64,7 +68,12 @@ def box(name: str, location: tuple[float, float, float], size: tuple[float, floa
     return obj
 
 
-def material(name: str, color: tuple[float, float, float, float], roughness: float, metallic: float = 0.0) -> bpy.types.Material:
+def material(
+    name: str,
+    color: tuple[float, float, float, float],
+    roughness: float,
+    metallic: float = 0.0,
+) -> bpy.types.Material:
     value = bpy.data.materials.new(name=name)
     value.use_nodes = True
     bsdf = value.node_tree.nodes.get("Principled BSDF")
@@ -80,7 +89,9 @@ def water_material() -> bpy.types.Material:
     bsdf = value.node_tree.nodes.get("Principled BSDF")
     if bsdf:
         bsdf.inputs["IOR"].default_value = 1.333
-        transmission = bsdf.inputs.get("Transmission Weight") or bsdf.inputs.get("Transmission")
+        transmission = bsdf.inputs.get("Transmission Weight") or bsdf.inputs.get(
+            "Transmission"
+        )
         if transmission:
             transmission.default_value = 0.82
         coat = bsdf.inputs.get("Coat Weight")
@@ -90,11 +101,49 @@ def water_material() -> bpy.types.Material:
 
 
 def cell_xy(rows: int, cols: int, row: int, col: int) -> tuple[float, float]:
-    return (col - (cols - 1) * 0.5) * CELL, ((rows - 1) * 0.5 - row) * CELL
+    return (
+        (col - (cols - 1) * 0.5) * CELL,
+        ((rows - 1) * 0.5 - row) * CELL,
+    )
 
 
 def active_cells(graph: dict[str, Any]) -> Iterable[dict[str, Any]]:
-    return (cell for cell in graph["cells"] if isinstance(cell, dict) and cell.get("active"))
+    return (
+        cell
+        for cell in graph["cells"]
+        if isinstance(cell, dict) and cell.get("active")
+    )
+
+
+def endpoint(project: dict[str, Any], key: str) -> tuple[int, int]:
+    value = project.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"project.{key} is required")
+    return int(value["row"]), int(value["col"])
+
+
+def visual_opening(
+    rows: int,
+    cols: int,
+    row: int,
+    col: int,
+    prefer_top: bool,
+) -> str | None:
+    candidates = (
+        ("top", "left", "right", "bottom")
+        if prefer_top
+        else ("bottom", "right", "left", "top")
+    )
+    for direction in candidates:
+        if direction == "top" and row == 0:
+            return direction
+        if direction == "bottom" and row == rows - 1:
+            return direction
+        if direction == "left" and col == 0:
+            return direction
+        if direction == "right" and col == cols - 1:
+            return direction
+    return None
 
 
 def effector(obj: bpy.types.Object) -> None:
@@ -128,35 +177,74 @@ def build_maze(project: dict[str, Any]) -> None:
     rows, cols = graph["rows"], graph["cols"]
     board_mat = material("Warm Porcelain", (0.92, 0.93, 0.9, 1.0), 0.25)
     wall_mat = material("Orange Walls", (1.0, 0.12, 0.01, 1.0), 0.18)
-    board = box("Maze Board", (0, 0, -0.1), (cols + 0.9, rows + 0.9, 0.2), 0.08)
+    board = box(
+        "Maze Board",
+        (0, 0, -0.1),
+        (cols + 0.9, rows + 0.9, 0.2),
+        0.08,
+    )
     board.data.materials.append(board_mat)
     effector(board)
 
+    start_row, start_col = endpoint(project, "startCell")
+    end_row, end_col = endpoint(project, "endCell")
+    openings = {
+        (
+            start_row,
+            start_col,
+            visual_opening(rows, cols, start_row, start_col, True),
+        ),
+        (
+            end_row,
+            end_col,
+            visual_opening(rows, cols, end_row, end_col, False),
+        ),
+    }
     seen: set[tuple[str, int, int]] = set()
     for cell in active_cells(graph):
         row, col = int(cell["row"]), int(cell["col"])
         x, y = cell_xy(rows, cols, row, col)
         walls = cell.get("walls", {})
         specs = (
-            ("top", (x, y + 0.5, WALL_HEIGHT / 2), (1.14, WALL_THICKNESS, WALL_HEIGHT), ("h", row, col)),
-            ("left", (x - 0.5, y, WALL_HEIGHT / 2), (WALL_THICKNESS, 1.14, WALL_HEIGHT), ("v", row, col)),
-            ("right", (x + 0.5, y, WALL_HEIGHT / 2), (WALL_THICKNESS, 1.14, WALL_HEIGHT), ("v", row, col + 1)),
-            ("bottom", (x, y - 0.5, WALL_HEIGHT / 2), (1.14, WALL_THICKNESS, WALL_HEIGHT), ("h", row + 1, col)),
+            (
+                "top",
+                (x, y + 0.5, WALL_HEIGHT / 2),
+                (1.14, WALL_THICKNESS, WALL_HEIGHT),
+                ("h", row, col),
+            ),
+            (
+                "left",
+                (x - 0.5, y, WALL_HEIGHT / 2),
+                (WALL_THICKNESS, 1.14, WALL_HEIGHT),
+                ("v", row, col),
+            ),
+            (
+                "right",
+                (x + 0.5, y, WALL_HEIGHT / 2),
+                (WALL_THICKNESS, 1.14, WALL_HEIGHT),
+                ("v", row, col + 1),
+            ),
+            (
+                "bottom",
+                (x, y - 0.5, WALL_HEIGHT / 2),
+                (1.14, WALL_THICKNESS, WALL_HEIGHT),
+                ("h", row + 1, col),
+            ),
         )
         for direction, location, size, key in specs:
+            if (row, col, direction) in openings:
+                continue
             if not walls.get(direction, True) or key in seen:
                 continue
             seen.add(key)
-            wall = box(f"Wall {direction} {row}:{col}", location, size, 0.035)
+            wall = box(
+                f"Wall {direction} {row}:{col}",
+                location,
+                size,
+                0.035,
+            )
             wall.data.materials.append(wall_mat)
             effector(wall)
-
-
-def endpoint(project: dict[str, Any], key: str) -> tuple[int, int]:
-    value = project.get(key)
-    if not isinstance(value, dict):
-        raise ValueError(f"project.{key} is required")
-    return int(value["row"]), int(value["col"])
 
 
 def add_boundaries(project: dict[str, Any]) -> None:
@@ -166,22 +254,40 @@ def add_boundaries(project: dict[str, Any]) -> None:
     er, ec = endpoint(project, "endCell")
     sx, sy = cell_xy(rows, cols, sr, sc)
     ex, ey = cell_xy(rows, cols, er, ec)
-    bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=0.18, depth=0.24, location=(sx, sy + 0.16, 1.12))
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=32,
+        radius=0.18,
+        depth=0.24,
+        location=(sx, sy + 0.16, 1.12),
+    )
     inlet = bpy.context.object
     if inlet is None:
         raise RuntimeError("failed to add inflow")
     inlet.name = "Liquid Inflow"
     flow(inlet, "INFLOW")
-    outflow = box("Liquid Outflow", (ex, ey - 0.42, 0.18), (0.52, 0.36, 0.64))
+    outflow = box(
+        "Liquid Outflow",
+        (ex, ey - 0.42, 0.18),
+        (0.52, 0.36, 0.64),
+    )
     outflow.display_type = "WIRE"
     outflow.hide_render = True
     flow(outflow, "OUTFLOW")
 
 
-def add_domain(project: dict[str, Any], cache: Path, resolution: int, frames: int) -> bpy.types.Object:
+def add_domain(
+    project: dict[str, Any],
+    cache: Path,
+    resolution: int,
+    frames: int,
+) -> bpy.types.Object:
     graph = project["mazeGraph"]
     rows, cols = graph["rows"], graph["cols"]
-    domain = box("Liquid Domain", (0, 0.1, 1.2), (cols + 1.5, rows + 3.2, 2.7))
+    domain = box(
+        "Liquid Domain",
+        (0, 0.1, 1.2),
+        (cols + 1.5, rows + 3.2, 2.7),
+    )
     domain.display_type = "WIRE"
     modifier = domain.modifiers.new(name="Liquid Domain", type="FLUID")
     modifier.fluid_type = "DOMAIN"
@@ -214,17 +320,39 @@ def add_domain(project: dict[str, Any], cache: Path, resolution: int, frames: in
 def camera_and_lights(project: dict[str, Any]) -> None:
     graph = project["mazeGraph"]
     rows, cols = graph["rows"], graph["cols"]
-    bpy.ops.object.camera_add(location=(0, -rows * 0.18, max(rows, cols) * 1.55 + 4.0))
+    bpy.ops.object.camera_add(
+        location=(0, -rows * 0.18, max(rows, cols) * 1.55 + 4.0)
+    )
     camera = bpy.context.object
     if camera is None:
         raise RuntimeError("failed to add camera")
     camera.data.lens = 52
-    camera.rotation_euler = (Vector((0, 0, 0.2)) - camera.location).to_track_quat("-Z", "Y").to_euler()
+    camera.rotation_euler = (
+        Vector((0, 0, 0.2)) - camera.location
+    ).to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = camera
     for kind, location, energy, color, size in (
-        ("Key", (-cols * 0.55, rows * 0.45, 8), 1450, (1, 1, 1), max(rows, cols) * 0.8),
-        ("Fill", (cols * 0.65, -rows * 0.4, 4.5), 680, (0.22, 0.62, 1), max(rows, cols) * 0.65),
-        ("Rim", (-cols * 0.5, -rows * 0.35, 3), 520, (1, 0.32, 0.08), max(rows, cols) * 0.45),
+        (
+            "Key",
+            (-cols * 0.55, rows * 0.45, 8),
+            1450,
+            (1, 1, 1),
+            max(rows, cols) * 0.8,
+        ),
+        (
+            "Fill",
+            (cols * 0.65, -rows * 0.4, 4.5),
+            680,
+            (0.22, 0.62, 1),
+            max(rows, cols) * 0.65,
+        ),
+        (
+            "Rim",
+            (-cols * 0.5, -rows * 0.35, 3),
+            520,
+            (1, 0.32, 0.08),
+            max(rows, cols) * 0.45,
+        ),
     ):
         bpy.ops.object.light_add(type="AREA", location=location)
         light = bpy.context.object
