@@ -11,3 +11,6 @@ playwright.config.js
 playwright.config.d.ts
 measure-share.ts
 upload/
+blender/cache/
+blender/output/
+*.blend1

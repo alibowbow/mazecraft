@@ -4,6 +4,9 @@ const testPort = Number(process.env.PLAYWRIGHT_PORT ?? 4173)
 
 export default defineConfig({
   testDir: './e2e',
+  // The initial bootstrap file is retained for branch history but superseded by
+  // blender-water-runtime.spec.ts, which performs the awaited DOM assertions.
+  testIgnore: ['**/blender-water.spec.ts'],
   fullyParallel: false,
   // GitHub runners use software WebGL. Serializing there prevents the two 3D
   // quality scenarios from starving each other's lazy-loaded renderers.

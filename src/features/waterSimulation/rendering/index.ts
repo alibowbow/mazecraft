@@ -1,4 +1,5 @@
 import './waterShaderEnhancer'
+import '../bakedTiles/blenderBakedWater'
 
 export * from './dynamicStateTexture'
 export * from './surfaceProfiles'
