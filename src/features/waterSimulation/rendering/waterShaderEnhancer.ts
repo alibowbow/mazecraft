@@ -3,6 +3,163 @@ import * as THREE from 'three'
 const INSTALL_FLAG = '__mazeCraftWaterShaderEnhancerInstalled__' as const
 const VERTEX_MARKER = '// MAZECRAFT_WATER_SURFACE_DYNAMICS_VERTEX'
 const FRAGMENT_MARKER = '// MAZECRAFT_WATER_SURFACE_DYNAMICS_FRAGMENT'
+const HISTORY_MARKER = '// MAZECRAFT_WATER_HISTORY_WALL_GUARD'
+
+const TOPOLOGY_AWARE_STATE_SAMPLING = /* glsl */ `
+  float topologyAxisConnection(vec2 fromCell, vec2 toCell) {
+    vec2 fromCenter = (fromCell + 0.5) / uBoardSize;
+    vec2 toCenter = (toCell + 0.5) / uBoardSize;
+    vec2 portalCenter = (fromCenter + toCenter) * 0.5;
+    float endpointMask = min(
+      texture2D(uTopology, fromCenter).r,
+      texture2D(uTopology, toCenter).r
+    );
+    float portalMask = texture2D(uTopology, portalCenter).r;
+    return step(0.5, min(endpointMask, portalMask));
+  }
+
+  float topologyConnectionGate(vec2 fromCell, vec2 toCell) {
+    vec2 delta = toCell - fromCell;
+    vec2 absoluteDelta = abs(delta);
+    float manhattanDistance = absoluteDelta.x + absoluteDelta.y;
+    if (manhattanDistance < 0.5) return 1.0;
+    if (
+      absoluteDelta.x > 1.5 ||
+      absoluteDelta.y > 1.5 ||
+      manhattanDistance > 2.5
+    ) return 0.0;
+    if (manhattanDistance < 1.5) {
+      return topologyAxisConnection(fromCell, toCell);
+    }
+
+    vec2 horizontalCorner = fromCell + vec2(delta.x, 0.0);
+    vec2 verticalCorner = fromCell + vec2(0.0, delta.y);
+    float horizontalRoute =
+      topologyAxisConnection(fromCell, horizontalCorner) *
+      topologyAxisConnection(horizontalCorner, toCell);
+    float verticalRoute =
+      topologyAxisConnection(fromCell, verticalCorner) *
+      topologyAxisConnection(verticalCorner, toCell);
+    return max(horizontalRoute, verticalRoute);
+  }
+
+  vec4 sampleDynamicStateSmooth(vec2 sampleUv) {
+    vec2 boundedUv = clamp(
+      sampleUv,
+      vec2(0.0),
+      vec2(0.999999)
+    );
+    vec2 position = boundedUv * uBoardSize - 0.5;
+    vec2 base = floor(position);
+    vec2 blend = fract(position);
+    vec2 maximumCell = uBoardSize - 1.0;
+    vec2 anchorCell = clamp(
+      floor(boundedUv * uBoardSize),
+      vec2(0.0),
+      maximumCell
+    );
+    vec2 cell00 = clamp(base, vec2(0.0), maximumCell);
+    vec2 cell10 = clamp(
+      base + vec2(1.0, 0.0),
+      vec2(0.0),
+      maximumCell
+    );
+    vec2 cell01 = clamp(
+      base + vec2(0.0, 1.0),
+      vec2(0.0),
+      maximumCell
+    );
+    vec2 cell11 = clamp(base + vec2(1.0), vec2(0.0), maximumCell);
+    vec4 anchorState = texture2D(
+      uDynamicState,
+      (anchorCell + 0.5) / uBoardSize
+    );
+    vec4 state00 = texture2D(
+      uDynamicState,
+      (cell00 + 0.5) / uBoardSize
+    );
+    vec4 state10 = texture2D(
+      uDynamicState,
+      (cell10 + 0.5) / uBoardSize
+    );
+    vec4 state01 = texture2D(
+      uDynamicState,
+      (cell01 + 0.5) / uBoardSize
+    );
+    vec4 state11 = texture2D(
+      uDynamicState,
+      (cell11 + 0.5) / uBoardSize
+    );
+    state00 = mix(
+      anchorState,
+      state00,
+      topologyConnectionGate(anchorCell, cell00)
+    );
+    state10 = mix(
+      anchorState,
+      state10,
+      topologyConnectionGate(anchorCell, cell10)
+    );
+    state01 = mix(
+      anchorState,
+      state01,
+      topologyConnectionGate(anchorCell, cell01)
+    );
+    state11 = mix(
+      anchorState,
+      state11,
+      topologyConnectionGate(anchorCell, cell11)
+    );
+    return mix(
+      mix(state00, state10, blend.x),
+      mix(state01, state11, blend.x),
+      blend.y
+    );
+  }
+`
+
+const HISTORY_BILINEAR_SOURCE = `  vec4 sampleSource(vec2 uv) {
+    // Manual bilinear reconstruction keeps the hydraulic texture on nearest
+    // filtering, which works even when float-linear filtering is unavailable.
+    vec2 position =
+      clamp(uv, vec2(0.0), vec2(1.0)) * uSourceSize - 0.5;
+    vec2 base = floor(position);
+    vec2 blend = fract(position);
+    vec2 maximumCell = uSourceSize - 1.0;
+    vec2 cell00 = clamp(base, vec2(0.0), maximumCell);
+    vec2 cell10 = clamp(
+      base + vec2(1.0, 0.0),
+      vec2(0.0),
+      maximumCell
+    );
+    vec2 cell01 = clamp(
+      base + vec2(0.0, 1.0),
+      vec2(0.0),
+      maximumCell
+    );
+    vec2 cell11 = clamp(base + vec2(1.0), vec2(0.0), maximumCell);
+    vec4 state00 = texture2D(uSource, (cell00 + 0.5) / uSourceSize);
+    vec4 state10 = texture2D(uSource, (cell10 + 0.5) / uSourceSize);
+    vec4 state01 = texture2D(uSource, (cell01 + 0.5) / uSourceSize);
+    vec4 state11 = texture2D(uSource, (cell11 + 0.5) / uSourceSize);
+    return mix(
+      mix(state00, state10, blend.x),
+      mix(state01, state11, blend.x),
+      blend.y
+    );
+  }
+`
+
+const HISTORY_WALL_SAFE_SOURCE = `  ${HISTORY_MARKER}
+  vec4 sampleSource(vec2 uv) {
+    vec2 boundedUv = clamp(uv, vec2(0.0), vec2(0.999999));
+    vec2 sourceCell = floor(boundedUv * uSourceSize);
+    return texture2D(
+      uSource,
+      (sourceCell + 0.5) / uSourceSize
+    );
+  }
+`
 
 function replaceRequired(
   source: string,
@@ -26,47 +183,7 @@ export function enhanceWaterVertexShader(source: string): string {
   next = replaceRequired(
     next,
     '  float finiteDepthPhaseScale(float waveNumberPerCell, float normalizedDepth) {\n',
-    `  vec4 sampleDynamicStateSmooth(vec2 sampleUv) {
-    vec2 position =
-      clamp(sampleUv, vec2(0.0), vec2(1.0)) * uBoardSize - 0.5;
-    vec2 base = floor(position);
-    vec2 blend = fract(position);
-    vec2 maximumCell = uBoardSize - 1.0;
-    vec2 cell00 = clamp(base, vec2(0.0), maximumCell);
-    vec2 cell10 = clamp(
-      base + vec2(1.0, 0.0),
-      vec2(0.0),
-      maximumCell
-    );
-    vec2 cell01 = clamp(
-      base + vec2(0.0, 1.0),
-      vec2(0.0),
-      maximumCell
-    );
-    vec2 cell11 = clamp(base + vec2(1.0), vec2(0.0), maximumCell);
-    vec4 state00 = texture2D(
-      uDynamicState,
-      (cell00 + 0.5) / uBoardSize
-    );
-    vec4 state10 = texture2D(
-      uDynamicState,
-      (cell10 + 0.5) / uBoardSize
-    );
-    vec4 state01 = texture2D(
-      uDynamicState,
-      (cell01 + 0.5) / uBoardSize
-    );
-    vec4 state11 = texture2D(
-      uDynamicState,
-      (cell11 + 0.5) / uBoardSize
-    );
-    return mix(
-      mix(state00, state10, blend.x),
-      mix(state01, state11, blend.x),
-      blend.y
-    );
-  }
-
+    `${TOPOLOGY_AWARE_STATE_SAMPLING}
   float finiteDepthPhaseScale(float waveNumberPerCell, float normalizedDepth) {
 `,
   )
@@ -150,47 +267,7 @@ export function enhanceWaterFragmentShader(source: string): string {
   next = replaceRequired(
     next,
     '  void main() {\n',
-    `  vec4 sampleDynamicStateSmooth(vec2 sampleUv) {
-    vec2 position =
-      clamp(sampleUv, vec2(0.0), vec2(1.0)) * uBoardSize - 0.5;
-    vec2 base = floor(position);
-    vec2 blend = fract(position);
-    vec2 maximumCell = uBoardSize - 1.0;
-    vec2 cell00 = clamp(base, vec2(0.0), maximumCell);
-    vec2 cell10 = clamp(
-      base + vec2(1.0, 0.0),
-      vec2(0.0),
-      maximumCell
-    );
-    vec2 cell01 = clamp(
-      base + vec2(0.0, 1.0),
-      vec2(0.0),
-      maximumCell
-    );
-    vec2 cell11 = clamp(base + vec2(1.0), vec2(0.0), maximumCell);
-    vec4 state00 = texture2D(
-      uDynamicState,
-      (cell00 + 0.5) / uBoardSize
-    );
-    vec4 state10 = texture2D(
-      uDynamicState,
-      (cell10 + 0.5) / uBoardSize
-    );
-    vec4 state01 = texture2D(
-      uDynamicState,
-      (cell01 + 0.5) / uBoardSize
-    );
-    vec4 state11 = texture2D(
-      uDynamicState,
-      (cell11 + 0.5) / uBoardSize
-    );
-    return mix(
-      mix(state00, state10, blend.x),
-      mix(state01, state11, blend.x),
-      blend.y
-    );
-  }
-
+    `${TOPOLOGY_AWARE_STATE_SAMPLING}
   void main() {
 `,
   )
@@ -340,6 +417,16 @@ export function enhanceWaterFragmentShader(source: string): string {
   return next ?? source
 }
 
+/** Prevents the high-resolution history pass from blending through closed walls. */
+export function enhanceWaterHistoryFragmentShader(source: string): string {
+  if (source.includes(HISTORY_MARKER)) return source
+  return replaceRequired(
+    source,
+    HISTORY_BILINEAR_SOURCE,
+    HISTORY_WALL_SAFE_SOURCE,
+  ) ?? source
+}
+
 function isMazeWaterSurface(material: THREE.ShaderMaterial): boolean {
   const uniforms = material.uniforms
   return Boolean(
@@ -351,13 +438,24 @@ function isMazeWaterSurface(material: THREE.ShaderMaterial): boolean {
   )
 }
 
-/** Installs one narrowly scoped compile hook for MazeCraft's water material. */
+function isMazeWaterHistory(material: THREE.ShaderMaterial): boolean {
+  const uniforms = material.uniforms
+  return Boolean(
+    uniforms.uPrevious &&
+      uniforms.uSource &&
+      uniforms.uSourceSize &&
+      uniforms.uSimulationSize &&
+      uniforms.uDeltaSeconds &&
+      !uniforms.uTopology,
+  )
+}
+
+/** Installs one narrowly scoped compile hook for MazeCraft's water materials. */
 export function installWaterShaderEnhancer(): void {
   type ShaderMaterialPrototype = typeof THREE.ShaderMaterial.prototype & {
     [INSTALL_FLAG]?: boolean
   }
-  const prototype =
-    THREE.ShaderMaterial.prototype as ShaderMaterialPrototype
+  const prototype = THREE.ShaderMaterial.prototype as ShaderMaterialPrototype
   if (prototype[INSTALL_FLAG]) return
   prototype[INSTALL_FLAG] = true
   const original = prototype.onBeforeCompile
@@ -371,9 +469,16 @@ export function installWaterShaderEnhancer(): void {
     renderer: CompileParameters[1],
   ): void {
     original.call(this, shader, renderer)
-    if (!isMazeWaterSurface(this)) return
-    shader.vertexShader = enhanceWaterVertexShader(shader.vertexShader)
-    shader.fragmentShader = enhanceWaterFragmentShader(shader.fragmentShader)
+    if (isMazeWaterSurface(this)) {
+      shader.vertexShader = enhanceWaterVertexShader(shader.vertexShader)
+      shader.fragmentShader = enhanceWaterFragmentShader(shader.fragmentShader)
+      return
+    }
+    if (isMazeWaterHistory(this)) {
+      shader.fragmentShader = enhanceWaterHistoryFragmentShader(
+        shader.fragmentShader,
+      )
+    }
   }
   prototype.onBeforeCompile = patched
 }

@@ -48,9 +48,16 @@ maze cell while keeping the longest side at or below 512 texels. The visual
 solve advances at fixed 1/60 s substeps, catches up by at most 0.25 s, and uses
 no new dependency or external asset.
 
-The pass reconstructs the low-resolution hydraulic field manually with four
-nearest-filtered taps. This avoids requiring linear filtering for floating-point
-textures on constrained WebGL2 implementations. Half-float render targets are
+The surface shader reconstructs the low-resolution hydraulic field manually
+with four nearest-filtered taps. Each neighboring tap is accepted only when the
+static topology atlas contains a connected portal route from the fragment's
+owning cell. This smooths open passages without blending depth or velocity
+through a closed wall. The history pass deliberately samples the owning
+hydraulic cell without cross-cell bilinear interpolation, then permits foam and
+wave transport only through its wetness-and-flow continuity gate.
+
+This design avoids requiring linear filtering for floating-point hydraulic
+textures on constrained WebGL2 implementations. Half-float history targets are
 used when color-buffer support is present; normalized 8-bit RGBA remains the
 fallback.
 
@@ -58,7 +65,8 @@ fallback.
 
 The water shader now combines:
 
-- manually smoothed depth and velocity sampling, eliminating cell plateaus;
+- topology-aware smoothed depth and velocity sampling, eliminating cell
+  plateaus while preserving closed walls;
 - physically readable depth displacement rather than a nearly flat blue sheet;
 - sub-grid height displacement and derivative normals;
 - flow-aligned broad waves plus turbulence-coupled micro detail;
@@ -69,8 +77,8 @@ The water shader now combines:
   and wave energy, then advected with the velocity field.
 
 The enhancement is installed as a narrowly scoped Three.js compile hook. It
-only touches a shader material carrying MazeCraft's topology, dynamic-state,
-foam-history, time, and flow-gate uniforms.
+only touches MazeCraft's water surface material and its high-resolution history
+material, identified by their existing uniform signatures.
 
 ## Lifecycle and compatibility invariants
 
