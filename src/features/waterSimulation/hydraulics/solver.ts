@@ -22,8 +22,10 @@ export interface HydraulicSolverOptions {
   activeFlowThreshold?: number
   /** Maximum fraction of a node's available water released in one substep. */
   maxOutflowFraction?: number
-  /** Safety ceiling for reduced-order edge velocity. */
+  /** Absolute safety ceiling for reduced-order edge velocity. */
   maximumVelocityMetersPerSecond?: number
+  /** Depth-aware shallow-water velocity ceiling, expressed as a Froude number. */
+  maximumFroudeNumber?: number
 }
 
 export interface ResolvedHydraulicSolverOptions {
@@ -36,6 +38,7 @@ export interface ResolvedHydraulicSolverOptions {
   activeFlowThreshold: number
   maxOutflowFraction: number
   maximumVelocityMetersPerSecond: number
+  maximumFroudeNumber: number
 }
 
 export interface HydraulicState {
@@ -69,7 +72,20 @@ export interface HydraulicSolver {
   }
 }
 
+export interface EdgeMomentumStepInput {
+  /** Signed discharge before this substep. */
+  discharge: number
+  /** Pressure/gravity forcing in discharge units per second. */
+  acceleration: number
+  /** Linear damping coefficient, inverse seconds. */
+  linearDamping: number
+  /** Quadratic drag coefficient applied to q|q|. */
+  quadraticResistance: number
+  deltaSeconds: number
+}
+
 const DEFAULT_STEP_SECONDS = 1 / 120
+const DEFAULT_MAXIMUM_FROUDE_NUMBER = 2.4
 
 function requirePositiveFinite(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
@@ -81,6 +97,113 @@ function requireNonNegativeFinite(name: string, value: number): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`${name} must be a non-negative finite number.`)
   }
+}
+
+function integrateEdgeMomentumImplicitUnchecked(
+  discharge: number,
+  acceleration: number,
+  linearDamping: number,
+  quadraticResistance: number,
+  deltaSeconds: number,
+): number {
+  // Pressure/gravity is explicit; linear and quadratic drag are backward Euler.
+  // Solving R*dt*q^2 + (1 + lambda*dt)*q - |q*| = 0 avoids the
+  // sign-flipping overshoot of a fully explicit q|q| term.
+  const forcedDischarge = discharge + acceleration * deltaSeconds
+  const forcedMagnitude = Math.abs(forcedDischarge)
+  if (forcedMagnitude <= Number.EPSILON) return 0
+  const linearFactor = 1 + linearDamping * deltaSeconds
+  if (quadraticResistance <= Number.EPSILON) {
+    return Math.sign(forcedDischarge) * (forcedMagnitude / linearFactor)
+  }
+  const discriminant =
+    linearFactor * linearFactor +
+    4 * quadraticResistance * deltaSeconds * forcedMagnitude
+  const magnitude =
+    (2 * forcedMagnitude) /
+    (linearFactor + Math.sqrt(discriminant))
+  return Math.sign(forcedDischarge) * magnitude
+}
+
+/**
+ * Advances one edge momentum state with implicit drag. The result cannot change
+ * sign from drag alone and remains finite for large resistance or time steps.
+ */
+export function integrateEdgeMomentumImplicit(
+  input: EdgeMomentumStepInput,
+): number {
+  if (!Number.isFinite(input.discharge)) {
+    throw new RangeError('discharge must be finite.')
+  }
+  if (!Number.isFinite(input.acceleration)) {
+    throw new RangeError('acceleration must be finite.')
+  }
+  requireNonNegativeFinite('linearDamping', input.linearDamping)
+  requireNonNegativeFinite('quadraticResistance', input.quadraticResistance)
+  requirePositiveFinite('deltaSeconds', input.deltaSeconds)
+  return integrateEdgeMomentumImplicitUnchecked(
+    input.discharge,
+    input.acceleration,
+    input.linearDamping,
+    input.quadraticResistance,
+    input.deltaSeconds,
+  )
+}
+
+/** Extra drag applied to thin films where hydraulic radius is smallest. */
+export function resolveShallowWaterResistanceMultiplier(
+  openingFraction: number,
+): number {
+  if (
+    !Number.isFinite(openingFraction) ||
+    openingFraction < 0 ||
+    openingFraction > 1
+  ) {
+    throw new RangeError('openingFraction must be in the range [0, 1].')
+  }
+  const shallowFraction = 1 - openingFraction
+  return 1 + 2.25 * shallowFraction * shallowFraction
+}
+
+function resolveShallowWaterVelocityLimitUnchecked(
+  gravityMetersPerSecondSquared: number,
+  depthMeters: number,
+  absoluteLimitMetersPerSecond: number,
+  maximumFroudeNumber: number,
+): number {
+  if (depthMeters <= 0) return 0
+  const gravityWaveSpeed = Math.sqrt(
+    gravityMetersPerSecondSquared * depthMeters,
+  )
+  return Math.min(
+    absoluteLimitMetersPerSecond,
+    maximumFroudeNumber * gravityWaveSpeed,
+  )
+}
+
+/** Depth-aware velocity cap used for stable wetting and drying fronts. */
+export function resolveShallowWaterVelocityLimit(
+  gravityMetersPerSecondSquared: number,
+  depthMeters: number,
+  absoluteLimitMetersPerSecond: number,
+  maximumFroudeNumber = DEFAULT_MAXIMUM_FROUDE_NUMBER,
+): number {
+  requirePositiveFinite(
+    'gravityMetersPerSecondSquared',
+    gravityMetersPerSecondSquared,
+  )
+  requireNonNegativeFinite('depthMeters', depthMeters)
+  requirePositiveFinite(
+    'absoluteLimitMetersPerSecond',
+    absoluteLimitMetersPerSecond,
+  )
+  requirePositiveFinite('maximumFroudeNumber', maximumFroudeNumber)
+  return resolveShallowWaterVelocityLimitUnchecked(
+    gravityMetersPerSecondSquared,
+    depthMeters,
+    absoluteLimitMetersPerSecond,
+    maximumFroudeNumber,
+  )
 }
 
 function sum(values: ArrayLike<number>): number {
@@ -101,6 +224,8 @@ function resolveOptions(
   const maxOutflowFraction = input.maxOutflowFraction ?? 0.92
   const maximumVelocityMetersPerSecond =
     input.maximumVelocityMetersPerSecond ?? 7.5
+  const maximumFroudeNumber =
+    input.maximumFroudeNumber ?? DEFAULT_MAXIMUM_FROUDE_NUMBER
   requirePositiveFinite('physicsStepSeconds', physicsStepSeconds)
   if (!Number.isInteger(maxSubstepsPerAdvance) || maxSubstepsPerAdvance < 1) {
     throw new RangeError('maxSubstepsPerAdvance must be a positive integer.')
@@ -119,6 +244,7 @@ function resolveOptions(
     'maximumVelocityMetersPerSecond',
     maximumVelocityMetersPerSecond,
   )
+  requirePositiveFinite('maximumFroudeNumber', maximumFroudeNumber)
 
   const source: PrescribedInflowBoundary = {
     ...DEFAULT_PRESCRIBED_INFLOW,
@@ -141,6 +267,7 @@ function resolveOptions(
     activeFlowThreshold,
     maxOutflowFraction,
     maximumVelocityMetersPerSecond,
+    maximumFroudeNumber,
   }
 }
 
@@ -220,7 +347,7 @@ function advanceOneSubstep(solver: HydraulicSolver, dt: number): void {
   state.netInflow.fill(0)
 
   const gravity = network.geometry.gravityMetersPerSecondSquared
-  const maxVelocity = options.maximumVelocityMetersPerSecond
+  const absoluteMaxVelocity = options.maximumVelocityMetersPerSecond
   for (let edge = 0; edge < network.edgeCount; edge += 1) {
     const from = network.edgeFrom[edge]
     const to = network.edgeTo[edge]
@@ -248,15 +375,31 @@ function advanceOneSubstep(solver: HydraulicSolver, dt: number): void {
       nextDischarge *= Math.exp(-18 * dt)
       if (Math.abs(nextDischarge) < options.flowEpsilon) nextDischarge = 0
     } else {
-      const inertia =
+      const acceleration =
         (gravity * area * headDifference) / network.edgeLength[edge]
-      const friction =
-        network.edgeResistance[edge] *
-        nextDischarge *
-        Math.abs(nextDischarge)
-      const damping = options.dampingCoefficient * nextDischarge
-      nextDischarge += (inertia - friction - damping) * dt
-      const maximumDischarge = area * maxVelocity
+      const fullOpeningArea =
+        network.edgeWidth[edge] * network.edgeMaxOpeningDepth[edge]
+      const openingFraction = Math.max(
+        0,
+        Math.min(1, area / Math.max(fullOpeningArea, 1e-12)),
+      )
+      const shallowFraction = 1 - openingFraction
+      const resistanceMultiplier =
+        1 + 2.25 * shallowFraction * shallowFraction
+      nextDischarge = integrateEdgeMomentumImplicitUnchecked(
+        nextDischarge,
+        acceleration,
+        options.dampingCoefficient,
+        network.edgeResistance[edge] * resistanceMultiplier,
+        dt,
+      )
+      const localMaxVelocity = resolveShallowWaterVelocityLimitUnchecked(
+        gravity,
+        submergedDepth,
+        absoluteMaxVelocity,
+        options.maximumFroudeNumber,
+      )
+      const maximumDischarge = area * localMaxVelocity
       nextDischarge = Math.max(
         -maximumDischarge,
         Math.min(maximumDischarge, nextDischarge),
