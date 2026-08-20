@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "tileSize": 64,
+  "frames": 16,
+  "frameRate": 12,
+  "heightAmplitude": 0.22,
+  "normalStrength": 2.75,
+  "foamGain": 1.0,
+  "seed": 2747636419
+}

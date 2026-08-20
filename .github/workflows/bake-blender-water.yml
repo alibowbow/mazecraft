@@ -1,0 +1,94 @@
+name: bake-blender-water
+
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: Blender atlas preset
+        type: choice
+        options:
+          - preview
+          - production
+        default: preview
+  push:
+    branches:
+      - feat/blender-water-hybrid
+    paths:
+      - blender/**
+      - .github/workflows/bake-blender-water.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: blender-water-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BLENDER_VERSION: 4.5.12
+  BAKE_PRESET: ${{ github.event_name == 'workflow_dispatch' && inputs.preset || 'preview' }}
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache Blender
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/blender-${{ env.BLENDER_VERSION }}-linux-x64
+          key: blender-linux-x64-${{ env.BLENDER_VERSION }}
+
+      - name: Download Blender 4.5 LTS
+        if: steps.cache-blender.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          archive="${RUNNER_TEMP}/blender.tar.xz"
+          url="https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          curl --fail --location --retry 4 --output "$archive" "$url"
+          mkdir -p "${RUNNER_TOOL_CACHE}"
+          tar -xJf "$archive" -C "${RUNNER_TOOL_CACHE}"
+
+      - name: Bake runtime water atlas
+        shell: bash
+        run: |
+          set -euxo pipefail
+          blender="${RUNNER_TOOL_CACHE}/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$blender" -b --factory-startup \
+            --python blender/scripts/bake_runtime_atlas.py -- \
+            --preset "blender/presets/${BAKE_PRESET}.json" \
+            --output public/water-baked
+
+      - name: Validate generated atlas
+        run: python blender/scripts/validate_runtime_atlas.py public/water-baked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: git diff --check
+
+      - name: Commit generated Blender assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add public/water-baked
+          if git diff --cached --quiet; then
+            echo "Blender atlas is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: bake Blender water runtime atlas"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
