@@ -1,3 +1,5 @@
+import './waterShaderEnhancer'
+
 export * from './dynamicStateTexture'
 export * from './surfaceProfiles'
 export * from './topologyAtlas'
@@ -5,4 +7,5 @@ export * from './velocityAggregation'
 export * from './waterDetailTexture'
 export * from './waterFoamHistory'
 export * from './waterFoamRenderTargets'
+export * from './waterShaderEnhancer'
 export * from './waveDispersion'
