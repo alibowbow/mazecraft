@@ -4,6 +4,9 @@ const INSTALL_FLAG = '__mazeCraftWaterShaderEnhancerInstalled__' as const
 const VERTEX_MARKER = '// MAZECRAFT_WATER_SURFACE_DYNAMICS_VERTEX'
 const FRAGMENT_MARKER = '// MAZECRAFT_WATER_SURFACE_DYNAMICS_FRAGMENT'
 const HISTORY_MARKER = '// MAZECRAFT_WATER_HISTORY_WALL_GUARD'
+const HISTORY_TOPOLOGY_MARKER = '// MAZECRAFT_WATER_HISTORY_TOPOLOGY'
+
+const topologyByRenderer = new WeakMap<THREE.WebGLRenderer, THREE.Texture>()
 
 const TOPOLOGY_AWARE_STATE_SAMPLING = /* glsl */ `
   float topologyAxisConnection(vec2 fromCell, vec2 toCell) {
@@ -160,6 +163,47 @@ const HISTORY_WALL_SAFE_SOURCE = `  ${HISTORY_MARKER}
     );
   }
 `
+
+const HISTORY_TOPOLOGY_HELPER = /* glsl */ `
+  ${HISTORY_TOPOLOGY_MARKER}
+  float historyTopologyConnection(vec2 fromCell, vec2 toCell) {
+    vec2 delta = abs(toCell - fromCell);
+    float manhattanDistance = delta.x + delta.y;
+    if (manhattanDistance < 0.5) return 1.0;
+    if (
+      delta.x > 1.5 ||
+      delta.y > 1.5 ||
+      manhattanDistance > 1.5
+    ) return 0.0;
+    vec2 fromCenter = (fromCell + 0.5) / uSourceSize;
+    vec2 toCenter = (toCell + 0.5) / uSourceSize;
+    vec2 portalCenter = (fromCenter + toCenter) * 0.5;
+    float endpointMask = min(
+      texture2D(uHistoryTopology, fromCenter).r,
+      texture2D(uHistoryTopology, toCenter).r
+    );
+    float portalMask = texture2D(uHistoryTopology, portalCenter).r;
+    return step(0.5, min(endpointMask, portalMask));
+  }
+`
+
+const HISTORY_REGION_ANCHOR = `    if (
+      crossed.x > 1.5 ||
+      crossed.y > 1.5 ||
+      crossed.x + crossed.y > 1.5
+    ) return 0.0;
+
+    vec4 fromState = sampleSource(fromUv);`
+
+const HISTORY_REGION_WITH_TOPOLOGY = `    if (
+      crossed.x > 1.5 ||
+      crossed.y > 1.5 ||
+      crossed.x + crossed.y > 1.5
+    ) return 0.0;
+    float topologyGate = historyTopologyConnection(fromCell, toCell);
+    if (topologyGate < 0.5) return 0.0;
+
+    vec4 fromState = sampleSource(fromUv);`
 
 function replaceRequired(
   source: string,
@@ -341,11 +385,11 @@ export function enhanceWaterFragmentShader(source: string): string {
       clamp(fresnel * uReflectionStrength, 0.0, 0.92)
     );
     bodyColor += vec3(0.82, 0.97, 1.0) * glitter;`,
-    `    float depthMeters = depth * 0.24;
-    vec3 absorptionCoefficient = vec3(4.2, 1.28, 0.38);
+    `    float depthMeters = depth * 0.72;
+    vec3 absorptionCoefficient = vec3(4.0, 1.35, 0.48);
     vec3 transmittance = exp(-absorptionCoefficient * depthMeters);
     vec3 paleFloor = vec3(0.83, 0.91, 0.89);
-    vec3 inScattering = vec3(0.008, 0.39, 0.53);
+    vec3 inScattering = vec3(0.006, 0.24, 0.4);
     vec3 refractedBody =
       paleFloor * transmittance +
       inScattering * (vec3(1.0) - transmittance) * 0.88;
@@ -417,13 +461,36 @@ export function enhanceWaterFragmentShader(source: string): string {
   return next ?? source
 }
 
-/** Prevents the high-resolution history pass from blending through closed walls. */
+/**
+ * Keeps the sub-grid state inside the owning cell and gates cross-cell
+ * transport with the same static topology atlas used by the visible surface.
+ */
 export function enhanceWaterHistoryFragmentShader(source: string): string {
-  if (source.includes(HISTORY_MARKER)) return source
-  return replaceRequired(
+  if (source.includes(HISTORY_TOPOLOGY_MARKER)) return source
+  let next = replaceRequired(
     source,
+    '  uniform sampler2D uSource;\n',
+    `  uniform sampler2D uSource;\n  uniform sampler2D uHistoryTopology;\n`,
+  )
+  if (!next) return source
+  next = replaceRequired(
+    next,
     HISTORY_BILINEAR_SOURCE,
     HISTORY_WALL_SAFE_SOURCE,
+  )
+  if (!next) return source
+  next = replaceRequired(
+    next,
+    '  float sameHydraulicRegion(vec2 fromUv, vec2 toUv) {\n',
+    `${HISTORY_TOPOLOGY_HELPER}
+  float sameHydraulicRegion(vec2 fromUv, vec2 toUv) {
+`,
+  )
+  if (!next) return source
+  return replaceRequired(
+    next,
+    HISTORY_REGION_ANCHOR,
+    HISTORY_REGION_WITH_TOPOLOGY,
   ) ?? source
 }
 
@@ -470,11 +537,18 @@ export function installWaterShaderEnhancer(): void {
   ): void {
     original.call(this, shader, renderer)
     if (isMazeWaterSurface(this)) {
+      const topology = this.uniforms.uTopology.value
+      if (topology instanceof THREE.Texture) {
+        topologyByRenderer.set(renderer, topology)
+      }
       shader.vertexShader = enhanceWaterVertexShader(shader.vertexShader)
       shader.fragmentShader = enhanceWaterFragmentShader(shader.fragmentShader)
       return
     }
     if (isMazeWaterHistory(this)) {
+      const topology = topologyByRenderer.get(renderer)
+      if (!topology) return
+      shader.uniforms.uHistoryTopology = { value: topology }
       shader.fragmentShader = enhanceWaterHistoryFragmentShader(
         shader.fragmentShader,
       )

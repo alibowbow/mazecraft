@@ -93,6 +93,10 @@ const FRAGMENT_FIXTURE = `
 `
 
 const HISTORY_FIXTURE = `
+  uniform sampler2D uPrevious;
+  uniform sampler2D uSource;
+  uniform vec2 uSourceSize;
+
   vec4 sampleSource(vec2 uv) {
     // Manual bilinear reconstruction keeps the hydraulic texture on nearest
     // filtering, which works even when float-linear filtering is unavailable.
@@ -122,6 +126,26 @@ const HISTORY_FIXTURE = `
       mix(state01, state11, blend.x),
       blend.y
     );
+  }
+
+  float sameHydraulicRegion(vec2 fromUv, vec2 toUv) {
+    vec2 fromCell = floor(
+      clamp(fromUv, vec2(0.0), vec2(0.999999)) * uSourceSize
+    );
+    vec2 toCell = floor(
+      clamp(toUv, vec2(0.0), vec2(0.999999)) * uSourceSize
+    );
+    vec2 crossed = abs(toCell - fromCell);
+    if (crossed.x + crossed.y < 0.5) return 1.0;
+    if (
+      crossed.x > 1.5 ||
+      crossed.y > 1.5 ||
+      crossed.x + crossed.y > 1.5
+    ) return 0.0;
+
+    vec4 fromState = sampleSource(fromUv);
+    vec4 toState = sampleSource(toUv);
+    return fromState.r * toState.r;
   }
 `
 
@@ -178,15 +202,20 @@ describe('water shader enhancement', () => {
     expect(enhanced).toContain('MAZECRAFT_WATER_SURFACE_DYNAMICS_FRAGMENT')
     expect(enhanced).toContain('topologyConnectionGate')
     expect(enhanced).toContain('absorptionCoefficient')
+    expect(enhanced).toContain('depth * 0.72')
     expect(enhanced).toContain('simulatedSlope')
     expect(enhanced).toContain('causticInterference')
     expect(enhanced).toContain('opticalAlpha')
     expect(enhanceWaterFragmentShader(enhanced)).toBe(enhanced)
   })
 
-  it('keeps history source sampling inside the owning hydraulic cell', () => {
+  it('gates history transport with the static topology atlas', () => {
     const enhanced = enhanceWaterHistoryFragmentShader(HISTORY_FIXTURE)
     expect(enhanced).toContain('MAZECRAFT_WATER_HISTORY_WALL_GUARD')
+    expect(enhanced).toContain('MAZECRAFT_WATER_HISTORY_TOPOLOGY')
+    expect(enhanced).toContain('uniform sampler2D uHistoryTopology')
+    expect(enhanced).toContain('historyTopologyConnection')
+    expect(enhanced).toContain('topologyGate < 0.5')
     expect(enhanced).toContain('sourceCell = floor')
     expect(enhanced).not.toContain('mix(state00, state10')
     expect(enhanceWaterHistoryFragmentShader(enhanced)).toBe(enhanced)
