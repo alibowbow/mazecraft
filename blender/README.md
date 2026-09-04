@@ -18,6 +18,10 @@ blender -b --factory-startup \
 python blender/scripts/validate_runtime_atlas.py public/water-baked
 ```
 
+This runtime atlas uses analytic periodic waves, not Mantaflow simulation.
+When Blender is unavailable, the same generator also runs with standard Python
+using the arguments after `--` above. The manifest records the actual writer.
+
 The generated `surface-atlas.png` packs:
 
 | Channel | Meaning |

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "generator": {
-    "name": "Blender",
-    "version": "4.5.12 LTS",
+    "name": "MazeCraft Python",
+    "version": "2",
     "mode": "procedural-runtime-atlas"
   },
   "atlas": {

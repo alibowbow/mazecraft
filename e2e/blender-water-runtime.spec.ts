@@ -43,6 +43,19 @@ test('Blender atlas가 실시간 수리 수면에 로드되고 셰이더 오류 
     }
   })
 
+  await page.addInitScript(() => {
+    const original = WebGL2RenderingContext.prototype.shaderSource
+    WebGL2RenderingContext.prototype.shaderSource = function (shader, source) {
+      if (source.includes('MAZECRAFT_BLENDER_BAKED_WATER_FRAGMENT')) {
+        document.documentElement.dataset.waterFlowShader = String(
+          source.includes('uBlenderWaterPhase') &&
+          source.includes('surface.rg = blenderNormalToWorld') &&
+          source.includes('fract(cycles + seed)'),
+        )
+      }
+      return original.call(this, shader, source)
+    }
+  })
   const stage = await openHighQualityWater(page)
   await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
   await expect
@@ -63,6 +76,8 @@ test('Blender atlas가 실시간 수리 수면에 로드되고 셰이더 오류 
     )
     .toBeGreaterThan(1)
 
+  await expect(page.locator('html')).toHaveAttribute('data-water-flow-shader', 'true')
+  await stage.screenshot({ path: 'test-results/water-atlas-review.png' })
   expect(externalRequests).toEqual([])
   expect(consoleErrors).toEqual([])
 })

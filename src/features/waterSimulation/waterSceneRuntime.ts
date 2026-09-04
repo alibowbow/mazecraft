@@ -1,3 +1,4 @@
+import { updateBlenderWaterFlow, resetBlenderWaterFlow } from './bakedTiles/blenderBakedWater'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
@@ -1104,6 +1105,7 @@ export class WaterSceneRuntime {
     this.controls.enabled = true
     this.bridge.reset()
     resetDynamicStateTexture(this.dynamicState)
+    resetBlenderWaterFlow(this.waterSurfaceMaterial)
     this.dynamicTexture.needsUpdate = true
     this.foamHistory?.reset(this.renderer)
     this.lastFoamSimulationTime = 0
@@ -1306,6 +1308,7 @@ export class WaterSceneRuntime {
       foamSource: this.interpolatedFoam,
     })
     this.dynamicTexture.needsUpdate = true
+    updateBlenderWaterFlow(this.waterSurfaceMaterial, this.dynamicState)
     if (this.foamHistory) {
       const foamDelta = Math.max(
         0,

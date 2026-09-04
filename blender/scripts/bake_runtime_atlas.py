@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import bpy
+try:
+    import bpy
+except ModuleNotFoundError:
+    bpy = None
 
 TAU = math.tau
 TILES = (
@@ -60,10 +63,12 @@ def normalize2(x: float, y: float) -> tuple[float, float]:
 
 
 def hash_noise(x: float, y: float, phase: float, seed: int) -> float:
-    value = math.sin(
-        x * 127.1 + y * 311.7 + phase * 74.7 + (seed & 0xFFFF) * 0.00037
-    ) * 43758.5453123
-    return (value - math.floor(value)) * 2.0 - 1.0
+    # Smooth periodic noise: frame wrapping must preserve both value and slope.
+    offset = (seed & 0xFFFF) * 0.00037
+    return (
+        math.sin(x * 7.1 + y * 4.7 - phase * 3 + offset) * 0.6
+        + math.cos(x * 3.3 - y * 8.2 + phase * 2 + offset * 1.7) * 0.4
+    )
 
 
 def straight(x: float, y: float) -> tuple[float, float, float]:
@@ -126,9 +131,9 @@ def surface(tile: int, x: float, y: float, phase: float, seed: int) -> tuple[flo
     flow_x, flow_y, energy = FIELDS[tile](x, y)
     along = x * flow_x + y * flow_y
     across = -x * flow_y + y * flow_x
-    broad = math.sin(along * 8.2 - phase * 1.55 + tile * 0.63)
-    medium = math.sin(along * 17.4 - phase * 2.85 + across * 3.2)
-    fine = math.sin(along * 31.0 - phase * 5.1 - across * 8.4)
+    broad = math.sin(along * 8.2 - phase * 1.0 + tile * 0.63)
+    medium = math.sin(along * 17.4 - phase * 2.0 + across * 3.2)
+    fine = math.sin(along * 31.0 - phase * 4.0 - across * 8.4)
     grain = hash_noise(x * 7.1, y * 7.1, phase, seed + tile * 977)
 
     if tile == 1:
@@ -136,19 +141,19 @@ def surface(tile: int, x: float, y: float, phase: float, seed: int) -> tuple[flo
     elif tile == 2:
         broad += math.exp(-x * x * 12.0) * math.sin(phase * 2.0 - y * 5.0) * 0.68
     elif tile == 3:
-        broad += math.sin(x * 10.0 + phase) * math.sin(y * 9.0 - phase * 1.3) * 0.46
+        broad += math.sin(x * 10.0 + phase) * math.sin(y * 9.0 - phase * 1.0) * 0.46
     elif tile == 4:
-        broad += math.cos(y * 7.0 + phase * 1.2) * smoothstep(0.1, -0.92, y) * 0.82
+        broad += math.cos(y * 7.0 + phase * 1.0) * smoothstep(0.1, -0.92, y) * 0.82
     elif tile == 5:
         radius = math.hypot(x, y)
-        broad += math.sin(radius * 17.5 - phase * 3.8) * math.exp(-radius * 1.9) * 1.25
+        broad += math.sin(radius * 17.5 - phase * 3.0) * math.exp(-radius * 1.9) * 1.25
     elif tile == 6:
         funnel = math.exp(-(x * x * 6.0 + (y + 0.62) ** 2 * 4.0))
         broad -= funnel * 1.15
         medium += funnel * math.sin(phase * 4.0 + x * 16.0)
     elif tile == 7:
         radius = math.hypot(x, y)
-        broad = math.sin(radius * 9.0 - phase * 0.75) * 0.54
+        broad = math.sin(radius * 9.0 - phase * 1.0) * 0.54
         medium *= 0.24
         fine *= 0.08
         grain *= 0.14
@@ -241,6 +246,22 @@ def make_atlas(preset: Preset) -> tuple[int, int, array, array]:
 
 
 def save_image(path: Path, width: int, height: int, pixels: array, name: str) -> None:
+    if bpy is None:
+        # The runtime atlas is procedural data, not a Mantaflow bake. A portable
+        # standard-library writer allows identical linear RGBA generation in CI.
+        import struct
+        import zlib
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        rows = bytearray()
+        for y in range(height - 1, -1, -1):
+            rows.append(0)
+            start = y * width * 4
+            rows.extend(round(clamp(v) * 255) for v in pixels[start:start + width * 4])
+        header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+                         + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+        return
     image = bpy.data.images.new(name=name, width=width, height=height, alpha=True, float_buffer=False)
     image.colorspace_settings.name = "Non-Color"
     image.pixels.foreach_set(pixels)
@@ -252,7 +273,7 @@ def save_image(path: Path, width: int, height: int, pixels: array, name: str) ->
 def write_manifest(output: Path, preset: Preset, width: int, height: int) -> None:
     manifest = {
         "schemaVersion": 1,
-        "generator": {"name": "Blender", "version": bpy.app.version_string, "mode": "procedural-runtime-atlas"},
+        "generator": {"name": "Blender" if bpy else "MazeCraft Python", "version": bpy.app.version_string if bpy else "2", "mode": "procedural-runtime-atlas"},
         "atlas": {
             "file": "surface-atlas.png", "width": width, "height": height,
             "tileSize": preset.tile_size, "frames": preset.frames,
@@ -267,7 +288,7 @@ def write_manifest(output: Path, preset: Preset, width: int, height: int) -> Non
 
 
 def parse_args() -> argparse.Namespace:
-    argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+    argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else sys.argv[1:]
     parser = argparse.ArgumentParser()
     parser.add_argument("--preset", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -283,7 +304,7 @@ def main() -> None:
     save_image(output / "surface-atlas.png", width, height, pixels, "MazeCraft Water Atlas")
     save_image(output / "surface-preview.png", width, height, preview, "MazeCraft Water Preview")
     write_manifest(output, preset, width, height)
-    print(f"Baked Blender water atlas {width}x{height}: {preset.frames} frames × {len(TILES)} tiles")
+    print(f"Generated procedural water atlas {width}x{height}: {preset.frames} frames × {len(TILES)} tiles")
 
 
 if __name__ == "__main__":

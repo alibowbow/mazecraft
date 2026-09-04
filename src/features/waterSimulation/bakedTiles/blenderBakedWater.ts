@@ -1,4 +1,7 @@
+import '../rendering/waterShaderEnhancer'
 import * as THREE from 'three'
+import { WaterFlowPhase } from './flowPhase'
+import type { DynamicStateTextureBuffer } from '../rendering/dynamicStateTexture'
 import {
   parseBlenderWaterManifest,
   resolveBlenderWaterManifestUrl,
@@ -24,12 +27,14 @@ interface AtlasResult {
 
 interface AtlasBinding {
   readonly material: THREE.ShaderMaterial
+  readonly phase: WaterFlowPhase
+  readonly phaseTexture: THREE.DataTexture
   readonly uniforms: {
+    readonly uBlenderWaterPhase: { value: THREE.Texture }
     readonly uBlenderWaterAtlas: { value: THREE.Texture }
     readonly uBlenderWaterEnabled: { value: number }
     readonly uBlenderWaterFrames: { value: number }
     readonly uBlenderWaterRows: { value: number }
-    readonly uBlenderWaterFrameRate: { value: number }
     readonly uBlenderWaterTexelSize: { value: THREE.Vector2 }
     readonly uBlenderWaterHeightStrength: { value: number }
     readonly uBlenderWaterNormalStrength: { value: number }
@@ -88,7 +93,6 @@ const applyAtlasToBinding = (
   binding.uniforms.uBlenderWaterEnabled.value = 1
   binding.uniforms.uBlenderWaterFrames.value = manifest.atlas.frames
   binding.uniforms.uBlenderWaterRows.value = manifest.atlas.rows
-  binding.uniforms.uBlenderWaterFrameRate.value = manifest.atlas.frameRate
   binding.uniforms.uBlenderWaterTexelSize.value.set(
     1 / manifest.atlas.width,
     1 / manifest.atlas.height,
@@ -138,14 +142,25 @@ const loadAtlas = (): Promise<AtlasResult | null> => {
 function createBinding(material: THREE.ShaderMaterial): AtlasBinding {
   const existing = bindingByMaterial.get(material)
   if (existing) return existing
+  const size = material.uniforms.uBoardSize.value as THREE.Vector2
+  const phase = new WaterFlowPhase(size.x, size.y)
+  const phaseTexture = new THREE.DataTexture(
+    phase.data, size.x, size.y, THREE.RGBAFormat, THREE.FloatType,
+  )
+  phaseTexture.minFilter = THREE.NearestFilter
+  phaseTexture.magFilter = THREE.NearestFilter
+  phaseTexture.generateMipmaps = false
+  phaseTexture.needsUpdate = true
   const binding: AtlasBinding = {
     material,
+    phase,
+    phaseTexture,
     uniforms: {
+      uBlenderWaterPhase: { value: phaseTexture },
       uBlenderWaterAtlas: { value: neutralAtlas },
       uBlenderWaterEnabled: { value: 0 },
       uBlenderWaterFrames: { value: 1 },
       uBlenderWaterRows: { value: 8 },
-      uBlenderWaterFrameRate: { value: 12 },
       uBlenderWaterTexelSize: { value: new THREE.Vector2(1, 1) },
       uBlenderWaterHeightStrength: { value: 0.038 },
       uBlenderWaterNormalStrength: { value: 0.34 },
@@ -157,10 +172,28 @@ function createBinding(material: THREE.ShaderMaterial): AtlasBinding {
   material.userData.blenderWaterAtlas = 'loading'
   material.addEventListener('dispose', () => {
     activeBindings.delete(binding)
+    phaseTexture.dispose()
   })
   if (loadedAtlas) applyAtlasToBinding(binding, loadedAtlas)
   else void loadAtlas()
   return binding
+}
+
+/** Called only when the interpolated hydraulic snapshot advances. */
+export function updateBlenderWaterFlow(
+  material: THREE.ShaderMaterial,
+  state: DynamicStateTextureBuffer,
+): void {
+  const binding = createBinding(material)
+  binding.phase.update(state.data, state.stats.simulationTime)
+  binding.phaseTexture.needsUpdate = true
+}
+
+export function resetBlenderWaterFlow(material: THREE.ShaderMaterial): void {
+  const binding = bindingByMaterial.get(material)
+  if (!binding) return
+  binding.phase.reset()
+  binding.phaseTexture.needsUpdate = true
 }
 
 const replaceRequired = (
@@ -174,10 +207,10 @@ const replaceRequired = (
 
 const BLENDER_WATER_UNIFORMS = /* glsl */ `
   uniform sampler2D uBlenderWaterAtlas;
+  uniform sampler2D uBlenderWaterPhase;
   uniform float uBlenderWaterEnabled;
   uniform float uBlenderWaterFrames;
   uniform float uBlenderWaterRows;
-  uniform float uBlenderWaterFrameRate;
   uniform vec2 uBlenderWaterTexelSize;
   uniform float uBlenderWaterHeightStrength;
   uniform float uBlenderWaterNormalStrength;
@@ -191,12 +224,7 @@ const BLENDER_WATER_SAMPLING = /* glsl */ `
     return step(0.5, texture2D(uTopology, portal).r);
   }
 
-  float blenderOrientationFromFlow(vec2 flow) {
-    if (abs(flow.x) > abs(flow.y)) return flow.x >= 0.0 ? 1.0 : 3.0;
-    return flow.y < 0.0 ? 2.0 : 0.0;
-  }
-
-  vec2 blenderTileAndOrientation(vec2 sampleUv, vec2 flow) {
+  vec2 blenderTileAndOrientation(vec2 sampleUv) {
     vec2 cell = clamp(
       floor(clamp(sampleUv, vec2(0.0), vec2(0.999999)) * uBoardSize),
       vec2(0.0),
@@ -214,10 +242,10 @@ const BLENDER_WATER_SAMPLING = /* glsl */ `
 
     if (topology.g > 0.5) {
       row = 5.0;
-      orientation = blenderOrientationFromFlow(flow);
+      orientation = 0.0;
     } else if (topology.b > 0.5) {
       row = 6.0;
-      orientation = blenderOrientationFromFlow(flow);
+      orientation = 0.0;
     } else if (count > 3.5) {
       row = 3.0;
     } else if (count > 2.5) {
@@ -257,6 +285,13 @@ const BLENDER_WATER_SAMPLING = /* glsl */ `
     return vec2(-point.y, point.x) + 0.5;
   }
 
+  vec2 blenderNormalToWorld(vec2 normal, float orientation) {
+    if (orientation < 0.5) return normal;
+    if (orientation < 1.5) return vec2(-normal.y, normal.x);
+    if (orientation < 2.5) return -normal;
+    return vec2(normal.y, -normal.x);
+  }
+
   vec4 blenderAtlasFrame(vec2 localUv, float row, float frame) {
     vec2 inset = vec2(
       uBlenderWaterTexelSize.x * uBlenderWaterFrames * 1.25,
@@ -272,25 +307,37 @@ const BLENDER_WATER_SAMPLING = /* glsl */ `
     );
   }
 
-  vec4 sampleBlenderWater(vec2 sampleUv, vec2 flow) {
+  vec4 sampleBlenderWater(vec2 sampleUv) {
     vec2 cellPosition =
       clamp(sampleUv, vec2(0.0), vec2(0.999999)) * uBoardSize;
     vec2 cell = floor(cellPosition);
-    vec2 tile = blenderTileAndOrientation(sampleUv, flow);
+    vec2 tile = blenderTileAndOrientation(sampleUv);
     vec2 localUv = blenderRotateToCanonical(fract(cellPosition), tile.y);
     float seed = fract(dot(cell, vec2(0.754877666, 0.569840296)));
-    float framePosition = mod(
-      uWaveTime * uBlenderWaterFrameRate + seed * uBlenderWaterFrames,
-      uBlenderWaterFrames
-    );
+    vec3 travel = texture2D(
+      uBlenderWaterPhase, (cell + 0.5) / uBoardSize
+    ).rgb;
+    vec2 canonicalTravel = blenderRotateToCanonical(travel.xy + 0.5, tile.y) - 0.5;
+    float cycles = -canonicalTravel.y;
+    if (tile.x > 0.5 && tile.x < 3.5) {
+      cycles = 0.5 * (canonicalTravel.x - canonicalTravel.y);
+    }
+    if (tile.x > 4.5 && tile.x < 6.5) cycles = travel.z;
+    float framePosition = fract(cycles + seed) * uBlenderWaterFrames;
     float frame0 = floor(framePosition);
     float frame1 = mod(frame0 + 1.0, uBlenderWaterFrames);
     float blend = smoothstep(0.0, 1.0, fract(framePosition));
-    return mix(
+    vec4 surface = mix(
       blenderAtlasFrame(localUv, tile.x, frame0),
       blenderAtlasFrame(localUv, tile.x, frame1),
       blend
     );
+    surface.rg = blenderNormalToWorld(surface.rg * 2.0 - 1.0, tile.y) * 0.5 + 0.5;
+    // Fade sub-cell detail at shared borders; independently phased cells must
+    // agree on zero displacement there. Macro hydraulic surface stays intact.
+    vec2 edgeDistance = min(localUv, vec2(1.0) - localUv);
+    float edgeGate = smoothstep(0.0, 0.12, min(edgeDistance.x, edgeDistance.y));
+    return mix(vec4(0.5, 0.5, 0.5, 0.0), surface, edgeGate);
   }
 `
 
@@ -312,11 +359,11 @@ export function enhanceBlenderWaterVertexShader(source: string): string {
   next = replaceRequired(
     next,
     '    vec3 transformed = position;\n',
-    `    vec4 blenderSurface = sampleBlenderWater(uv, velocity);
+    `    vec4 blenderSurface = sampleBlenderWater(uv);
     float blenderSurfaceGate =
       uBlenderWaterEnabled *
       smoothstep(0.0015, 0.055, depth) *
-      mix(0.42, 1.0, motion);
+      motion;
     vec3 transformed = position;
 `,
   )
@@ -353,11 +400,11 @@ export function enhanceBlenderWaterFragmentShader(source: string): string {
     next,
     '    float motion = smoothstep(0.002, 0.12, speed);\n',
     `    float motion = smoothstep(0.002, 0.12, speed);
-    vec4 blenderSurface = sampleBlenderWater(vUv, vVelocity);
+    vec4 blenderSurface = sampleBlenderWater(vUv);
     float blenderSurfaceGate =
       uBlenderWaterEnabled *
       smoothstep(0.0015, 0.055, depth) *
-      mix(0.38, 1.0, motion);
+      motion;
 `,
   )
   if (!next) return source

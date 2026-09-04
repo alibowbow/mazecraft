@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - run: python blender/scripts/test_runtime_atlas.py
+      - run: python blender/scripts/validate_runtime_atlas.py public/water-baked
       - run: npm ci
       - run: npm run lint
       - run: npm test

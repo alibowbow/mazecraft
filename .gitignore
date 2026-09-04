@@ -14,3 +14,5 @@ upload/
 blender/cache/
 blender/output/
 *.blend1
+
+__pycache__/
