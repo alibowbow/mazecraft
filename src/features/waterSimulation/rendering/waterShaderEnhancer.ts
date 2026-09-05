@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { WATER_WORLD_SLOPE } from './waterSurfaceMath'
 
 const INSTALL_FLAG = '__mazeCraftWaterShaderEnhancerInstalled__' as const
 const VERTEX_MARKER = '// MAZECRAFT_WATER_SURFACE_DYNAMICS_VERTEX'
@@ -312,6 +313,7 @@ export function enhanceWaterFragmentShader(source: string): string {
     next,
     '  void main() {\n',
     `${TOPOLOGY_AWARE_STATE_SAMPLING}
+${WATER_WORLD_SLOPE}
   void main() {
 `,
   )
@@ -343,7 +345,7 @@ export function enhanceWaterFragmentShader(source: string): string {
       max(0.2, geometricNormal.z)
     ));`,
     `    float localMotion = clamp(
-      0.11 + motion * 0.86 + turbulence * 0.43,
+      motion * 0.86 + turbulence * 0.43,
       0.0,
       1.35
     );
@@ -351,10 +353,10 @@ export function enhanceWaterFragmentShader(source: string): string {
       ((detailA.rg * 2.0 - 1.0) +
         (detailB.rg * 2.0 - 1.0) * 0.48) *
       uDetailStrength * localMotion;
-    vec2 simulatedSlope = vec2(
-      dFdx(simulatedHeight),
-      dFdy(simulatedHeight)
-    ) * 7.2;
+    vec2 simulatedSlope = waterWorldSlope(
+      dFdx(vWorldPosition.xy), dFdy(vWorldPosition.xy),
+      dFdx(simulatedHeight), dFdy(simulatedHeight)
+    ) * 0.04;
     vec3 normal = normalize(vec3(
       geometricNormal.xy + detailNormal * 0.19 - simulatedSlope,
       max(0.2, geometricNormal.z)

@@ -1,6 +1,7 @@
 import '../rendering/waterShaderEnhancer'
 import * as THREE from 'three'
 import { WaterFlowPhase } from './flowPhase'
+import { WATER_ATLAS_COORDINATES } from '../rendering/waterSurfaceMath'
 import type { DynamicStateTextureBuffer } from '../rendering/dynamicStateTexture'
 import {
   parseBlenderWaterManifest,
@@ -277,21 +278,7 @@ const BLENDER_WATER_SAMPLING = /* glsl */ `
     return vec2(row, orientation);
   }
 
-  vec2 blenderRotateToCanonical(vec2 localUv, float orientation) {
-    vec2 point = localUv - 0.5;
-    if (orientation < 0.5) return localUv;
-    if (orientation < 1.5) return vec2(point.y, -point.x) + 0.5;
-    if (orientation < 2.5) return -point + 0.5;
-    return vec2(-point.y, point.x) + 0.5;
-  }
-
-  vec2 blenderNormalToWorld(vec2 normal, float orientation) {
-    if (orientation < 0.5) return normal;
-    if (orientation < 1.5) return vec2(-normal.y, normal.x);
-    if (orientation < 2.5) return -normal;
-    return vec2(normal.y, -normal.x);
-  }
-
+${WATER_ATLAS_COORDINATES}
   vec4 blenderAtlasFrame(vec2 localUv, float row, float frame) {
     vec2 inset = vec2(
       uBlenderWaterTexelSize.x * uBlenderWaterFrames * 1.25,
@@ -317,16 +304,11 @@ const BLENDER_WATER_SAMPLING = /* glsl */ `
     vec3 travel = texture2D(
       uBlenderWaterPhase, (cell + 0.5) / uBoardSize
     ).rgb;
-    vec2 canonicalTravel = blenderRotateToCanonical(travel.xy + 0.5, tile.y) - 0.5;
-    float cycles = -canonicalTravel.y;
-    if (tile.x > 0.5 && tile.x < 3.5) {
-      cycles = 0.5 * (canonicalTravel.x - canonicalTravel.y);
-    }
-    if (tile.x > 4.5 && tile.x < 6.5) cycles = travel.z;
+    float cycles = blenderTravelCycles(travel, tile);
     float framePosition = fract(cycles + seed) * uBlenderWaterFrames;
     float frame0 = floor(framePosition);
     float frame1 = mod(frame0 + 1.0, uBlenderWaterFrames);
-    float blend = smoothstep(0.0, 1.0, fract(framePosition));
+    float blend = fract(framePosition);
     vec4 surface = mix(
       blenderAtlasFrame(localUv, tile.x, frame0),
       blenderAtlasFrame(localUv, tile.x, frame1),
@@ -410,14 +392,14 @@ export function enhanceBlenderWaterFragmentShader(source: string): string {
   if (!next) return source
   next = replaceRequired(
     next,
-    `    vec2 simulatedSlope = vec2(
-      dFdx(simulatedHeight),
-      dFdy(simulatedHeight)
-    ) * 7.2;`,
-    `    vec2 simulatedSlope = vec2(
-      dFdx(simulatedHeight),
-      dFdy(simulatedHeight)
-    ) * 7.2;
+    `    vec2 simulatedSlope = waterWorldSlope(
+      dFdx(vWorldPosition.xy), dFdy(vWorldPosition.xy),
+      dFdx(simulatedHeight), dFdy(simulatedHeight)
+    ) * 0.04;`,
+    `    vec2 simulatedSlope = waterWorldSlope(
+      dFdx(vWorldPosition.xy), dFdy(vWorldPosition.xy),
+      dFdx(simulatedHeight), dFdy(simulatedHeight)
+    ) * 0.04;
     simulatedSlope -=
       (blenderSurface.rg * 2.0 - 1.0) *
       uBlenderWaterNormalStrength * blenderSurfaceGate;`,
