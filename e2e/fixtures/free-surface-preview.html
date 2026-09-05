@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Free surface optical regression fixture</title>
+<style>
+  body { margin: 0; background: #f5f4ef; font: 14px system-ui; }
+  #stage { width: 100vw; height: calc(100vh - 44px); }
+  nav { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 20px; }
+</style>
+<nav>Water optics · deterministic return-passage fixture <button id="reset">Reset</button></nav>
+<div id="stage"></div>
+<script type="module">
+  import { createEmptyGraph, openPassage } from '/src/core/maze/index.ts';
+  import { createTestProject } from '/src/test/projectFixture.ts';
+  import { buildFluidLayout } from '/src/features/waterSimulation/freeSurface/layout.ts';
+  import { FreeSurfaceSolver } from '/src/features/waterSimulation/freeSurface/solver.ts';
+  import { FreeSurfaceRenderer } from '/src/features/waterSimulation/freeSurface/renderer.ts';
+  const graph = createEmptyGraph(4, 3);
+  for (const [a, b] of [
+    [[0, 0], [1, 0]], [[1, 0], [2, 0]], [[2, 0], [2, 1]],
+    [[2, 1], [1, 1]], [[1, 1], [1, 2]], [[1, 2], [2, 2]], [[2, 2], [3, 2]],
+  ]) openPassage(graph, { row: a[0], col: a[1] }, { row: b[0], col: b[1] });
+  const layout = buildFluidLayout(createTestProject({ mazeGraph: graph,
+    startCell: { row: 0, col: 0 }, endCell: { row: 3, col: 2 } }));
+  const solver = new FreeSurfaceSolver(layout);
+  const renderer = new FreeSurfaceRenderer(document.querySelector('#stage'), layout,
+    new URLSearchParams(location.search).get('quality') === 'low' ? 'low' : 'high');
+  const render = () => renderer.render(solver.snapshot());
+  window.advanceTime = (ms) => { solver.step(ms / 1000); render(); };
+  window.render_game_to_text = () => JSON.stringify({
+    coordinates: 'maze cells, origin top-left, x right, y down',
+    ...solver.snapshot().diagnostics, ...renderer.metrics,
+  });
+  document.querySelector('#reset').onclick = () => { solver.reset(); render(); };
+  window.advanceTime(6000);
+</script>
+</html>

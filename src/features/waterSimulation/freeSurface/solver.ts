@@ -19,10 +19,12 @@ export class FreeSurfaceSolver {
   private readonly next: Int32Array
   private readonly heads: Int32Array
   private readonly density: Float64Array
-  private readonly nearDensity: Float64Array
+  private readonly gradientNormSquared: Float64Array
+  private readonly lambda: Float64Array
   private readonly deltaX: Float64Array
   private readonly deltaY: Float64Array
   private readonly wallBuckets: number[][]
+  private readonly densityWallBuckets: number[][]
   private readonly hashCols: number
   private readonly hashRows: number
   private readonly wallCols: number
@@ -46,7 +48,8 @@ export class FreeSurfaceSolver {
     this.oldX = new Float64Array(n); this.oldY = new Float64Array(n)
     this.vx = new Float64Array(n); this.vy = new Float64Array(n)
     this.crossed = new Uint8Array(n); this.next = new Int32Array(n)
-    this.density = new Float64Array(n); this.nearDensity = new Float64Array(n)
+    this.density = new Float64Array(n); this.gradientNormSquared = new Float64Array(n)
+    this.lambda = new Float64Array(n)
     this.deltaX = new Float64Array(n); this.deltaY = new Float64Array(n)
     this.kernel = layout.radius * 4.2
     this.hashCols = Math.ceil((layout.maxX - layout.minX) / this.kernel) + 2
@@ -55,12 +58,18 @@ export class FreeSurfaceSolver {
     this.wallCols = Math.ceil(layout.maxX - layout.minX) + 2
     this.wallRows = Math.ceil(layout.maxY - layout.minY) + 2
     this.wallBuckets = Array.from({ length: this.wallCols * this.wallRows }, () => [])
+    this.densityWallBuckets = Array.from({ length: this.wallCols * this.wallRows }, () => [])
     layout.walls.forEach((wall, index) => {
       const minCol = Math.max(0, Math.floor(wall.x0 - layout.radius - layout.minX))
       const maxCol = Math.min(this.wallCols - 1, Math.floor(wall.x1 + layout.radius - layout.minX))
       const minRow = Math.max(0, Math.floor(wall.y0 - layout.radius - layout.minY))
       const maxRow = Math.min(this.wallRows - 1, Math.floor(wall.y1 + layout.radius - layout.minY))
       for (let row = minRow; row <= maxRow; row++) for (let col = minCol; col <= maxCol; col++) this.wallBuckets[row * this.wallCols + col].push(index)
+      for (let row = Math.max(0, Math.floor(wall.y0 - this.kernel - layout.minY)); row <= Math.min(this.wallRows - 1, Math.floor(wall.y1 + this.kernel - layout.minY)); row++) {
+        for (let col = Math.max(0, Math.floor(wall.x0 - this.kernel - layout.minX)); col <= Math.min(this.wallCols - 1, Math.floor(wall.x1 + this.kernel - layout.minX)); col++) {
+          this.densityWallBuckets[row * this.wallCols + col].push(index)
+        }
+      }
     })
   }
 
@@ -95,11 +104,13 @@ export class FreeSurfaceSolver {
   private emit(inflow: number): void {
     this.saturated = false
     if (inflow <= 0) { this.emission = 0; return }
-    const rate = Math.min(220, 80 + Math.sqrt(this.layout.activeCellCount) * 5) * inflow
+    // Supply is an area/time rate, independent of the particle sampling size.
+    const areaRate = Math.min(220, 80 + Math.sqrt(this.layout.activeCellCount) * 5) * 0.0196
+    const rate = areaRate / this.layout.particleArea * inflow
     this.emission = Math.min(8, this.emission + rate * FIXED_DT)
     while (this.emission >= 1) {
       if (this.count >= this.layout.capacity) { this.saturated = true; this.emission = 0; break }
-      // Six lanes across the reservoir give a continuous supply without co-located births.
+      // Six lanes supply distinct particle positions across the reservoir.
       const lane = this.spawnSequence % 6
       const px = this.layout.inletX + (lane - 2.5) * this.layout.radius * 2.12
       const py = this.layout.inletY + ((Math.floor(this.spawnSequence / 6) % 2) * 0.006)
@@ -175,28 +186,41 @@ export class FreeSurfaceSolver {
       this.vx[i] *= factor; this.vy[i] *= factor
       this.move(i, this.x[i] + this.vx[i] * FIXED_DT, this.y[i] + this.vy[i] * FIXED_DT)
     }
-    for (let iteration = 0; iteration < 3; iteration++) {
+    // Normalized 2D poly6 density uses the same area as the mass ledger.
+    // Compression-only PBF constraints preserve a free surface without tensile
+    // attraction. A fixed neighbour-count target otherwise shrinks deep pools.
+    const kernelWeight = 4 * this.layout.particleArea / (Math.PI * h2)
+    const gradientWeight = 6 * kernelWeight / h2
+    for (let iteration = 0; iteration < 4; iteration++) {
       this.rebuildHash()
-      this.density.fill(0, 0, n); this.nearDensity.fill(0, 0, n)
+      this.density.fill(kernelWeight, 0, n); this.gradientNormSquared.fill(0, 0, n)
       this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
       this.forEachPair((i, j, dx, dy, d2) => {
         if (d2 >= h2) return
-        const q = 1 - Math.sqrt(d2) / h, q2 = q * q
-        this.density[i] += q2; this.density[j] += q2
-        this.nearDensity[i] += q2 * q; this.nearDensity[j] += q2 * q
+        const q = 1 - d2 / h2
+        const weight = kernelWeight * q * q * q
+        this.density[i] += weight; this.density[j] += weight
+        const gx = gradientWeight * q * q * dx, gy = gradientWeight * q * q * dy
+        this.deltaX[i] += gx; this.deltaY[i] += gy
+        this.deltaX[j] -= gx; this.deltaY[j] -= gy
+        const gradientSquared = gx * gx + gy * gy
+        this.gradientNormSquared[i] += gradientSquared; this.gradientNormSquared[j] += gradientSquared
       })
+      for (let i = 0; i < n; i++) {
+        // Solid boundaries supply the missing half of the smoothing kernel.
+        // Without this support, narrow passages can pack far more than their area.
+        this.density[i] += this.boundaryDensity(i)
+        const denominator = this.gradientNormSquared[i] + this.deltaX[i] ** 2 + this.deltaY[i] ** 2
+        this.lambda[i] = -Math.max(0, this.density[i] - 1) / (denominator + 0.1 / h2)
+      }
+      this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
       this.forEachPair((i, j, dx, dy, d2) => {
         if (d2 >= h2) return
-        let distance = Math.sqrt(d2)
-        if (distance < 1e-7) { dx = 1e-6; dy = 0; distance = 1e-6 }
-        const q = 1 - distance / h
-        const pressure = Math.max(-0.001, (this.density[i] + this.density[j] - 5.2) * 0.016)
-        const nearPressure = (this.nearDensity[i] + this.nearDensity[j]) * 0.006
-        const separation = Math.max(0, this.layout.radius * 1.8 - distance) * 0.24
-        const correction = Math.min(0.018, (pressure * q + nearPressure * q * q) * 0.5 + separation)
-        const cx = dx / distance * correction, cy = dy / distance * correction
-        this.deltaX[i] -= cx; this.deltaY[i] -= cy
-        this.deltaX[j] += cx; this.deltaY[j] += cy
+        const q = 1 - d2 / h2
+        const correction = (this.lambda[i] + this.lambda[j]) * gradientWeight * q * q
+        const cx = dx * correction, cy = dy * correction
+        this.deltaX[i] += cx; this.deltaY[i] += cy
+        this.deltaX[j] -= cx; this.deltaY[j] -= cy
       })
       for (let i = 0; i < n; i++) {
         const length = Math.hypot(this.deltaX[i], this.deltaY[i])
@@ -235,6 +259,28 @@ export class FreeSurfaceSolver {
     }
     this.outletRate += (newlyDischarged * this.layout.particleArea / FIXED_DT - this.outletRate) * 0.04
     this.ticks++
+  }
+
+  private boundaryDensity(i: number): number {
+    const x = this.x[i], y = this.y[i], h = this.kernel
+    const col = Math.floor(x - this.layout.minX), row = Math.floor(y - this.layout.minY)
+    if (col < 0 || col >= this.wallCols || row < 0 || row >= this.wallRows) return 0
+    let left = h, right = h, top = h, bottom = h
+    for (const index of this.densityWallBuckets[row * this.wallCols + col]) {
+      const w = this.layout.walls[index]
+      if (y >= w.y0 && y <= w.y1) {
+        if (x >= w.x1) left = Math.min(left, x - w.x1)
+        if (x <= w.x0) right = Math.min(right, w.x0 - x)
+      }
+      if (x >= w.x0 && x <= w.x1) {
+        if (y >= w.y1) top = Math.min(top, y - w.y1)
+        if (y <= w.y0) bottom = Math.min(bottom, w.y0 - y)
+      }
+    }
+    // Approximate integral of the normalized 2D kernel outside each wall;
+    // union avoids counting the same solid corner twice.
+    const fraction = (distance: number) => 0.5 * (1 - distance / h) ** 2.5
+    return 1 - (1 - fraction(left) - fraction(right)) * (1 - fraction(top) - fraction(bottom))
   }
 
   private forEachPair(visit: (i: number, j: number, dx: number, dy: number, distanceSquared: number) => void): void {

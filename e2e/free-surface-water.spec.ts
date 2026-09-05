@@ -13,7 +13,7 @@ const verticalChannel = createDefaultProject({
   grid: { rows: 4, cols: 1, minimumCellPixels: 8 },
 })
 
-async function importProject(page: Page, project: MazeProject, mobile = false) {
+async function importProject(page: Page, project: MazeProject, mobile = false, quality = 'low') {
   await page.goto('/')
   await page.locator('input[type="file"][accept*=".mazecraft"]').setInputFiles({
     name: 'free-surface-water.mazecraft',
@@ -22,7 +22,7 @@ async function importProject(page: Page, project: MazeProject, mobile = false) {
   })
   const tabs = mobile ? '.mobile-tabs button' : '.studio-stage-rail button'
   await page.locator(tabs).filter({ hasText: '테스트' }).click()
-  await page.getByLabel('효과 품질').selectOption('low')
+  await page.getByLabel('효과 품질').selectOption(quality)
   if (mobile) await page.getByRole('button', { name: '설정 닫기' }).click()
 }
 
@@ -157,6 +157,38 @@ test('수직 수로에서 물이 출구로 떨어지고 입자 질량이 보존�
   await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
   await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(pausedTime + 150)
   await expect(stage).toHaveAttribute('data-saturated', 'false')
+})
+
+test('수면 반사와 벽 마스크가 고품질 확대·이동·크기 변경에도 정지 상태를 유지한다', async ({ page }, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  await importProject(page, maze, false, 'high')
+  const stage = await openDefaultWater(page)
+  await expect.poll(() => numberAttribute(stage, 'data-filled-cells'), { timeout: 15_000 }).toBeGreaterThan(1)
+  await pause(page, stage)
+  const elapsed = await numberAttribute(stage, 'data-elapsed-ms')
+  const canvas = stage.locator('canvas')
+  await canvas.focus()
+  const before = await canvas.screenshot()
+  await page.keyboard.press('+')
+  const zoomed = await canvas.screenshot()
+  expect(zoomed.equals(before)).toBe(false)
+  const box = (await canvas.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 45, box.y + box.height / 2 + 25, { steps: 4 })
+  await page.mouse.up()
+  expect((await canvas.screenshot()).equals(zoomed)).toBe(false)
+  await page.setViewportSize({ width: 1180, height: 820 })
+  await canvas.focus()
+  await page.keyboard.press('Home')
+  await page.screenshot({ path: testInfo.outputPath('free-surface-optics-high.png') })
+  const resized = await canvas.screenshot()
+  await page.waitForTimeout(200)
+  expect((await canvas.screenshot()).equals(resized)).toBe(true)
+  expect(await numberAttribute(stage, 'data-elapsed-ms')).toBe(elapsed)
+  expect(errors).toEqual([])
 })
 
 test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기에서 Worker를 회수한다', async ({ page }, testInfo) => {
