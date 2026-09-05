@@ -19,8 +19,10 @@ async function openHighQualityWater(page: Page) {
   }
   await page.locator('.studio-stage-rail button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('high')
-  await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
+  await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
+  await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
   const stage = page.getByTestId('water-simulation-stage')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'dynamic-head-discharge-network')
   await expect(stage).toHaveAttribute('data-renderer', 'ready', {
     timeout: 30_000,
   })
