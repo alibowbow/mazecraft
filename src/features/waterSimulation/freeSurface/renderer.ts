@@ -7,20 +7,30 @@ const densityVertex = /* glsl */ `
   attribute float speed;
   uniform float uPointSize;
   varying float vSpeed;
+  varying vec2 vCenter;
   void main() {
     vSpeed = speed;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vCenter = gl_Position.xy / gl_Position.w * 0.5 + 0.5;
     gl_PointSize = uPointSize;
   }
 `
 
 const densityFragment = /* glsl */ `
   varying float vSpeed;
+  varying vec2 vCenter;
+  uniform sampler2D uWalls;
+  uniform vec2 uResolution;
   void main() {
+    vec2 uv = gl_FragCoord.xy / uResolution;
+    // Reject splats across a solid wall, including the dry side of thin walls.
+    if (texture2D(uWalls, uv).r > 0.5
+      || texture2D(uWalls, mix(vCenter, uv, 0.33)).r > 0.5
+      || texture2D(uWalls, mix(vCenter, uv, 0.67)).r > 0.5) discard;
     vec2 p = gl_PointCoord * 2.0 - 1.0;
     float r2 = dot(p, p);
     if (r2 >= 1.0) discard;
-    float kernel = pow(1.0 - r2, 3.0) * 0.28;
+    float kernel = pow(1.0 - r2, 3.0) * 0.18;
     gl_FragColor = vec4(kernel, kernel * vSpeed, 0.0, kernel);
   }
 `
@@ -33,6 +43,28 @@ const waterVertex = /* glsl */ `
   }
 `
 
+const smoothFragment = /* glsl */ `
+  uniform sampler2D uSource;
+  uniform sampler2D uWalls;
+  uniform vec2 uStep;
+  varying vec2 vUv;
+  void main() {
+    if (texture2D(uWalls, vUv).r > 0.5) { gl_FragColor = vec4(0.0); return; }
+    vec4 value = texture2D(uSource, vUv) * 0.4;
+    float weight = 0.4;
+    for (int i = -2; i <= 2; i++) {
+      if (i == 0) continue;
+      vec2 offset = uStep * float(i);
+      float w = abs(i) == 1 ? 0.24 : 0.06;
+      if (texture2D(uWalls, vUv + offset).r > 0.5
+        || texture2D(uWalls, vUv + offset * 0.5).r > 0.5) continue;
+      value += texture2D(uSource, vUv + offset) * w;
+      weight += w;
+    }
+    gl_FragColor = value / weight;
+  }
+`
+
 const waterFragment = /* glsl */ `
   uniform sampler2D uDensity;
   uniform vec2 uTexel;
@@ -40,7 +72,18 @@ const waterFragment = /* glsl */ `
   uniform vec2 uViewSize;
   uniform vec2 uMazeSize;
   uniform float uStyle;
+  uniform float uTime;
   varying vec2 vUv;
+
+  vec3 plate(vec2 uv) {
+    vec2 world = uCenter + (uv - 0.5) * uViewSize;
+    vec3 color = mix(vec3(0.948, 0.946, 0.926), vec3(0.995, 0.993, 0.978), uv.y);
+    // Fine world-anchored ceramic grain makes the refracted background visible.
+    float grain = sin(world.x * 47.0) * sin(world.y * 43.0);
+    color += grain * 0.003;
+    color -= dot(uv - vec2(0.5, 0.55), uv - vec2(0.5, 0.55)) * 0.025;
+    return color;
+  }
 
   void main() {
     vec2 world = uCenter + (vUv - 0.5) * uViewSize;
@@ -52,45 +95,52 @@ const waterFragment = /* glsl */ `
     float chamber = insideX * insideY;
 
     // A matte ivory plate keeps even very shallow, clear water readable.
-    vec3 background = mix(vec3(0.948, 0.946, 0.926), vec3(0.995, 0.993, 0.978), vUv.y);
+    vec3 background = plate(vUv);
     background += chamber * vec3(0.005, 0.008, 0.010);
-    float vignette = dot(vUv - vec2(0.5, 0.55), vUv - vec2(0.5, 0.55));
-    background -= vignette * 0.025;
 
     vec2 sampleValue = texture2D(uDensity, vUv).rg;
     float density = sampleValue.r;
     float feather = max(fwidth(density) * 0.7, 0.006);
-    float coverage = smoothstep(0.105 - feather, 0.105 + feather, density);
+    float coverage = smoothstep(0.075 - feather, 0.075 + feather, density);
     if (coverage < 0.001) {
       gl_FragColor = vec4(background, 1.0);
       return;
     }
 
+    // World-space differences keep highlights stable while zooming or changing quality.
+    vec2 sampleStep = max(uTexel, vec2(0.045) / uViewSize);
     vec2 gradient = vec2(
-      texture2D(uDensity, vUv + vec2(uTexel.x, 0.0)).r
-        - texture2D(uDensity, vUv - vec2(uTexel.x, 0.0)).r,
-      texture2D(uDensity, vUv + vec2(0.0, uTexel.y)).r
-        - texture2D(uDensity, vUv - vec2(0.0, uTexel.y)).r
-    );
-    vec3 normal = normalize(vec3(-gradient * 11.0, 1.0));
+      texture2D(uDensity, vUv + vec2(sampleStep.x, 0.0)).r
+        - texture2D(uDensity, vUv - vec2(sampleStep.x, 0.0)).r,
+      texture2D(uDensity, vUv + vec2(0.0, sampleStep.y)).r
+        - texture2D(uDensity, vUv - vec2(0.0, sampleStep.y)).r
+    ) / (2.0 * sampleStep * uViewSize);
     float speed = clamp(sampleValue.g / max(density, 0.001), 0.0, 1.0);
-    float body = smoothstep(0.105, 0.49, density);
-    float edge = 1.0 - smoothstep(0.105, 0.19, density);
-    float lowerEdge = max(normal.y, 0.0) * edge;
-
-    vec3 paleWater = vec3(0.23, 0.79, 0.88);
-    vec3 deepWater = vec3(0.045, 0.49, 0.68);
-    deepWater = mix(deepWater, vec3(0.025, 0.45, 0.66), uStyle * 0.2);
-    vec3 water = mix(paleWater, deepWater, body * 0.62);
-    // Density gives coherent absorption; velocity only changes the broad tint.
-    water = mix(water, vec3(0.30, 0.83, 0.90), speed * 0.08);
-    water = mix(background, water, 0.75 + body * 0.14);
-    float broadLight = pow(max(dot(normal, normalize(vec3(-0.38, 0.65, 0.78))), 0.0), 18.0);
-    water += vec3(0.30, 0.38, 0.38) * broadLight * edge * (0.55 + uStyle * 0.12);
-    water += vec3(0.13, 0.20, 0.19) * edge * 0.35;
-    water -= vec3(0.025, 0.070, 0.085) * lowerEdge;
-    // Very small refraction follows the actual surface normal, never a noise map.
-    water += vec3(gradient.y - gradient.x) * 0.055;
+    float body = smoothstep(0.12, 0.30, density);
+    float edge = 1.0 - smoothstep(0.10, 0.24, density);
+    // Tiny optical ripples follow simulation time and local motion, never the boundary.
+    vec2 ripple = vec2(sin(world.x * 19.0 + world.y * 11.0 + uTime * 2.1),
+      cos(world.x * 13.0 - world.y * 17.0 - uTime * 1.7));
+    vec3 normal = normalize(vec3(-gradient * 0.65 * (1.0 - body * 0.94)
+      + ripple * speed * (0.025 + uStyle * 0.035), 1.0));
+    // A bounded optical depth suppresses individual particle imprints inside
+    // a full pool; this cross-section has no measured third-dimensional depth.
+    float thickness = (1.0 - exp(-max(0.0, density - 0.055) * 7.0)) * 0.65;
+    vec3 transmittance = exp(-vec3(1.8, 0.55, 0.30) * thickness);
+    vec2 refraction = normal.xy * min(thickness, 0.6) * 0.07 / uViewSize;
+    vec3 transmitted = plate(vUv + refraction) * transmittance
+      + vec3(0.06, 0.32, 0.37) * (1.0 - transmittance);
+    // Schlick at water IOR 1.333: F0 ~0.0204. A broad sky and softbox form the reflection.
+    float fresnel = 0.0204 + 0.9796 * pow(1.0 - max(normal.z, 0.0), 5.0);
+    vec3 reflected = mix(vec3(0.16, 0.29, 0.34), vec3(0.86, 0.94, 0.99),
+      smoothstep(-0.4, 0.8, reflect(vec3(0.0, 0.0, -1.0), normal).y));
+    float softbox = pow(max(dot(normal, normalize(vec3(-0.35, 0.55, 0.76))), 0.0), 42.0);
+    vec3 water = mix(transmitted, reflected, fresnel);
+    water += vec3(0.85, 0.94, 1.0) * softbox * (0.22 + edge * 0.55);
+    // Aeration only at moving, exposed contours; quiet pools stay transparent.
+    float foam = edge * smoothstep(0.24, 0.65, speed) * 0.20;
+    water = mix(water, vec3(0.93, 0.98, 0.98), foam);
+    water -= vec3(0.015, 0.035, 0.04) * max(normal.y, 0.0) * edge;
     gl_FragColor = vec4(mix(background, water, coverage), 1.0);
   }
 `
@@ -102,7 +152,13 @@ export class FreeSurfaceRenderer {
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100)
   private readonly scene = new THREE.Scene()
   private readonly densityScene = new THREE.Scene()
+  private readonly wallScene = new THREE.Scene()
+  private readonly filterScene = new THREE.Scene()
   private readonly densityTarget: THREE.WebGLRenderTarget
+  private readonly wallTarget: THREE.WebGLRenderTarget
+  private readonly smoothTarget: THREE.WebGLRenderTarget
+  private readonly surfaceTarget: THREE.WebGLRenderTarget
+  private readonly smoothMaterial: THREE.ShaderMaterial
   private readonly densityMaterial: THREE.ShaderMaterial
   private readonly waterMaterial: THREE.ShaderMaterial
   private readonly particleGeometry = new THREE.BufferGeometry()
@@ -151,10 +207,18 @@ export class FreeSurfaceRenderer {
       depthBuffer: false,
       stencilBuffer: false,
     })
+    this.wallTarget = this.densityTarget.clone()
+    this.wallTarget.texture.minFilter = THREE.NearestFilter
+    this.wallTarget.texture.magFilter = THREE.NearestFilter
+    this.smoothTarget = this.densityTarget.clone()
+    this.surfaceTarget = this.densityTarget.clone()
     this.densityMaterial = new THREE.ShaderMaterial({
       vertexShader: densityVertex,
       fragmentShader: densityFragment,
-      uniforms: { uPointSize: { value: 1 } },
+      uniforms: {
+        uPointSize: { value: 1 }, uWalls: { value: this.wallTarget.texture },
+        uResolution: { value: new THREE.Vector2(1, 1) },
+      },
       transparent: true,
       depthTest: false,
       depthWrite: false,
@@ -176,17 +240,29 @@ export class FreeSurfaceRenderer {
       vertexShader: waterVertex,
       fragmentShader: waterFragment,
       uniforms: {
-        uDensity: { value: this.densityTarget.texture },
+        uDensity: { value: this.surfaceTarget.texture },
         uTexel: { value: new THREE.Vector2(1, 1) },
         uCenter: { value: new THREE.Vector2() },
         uViewSize: { value: new THREE.Vector2(1, 1) },
         uMazeSize: { value: new THREE.Vector2(layout.cols, layout.rows) },
         uStyle: { value: 0.5 },
+        uTime: { value: 0 },
       },
       depthTest: false,
       depthWrite: false,
     })
     const screenGeometry = new THREE.PlaneGeometry(2, 2)
+    this.smoothMaterial = new THREE.ShaderMaterial({
+      vertexShader: waterVertex, fragmentShader: smoothFragment,
+      uniforms: {
+        uSource: { value: this.densityTarget.texture },
+        uWalls: { value: this.wallTarget.texture }, uStep: { value: new THREE.Vector2() },
+      },
+      depthTest: false, depthWrite: false,
+    })
+    const filter = new THREE.Mesh(screenGeometry, this.smoothMaterial)
+    filter.frustumCulled = false
+    this.filterScene.add(filter)
     const surface = new THREE.Mesh(screenGeometry, this.waterMaterial)
     surface.frustumCulled = false
     surface.renderOrder = -10
@@ -251,6 +327,11 @@ export class FreeSurfaceRenderer {
       const mesh = new THREE.Mesh(geometry, material)
       mesh.renderOrder = shadowLayer ? 0 : 1
       this.scene.add(mesh)
+      if (!shadowLayer) {
+        const maskMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+        this.wallScene.add(new THREE.Mesh(geometry, maskMaterial))
+        this.materials.push(maskMaterial)
+      }
       this.geometries.push(geometry)
       this.materials.push(material)
     }
@@ -278,6 +359,7 @@ export class FreeSurfaceRenderer {
       this.speedAttribute.needsUpdate = true
     }
     this.particleGeometry.setDrawRange(0, count)
+    this.waterMaterial.uniforms.uTime.value = snapshot.diagnostics.time
     this.draw()
   }
 
@@ -298,6 +380,10 @@ export class FreeSurfaceRenderer {
     const width = Math.max(1, Math.round(this.width * scale))
     const height = Math.max(1, Math.round(this.height * scale))
     this.densityTarget.setSize(width, height)
+    this.wallTarget.setSize(width, height)
+    this.smoothTarget.setSize(width, height)
+    this.surfaceTarget.setSize(width, height)
+    this.densityMaterial.uniforms.uResolution.value.set(width, height)
     this.waterMaterial.uniforms.uTexel.value.set(1 / width, 1 / height)
     this.updateCamera()
     this.draw()
@@ -327,15 +413,27 @@ export class FreeSurfaceRenderer {
     this.camera.updateProjectionMatrix()
     this.waterMaterial.uniforms.uCenter.value.set(x, y)
     this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
-    this.densityMaterial.uniforms.uPointSize.value = Math.max(1, this.layout.radius * 5.0 * this.densityTarget.height / this.viewHeight)
+    this.densityMaterial.uniforms.uPointSize.value = Math.max(1, this.layout.radius * 6.8 * this.densityTarget.height / this.viewHeight)
   }
 
   private draw(): void {
     if (this.disposed) return
     this.renderer.info.reset()
+    this.renderer.setRenderTarget(this.wallTarget)
+    this.renderer.setClearColor(0x000000, 0)
+    this.renderer.render(this.wallScene, this.camera)
     this.renderer.setRenderTarget(this.densityTarget)
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.render(this.densityScene, this.camera)
+    // Two separable, wall-aware smoothing passes. Radius is in maze units.
+    this.smoothMaterial.uniforms.uSource.value = this.densityTarget.texture
+    this.smoothMaterial.uniforms.uStep.value.set(this.layout.radius * 0.9 / this.viewWidth, 0)
+    this.renderer.setRenderTarget(this.smoothTarget)
+    this.renderer.render(this.filterScene, this.camera)
+    this.smoothMaterial.uniforms.uSource.value = this.smoothTarget.texture
+    this.smoothMaterial.uniforms.uStep.value.set(0, this.layout.radius * 0.9 / this.viewHeight)
+    this.renderer.setRenderTarget(this.surfaceTarget)
+    this.renderer.render(this.filterScene, this.camera)
     this.renderer.setRenderTarget(null)
     this.renderer.setClearColor(0xf4f3ed, 1)
     this.renderer.render(this.scene, this.camera)
@@ -432,10 +530,16 @@ export class FreeSurfaceRenderer {
     this.densityMaterial.dispose()
     this.waterMaterial.dispose()
     this.densityTarget.dispose()
+    this.wallTarget.dispose()
+    this.smoothTarget.dispose()
+    this.surfaceTarget.dispose()
+    this.smoothMaterial.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     this.scene.clear()
     this.densityScene.clear()
+    this.wallScene.clear()
+    this.filterScene.clear()
     this.renderer.dispose()
     this.renderer.forceContextLoss()
     this.canvas.remove()
