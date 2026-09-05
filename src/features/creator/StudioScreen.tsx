@@ -1257,7 +1257,7 @@ export function StudioScreen({
             <label className="field"><span>표현 방식</span><select value={animationMode} onChange={(event) => setAnimationMode(event.target.value as typeof animationMode)}><option value="path">정답 경로 표시</option><option value="water">2D 물 채우기</option><option value="particle">파티클 채우기</option></select></label>
             <label className="field"><span>효과 품질</span><select value={effectQuality} onChange={(event) => setEffectQuality(event.target.value as typeof effectQuality)}><option value="auto">기기 성능에 맞춤</option><option value="low">낮음</option><option value="high">높음</option></select></label>
             {animationMode === 'particle' && <label className="field"><span>파티클 밀도 {particleDensity}</span><input type="range" min="1" max="10" value={particleDensity} onChange={(event) => setParticleDensity(Number(event.target.value))} /></label>}
-            <button className="button" onClick={openWaterSimulation} disabled={!validation.valid}><Droplets size={17} />3D 물 시뮬레이션</button>
+            <button className="button" onClick={openWaterSimulation} disabled={!validation.valid}><Droplets size={17} />물 시뮬레이션</button>
             <button className="button secondary" onClick={() => void playSolveAnimation()}><Lightbulb size={17} />풀이 애니메이션</button>
             <button className="button" onClick={() => onPlay(false)}><Play size={17} />직접 플레이 테스트</button>
             <button className="button secondary" onClick={() => onPlay(true)}><FlagIcon size={17} />제작자 고스트 기록</button>
@@ -1368,11 +1368,11 @@ export function StudioScreen({
             <div className="toolbar-group view-controls">
               <button
                 className="toolbar-button water-tool"
-                aria-label="3D 물 시뮬레이션 열기"
+                aria-label="물 시뮬레이션 열기"
                 disabled={!validation.valid}
                 onClick={openWaterSimulation}
               >
-                <Droplets size={17} /><span>3D 물</span>
+                <Droplets size={17} /><span>물 흐름</span>
               </button>
               <span className="toolbar-separator zoom-step-tool" />
               <button className="toolbar-button zoom-step-tool" aria-label="축소" onClick={() => canvasRef.current?.zoomOut()}><Minus size={17} /></button>
@@ -1547,7 +1547,7 @@ export function StudioScreen({
         fallback={
           <div className="water-loading-overlay" role="status" aria-live="polite">
             <Droplets size={28} />
-            <strong>3D 물 시뮬레이션을 준비하는 중…</strong>
+            <strong>물 시뮬레이션을 준비하는 중…</strong>
           </div>
         }
       >

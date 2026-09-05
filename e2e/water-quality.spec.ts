@@ -31,8 +31,10 @@ async function openWater(
   }
   await page.locator('.studio-stage-rail button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption(quality)
-  await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
+  await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
+  await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
   const stage = page.getByTestId('water-simulation-stage')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'dynamic-head-discharge-network')
   await expect(stage).toHaveAttribute('data-renderer', 'ready', {
     timeout: 20_000,
   })
@@ -153,7 +155,7 @@ test('동적 수리 네트워크가 Worker 스냅샷과 보존 진단을 렌더�
   expect(secondPausedFrame.equals(firstPausedFrame)).toBe(true)
 
   await page.getByLabel('물 흐름 속도').selectOption('0.1')
-  await page.getByRole('button', { name: '처음부터', exact: true }).click()
+  await page.getByRole('button', { name: '물 시뮬레이션 처음부터', exact: true }).click()
   const resetState = await stage.evaluate((element) => ({
     simulationTime: Number(element.getAttribute('data-elapsed-ms')),
     injected: Number(element.getAttribute('data-injected-volume')),
@@ -192,7 +194,7 @@ test('low/high 품질은 같은 물리를 사용하고 low는 절차적 포말�
   const sample = async (quality: 'low' | 'high') => {
     const stage = await openWater(page, comparisonProject, quality)
     await page.getByLabel('물 흐름 속도').selectOption('2')
-    await page.getByRole('button', { name: '처음부터', exact: true }).click()
+    await page.getByRole('button', { name: '물 시뮬레이션 처음부터', exact: true }).click()
     await expect
       .poll(() => numericAttribute(stage, 'data-elapsed-ms'), {
         timeout: 20_000,
@@ -244,7 +246,7 @@ test('low/high 품질은 같은 물리를 사용하고 low는 절차적 포말�
       physicsStepHz: Number(element.getAttribute('data-physics-step-hz')),
       foam: element.getAttribute('data-foam-mode'),
     }))
-    await page.getByRole('button', { name: '3D 물 시뮬레이션 닫기' }).click()
+    await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
     return result
   }
 
@@ -394,8 +396,10 @@ test('반복 열기와 닫기가 canvas/Worker 수명을 정리한다', async ({
           }
         }).__waterE2ELifecycle,
     )
-    await page.getByRole('button', { name: '3D 물 시뮬레이션 열기' }).click()
+    await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
+    await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
     const stage = page.getByTestId('water-simulation-stage')
+    await expect(stage).toHaveAttribute('data-fluid-model', 'dynamic-head-discharge-network')
     await expect(stage).toHaveAttribute('data-renderer', 'ready', {
       timeout: 20_000,
     })
@@ -415,7 +419,15 @@ test('반복 열기와 닫기가 canvas/Worker 수명을 정리한다', async ({
         () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
       ),
     ).toBe(true)
-    await page.getByRole('button', { name: '3D 물 시뮬레이션 닫기' }).click()
+    // Selecting the 3D mode disposes the default free-surface worker first.
+    // Closing the mounted mode must then dispose its one remaining worker.
+    const mountedTerminatedWorkers = await page.evaluate(
+      () =>
+        (window as Window & {
+          __waterE2ELifecycle: { terminatedWorkers: number }
+        }).__waterE2ELifecycle.terminatedWorkers,
+    )
+    await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
     await expect(stage).toHaveCount(0)
     await expect
       .poll(() =>
@@ -431,7 +443,7 @@ test('반복 열기와 닫기가 canvas/Worker 수명을 정리한다', async ({
       )
       .toMatchObject({
         activeWorkers: before.activeWorkers,
-        terminatedWorkers: before.terminatedWorkers + 1,
+        terminatedWorkers: mountedTerminatedWorkers + 1,
       })
     await expect
       .poll(() =>

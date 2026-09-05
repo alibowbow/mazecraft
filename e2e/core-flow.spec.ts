@@ -310,9 +310,11 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
   await page.getByLabel('효과 품질').selectOption('low')
 
   await page
-    .getByRole('button', { name: '3D 물 시뮬레이션', exact: true })
+    .getByRole('button', { name: '물 시뮬레이션', exact: true })
     .click()
+  await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
   const stage = page.getByTestId('water-simulation-stage')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'dynamic-head-discharge-network')
   await expect(stage).toBeVisible()
   await expect(stage).toHaveAttribute('data-start-edge', 'top')
   await expect(stage).toHaveAttribute('data-end-edge', 'bottom')
@@ -367,7 +369,7 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
 
   await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
   await page.getByLabel('물 흐름 속도').selectOption('4')
-  await page.getByRole('button', { name: '처음부터', exact: true }).click()
+  await page.getByRole('button', { name: '물 시뮬레이션 처음부터', exact: true }).click()
   await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
     // The imported fixture's winding 8x8 route needs more than 60 simulated
     // seconds. Allow the dynamic head/discharge solver to reach the outlet
@@ -380,7 +382,7 @@ test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른�
     Number(await stage.getAttribute('data-outlet-drop-height')),
   ).toBeGreaterThan(1.4)
 
-  await page.getByRole('button', { name: '3D 물 시뮬레이션 닫기' }).click()
+  await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
   await expect(stage).toHaveCount(0)
   expect(consoleErrors).toEqual([])
 })

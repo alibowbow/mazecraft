@@ -1888,6 +1888,7 @@ svg {
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
+  flex-wrap: wrap;
 }
 
 .water-simulation-controls .button.secondary {
@@ -2289,7 +2290,7 @@ svg {
   }
 
   .water-simulation-modal {
-    width: calc(100vw - 12px) !important;
+    width: calc(100vw - 32px) !important;
     max-height: calc(100dvh - 12px) !important;
     border-radius: 15px !important;
   }
@@ -4857,4 +4858,54 @@ svg {
   .no-print {
     display: none !important;
   }
+}
+
+/* Keep the fluid and every control inside the available viewport. */
+.water-simulation-modal .mc-modal__body {
+  display: flex;
+  min-height: 0;
+}
+.water-simulation-shell {
+  width: 100%;
+  height: min(78dvh, 790px);
+  grid-template-rows: minmax(130px, 1fr) 3px auto auto;
+}
+.water-simulation-status {
+  flex-wrap: wrap;
+}
+.water-status-copy { flex: 1 0 160px; }
+.water-simulation-controls { flex: 1 1 auto; }
+.water-mode-control { padding: 0 4px; }
+.water-mode-control select { min-width: 94px; }
+.water-inflow-control[aria-pressed="true"] {
+  color: #b9edff !important;
+  border-color: rgba(131, 217, 246, .45) !important;
+}
+.water-simulation-stage[data-fluid-model="position-based-free-surface"]::after,
+.water-simulation-stage[data-fluid-model="position-based-free-surface"] .water-film-grain,
+.water-simulation-stage[data-fluid-model="position-based-free-surface"] .water-shot-label {
+  display: none;
+}
+@media (max-width: 760px) {
+  .water-simulation-shell { height: calc(100dvh - 118px); }
+  .water-simulation-controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 5px;
+  }
+  .water-simulation-controls > * { flex: 1 0 auto; }
+  .water-simulation-controls .button.secondary { min-width: 44px; min-height: 44px; }
+  .water-simulation-controls .water-mode-control { flex: 1 0 104px; }
+  .water-simulation-controls .water-mode-control select { width: 100%; }
+  .water-status-copy { flex: 0 0 auto; }
+  .water-simulation-legend { padding: 6px 10px; font-size: 10px; }
+}
+@media (max-height: 540px) {
+  .water-simulation-modal { max-height: calc(100dvh - 12px) !important; }
+  .water-simulation-modal .mc-modal__header { padding-top: 8px !important; padding-bottom: 6px !important; }
+  .water-simulation-modal .mc-modal__header > div > div { display: none; }
+  .water-simulation-shell { height: calc(100dvh - 85px); }
+  .water-simulation-status { padding: 5px 8px; gap: 4px; }
+  .water-status-copy, .water-simulation-legend { display: none; }
 }
