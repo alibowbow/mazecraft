@@ -96,25 +96,42 @@ export class FreeSurfaceSolver {
     this.saturated = false
     if (inflow <= 0) { this.emission = 0; return }
     const rate = Math.min(220, 80 + Math.sqrt(this.layout.activeCellCount) * 5) * inflow
+    const lanes = 6
+    const laneSpacing = this.layout.radius * 2.12
+    // Supply speed must clear a lane before its next particle is due. A fixed
+    // 1.6-cell/s launch silently throttled the requested flow as maze size grew.
+    const launchSpeed = Math.min(MAX_SPEED, Math.max(1.6, rate / lanes * laneSpacing))
     this.emission = Math.min(8, this.emission + rate * FIXED_DT)
     while (this.emission >= 1) {
       if (this.count >= this.layout.capacity) { this.saturated = true; this.emission = 0; break }
-      // Six lanes across the reservoir give a continuous supply without co-located births.
-      const lane = this.spawnSequence % 6
-      const px = this.layout.inletX + (lane - 2.5) * this.layout.radius * 2.12
-      const py = this.layout.inletY + ((Math.floor(this.spawnSequence / 6) % 2) * 0.006)
-      let clear = true
-      const clearance2 = (this.layout.radius * 1.9) ** 2
-      // Only the small source neighbourhood matters, including births in this substep.
-      for (let i = this.count - 1; i >= 0; i--) {
-        const dx = this.x[i] - px, dy = this.y[i] - py
-        if (Math.abs(dy) < this.layout.radius * 1.9 && dx * dx + dy * dy < clearance2) { clear = false; break }
+      let admitted = false
+      // One occupied lane does not block the whole nozzle. Try every lane,
+      // counting particles born in this substep in the same clearance check.
+      for (let attempt = 0; attempt < lanes; attempt++) {
+        const lane = this.spawnSequence % lanes
+        const px = this.layout.inletX + (lane - 2.5) * laneSpacing
+        const py = this.layout.inletY + ((Math.floor(this.spawnSequence / lanes) % 2) * 0.006)
+        this.spawnSequence++
+        let clear = true
+        const clearance2 = (this.layout.radius * 1.9) ** 2
+        for (let i = this.count - 1; i >= 0; i--) {
+          const dx = this.x[i] - px, dy = this.y[i] - py
+          if (Math.abs(dy) < this.layout.radius * 1.9 && dx * dx + dy * dy < clearance2) { clear = false; break }
+        }
+        if (!clear) continue
+        const i = this.count++
+        this.x[i] = px; this.y[i] = py; this.vx[i] = 0; this.vy[i] = launchSpeed
+        this.crossed[i] = 0; this.admitted++; this.emission--
+        admitted = true
+        break
       }
-      this.spawnSequence++
-      if (!clear) { this.saturated = true; this.emission = Math.min(this.emission, 1); break }
-      const i = this.count++
-      this.x[i] = px; this.y[i] = py; this.vx[i] = 0; this.vy[i] = 1.6
-      this.crossed[i] = 0; this.admitted++; this.emission--
+      if (!admitted) {
+        // Actual backpressure still stops supply. Do not bank a burst behind
+        // a full nozzle, and never force overlapping particles into the maze.
+        this.saturated = true
+        this.emission = Math.min(this.emission, 1)
+        break
+      }
     }
   }
 

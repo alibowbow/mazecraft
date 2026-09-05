@@ -19,6 +19,7 @@ export class FreeSurfaceRuntime {
   private worker: Worker | null = null
   private fallback: FreeSurfaceSolver | null = null
   private snapshot: FluidSnapshot | null = null
+  private pendingSnapshot: FluidSnapshot | null = null
   private generation = 0
   private busy = true
   private ready = false
@@ -27,7 +28,7 @@ export class FreeSurfaceRuntime {
   private speed = 1
   private inflow = 1
   private debt = 0
-  private lastFrame = 0
+  private lastAdvance: number | null = null
   private lastPublish = 0
   private frameId = 0
   private watchdog: ReturnType<typeof setTimeout> | undefined
@@ -54,8 +55,12 @@ export class FreeSurfaceRuntime {
         if (data.type === 'error') { this.failWorker(); return }
         this.busy = false
         // A message already in flight must never change a paused image.
-        if (this.paused && this.ready) return
-        this.accept(data.snapshot as FluidSnapshot)
+        if (this.ready && (this.paused || document.hidden)) return
+        if (!this.ready) this.accept(data.snapshot as FluidSnapshot)
+        else this.pendingSnapshot = data.snapshot as FluidSnapshot
+        // Keep the worker occupied while the GPU renders the previous state.
+        // Several completed batches may share one displayed animation frame.
+        this.advance(performance.now())
       }
       this.worker.onerror = () => this.failWorker()
       this.worker.postMessage({ type: 'init', layout: this.layout, generation: this.generation })
@@ -91,6 +96,7 @@ export class FreeSurfaceRuntime {
     this.renderer.render(snapshot)
     if (!this.ready) {
       this.ready = true
+      this.lastAdvance = performance.now()
       clearTimeout(this.watchdog)
       this.onReady()
       this.publish(snapshot.diagnostics)
@@ -128,12 +134,14 @@ export class FreeSurfaceRuntime {
     })
   }
 
-  private tick = (now: number) => {
+  private advance(now: number) {
     if (this.disposed) return
-    const delta = this.lastFrame ? Math.min(0.05, (now - this.lastFrame) / 1000) : 0
-    this.lastFrame = now
+    // A 50 ms frame clamp made 10 fps rendering run physics at half speed.
+    // Preserve ordinary slow frames, but bound catch-up after a long stall.
+    const delta = this.lastAdvance === null ? 0 : Math.min(0.25, Math.max(0, (now - this.lastAdvance) / 1000))
+    this.lastAdvance = now
     if (this.ready && !this.paused && !document.hidden) {
-      this.debt = Math.min(0.1, this.debt + delta * this.speed)
+      this.debt = Math.min(0.5, this.debt + delta * this.speed)
       const steps = Math.min(this.fallback ? 4 : 12, Math.floor(this.debt * 120 + 1e-7))
       if (steps && !this.busy) {
         this.debt -= steps / 120
@@ -146,19 +154,36 @@ export class FreeSurfaceRuntime {
         }
       }
     }
+  }
+
+  private tick = () => {
+    if (this.disposed) return
+    this.advance(performance.now())
+    if (this.pendingSnapshot && !this.paused && !document.hidden) {
+      const snapshot = this.pendingSnapshot
+      this.pendingSnapshot = null
+      this.accept(snapshot)
+    }
     this.frameId = requestAnimationFrame(this.tick)
   }
 
-  private visibilityChanged = () => { this.lastFrame = 0; this.debt = 0 }
-  setSpeed(value: number) { this.speed = Math.max(0.1, Math.min(4, value)); this.debt = 0 }
+  private visibilityChanged = () => { this.lastAdvance = null; this.debt = 0; this.pendingSnapshot = null }
+  setSpeed(value: number) {
+    this.speed = Math.max(0.1, Math.min(4, value))
+    this.debt = 0
+    this.lastAdvance = performance.now()
+  }
   setPaused(value: boolean) {
     this.paused = value
     this.debt = 0
-    this.lastFrame = 0
+    this.lastAdvance = performance.now()
+    this.pendingSnapshot = null
     if (this.snapshot) this.publish(this.snapshot.diagnostics)
   }
   setInflow(value: boolean) {
     this.inflow = value ? 1 : 0
+    this.debt = 0
+    this.lastAdvance = performance.now()
     this.renderer.setInflow(value)
     if (this.snapshot) this.publish(this.snapshot.diagnostics)
   }
@@ -177,10 +202,11 @@ export class FreeSurfaceRuntime {
     this.inflow = 1
     this.renderer.setInflow(true)
     this.debt = 0
-    this.lastFrame = 0
+    this.lastAdvance = null
     this.lastPublish = 0
     this.ready = false
     this.snapshot = null
+    this.pendingSnapshot = null
     if (this.worker) {
       this.busy = true
       this.worker.postMessage({ type: 'reset', generation: this.generation })
@@ -198,6 +224,7 @@ export class FreeSurfaceRuntime {
     this.worker = null
     this.fallback = null
     this.snapshot = null
+    this.pendingSnapshot = null
     this.renderer.dispose()
   }
 }

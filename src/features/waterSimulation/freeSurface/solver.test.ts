@@ -49,6 +49,45 @@ describe('free surface liquid', () => {
     expect(drained.diagnostics.escaped).toBe(0)
   })
 
+  it('delivers the requested flow through an unobstructed nozzle without losing occupied-lane turns', () => {
+    const graph = createEmptyGraph(6, 6)
+    for (let row = 0; row < 5; row++) openPassage(graph, { row, col: 0 }, { row: row + 1, col: 0 })
+    const layout = layoutFor(graph, 0, 0)
+    const solver = new FreeSurfaceSolver(layout)
+    solver.step(1)
+    const flowing = solver.snapshot()
+    // A 36-cell maze requests 110 particles/s. Previously only 60 arrived even
+    // with an open passage, because a single busy lane discarded its budget.
+    expect(flowing.diagnostics.injected / layout.particleArea).toBeGreaterThanOrEqual(107)
+    expect(flowing.diagnostics.injected / layout.particleArea).toBeLessThanOrEqual(110)
+    expect(flowing.diagnostics.maxVelocity).toBeLessThanOrEqual(11 + 1e-10)
+    expect(flowing.diagnostics.massError).toBe(0)
+    solver.step(0.5, 0)
+    expect(solver.snapshot().diagnostics.injected).toBe(flowing.diagnostics.injected)
+  })
+
+  it('raises the settled basin level promptly using admitted water', () => {
+    const layout = layoutFor(createEmptyGraph(2, 2), 0, 1)
+    const solver = new FreeSurfaceSolver(layout)
+    solver.step(1)
+    const snapshot = solver.snapshot()
+    let basinParticles = 0, settledAboveHalfHeight = 0
+    for (let i = 0; i < snapshot.count; i++) {
+      const x = snapshot.positions[i * 2], y = snapshot.positions[i * 2 + 1]
+      if (x < 0 || x >= 1 || y < 0 || y >= 1) continue
+      basinParticles++
+      const speed = Math.hypot(snapshot.velocities[i * 2], snapshot.velocities[i * 2 + 1])
+      if (y < 0.5 && speed < 0.75) settledAboveHalfHeight++
+    }
+    // Count water inside the basin, excluding the funnel and fast falling jet.
+    // The former supply left only 28 particles here and no settled upper half.
+    expect(basinParticles).toBeGreaterThanOrEqual(40)
+    expect(settledAboveHalfHeight).toBeGreaterThanOrEqual(3)
+    expect(snapshot.diagnostics.discharged).toBe(0)
+    expect(snapshot.diagnostics.escaped).toBe(0)
+    expect(snapshot.diagnostics.massError).toBe(0)
+  })
+
   it('pools above solid walls without tunnelling or inventing outlet discharge', () => {
     const layout = layoutFor(createEmptyGraph(2, 2), 0, 1)
     const solver = new FreeSurfaceSolver(layout)
@@ -69,6 +108,12 @@ describe('free surface liquid', () => {
       }
     }
     expect(snapshot.diagnostics.massError).toBe(0)
+    solver.step(1, 0)
+    const stopped = solver.snapshot()
+    expect(stopped.diagnostics.injected).toBe(snapshot.diagnostics.injected)
+    solver.step(1 / 120)
+    // An actual full nozzle must stay blocked without releasing banked supply.
+    expect(solver.snapshot().diagnostics.injected).toBe(stopped.diagnostics.injected)
   }, 20_000)
 
   it('splits into both open branches when a falling jet hits a basin floor', () => {
