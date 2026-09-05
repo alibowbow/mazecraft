@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import type { FluidLayout, FluidSnapshot } from './types'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
+import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
+import { buildFunnelVisual } from './funnelVisual'
 
 type SurfaceStyle = 'calm' | 'natural' | 'dynamic'
 
@@ -94,8 +96,22 @@ const waterFragment = /* glsl */ `
   uniform float uStyle;
   uniform float uTime;
   uniform float uOpticalLod;
+  uniform float uOpacity;
   varying vec2 vUv;
 
+  vec3 boardAt(vec2 maze) {
+    // A quiet etched backing remains visible through the water. Refraction
+    // samples this backing only, never geometry on the other side of a wall.
+    vec3 color = vec3(0.968, 0.971, 0.953);
+    vec2 cell = abs(fract(maze + 0.5) - 0.5);
+    vec2 line = 1.0 - smoothstep(vec2(0.007), vec2(0.017), cell);
+    float inside = step(0.0, maze.x) * step(maze.x, uMazeSize.x)
+      * step(0.0, maze.y) * step(maze.y, uMazeSize.y);
+    color -= max(line.x, line.y) * inside * 0.026;
+    float dotMark = 1.0 - smoothstep(0.008, 0.020, length(fract(maze) - 0.5));
+    color -= dotMark * inside * 0.045;
+    return color;
+  }
   float wetAt(vec2 uv) {
     return textureLod(uDensity, uv, uOpticalLod).b;
   }
@@ -107,7 +123,7 @@ const waterFragment = /* glsl */ `
     float insideY = smoothstep(-0.04, 0.02, maze.y)
       * (1.0 - smoothstep(uMazeSize.y - 0.02, uMazeSize.y + 0.04, maze.y));
     float chamber = insideX * insideY;
-    vec3 background = mix(vec3(0.948, 0.946, 0.926), vec3(0.995, 0.993, 0.978), vUv.y);
+    vec3 background = boardAt(maze);
     background += chamber * vec3(0.005, 0.008, 0.010);
     background -= dot(vUv - vec2(0.5, 0.55), vUv - vec2(0.5, 0.55)) * 0.025;
 
@@ -139,15 +155,15 @@ const waterFragment = /* glsl */ `
     float up = wetAt(vUv + vec2(0.0, offset.y));
     float core = wetAt(vUv);
     float thickness = 0.18 + core * 0.95 + depthTone * 0.20;
-    vec3 transmission = exp(-vec3(2.1, 0.43, 0.19) * thickness);
-    vec3 water = background * transmission;
-    water += vec3(0.025, 0.12, 0.16) * (1.0 - transmission);
-
     vec3 normal = normalize(vec3(vec2(left - right, down - up) * 1.35, 1.0));
+    vec3 transmission = exp(-vec3(1.25, 0.34, 0.18) * thickness);
+    vec3 transmittedBacking = boardAt(maze + normal.xy * vec2(0.035, -0.035));
+    vec3 water = transmittedBacking * transmission;
+    water += vec3(0.035, 0.20, 0.24) * (1.0 - transmission);
     float reflection = pow(max(dot(normal, normalize(vec3(-0.42, 0.32, 1.0))), 0.0), 36.0);
     float fresnel = 0.02 + 0.32 * pow(1.0 - normal.z, 3.0);
     water = mix(water, vec3(0.84, 0.95, 1.0), fresnel);
-    water += vec3(0.36, 0.40, 0.40) * reflection * (0.65 + uStyle * 0.20);
+    water += vec3(0.15, 0.19, 0.20) * reflection * (0.65 + uStyle * 0.20);
     // Only moving water receives a subtle travelling light band. Time is the
     // accepted physics snapshot's time, so pause and still pools stay still.
     float motion = smoothstep(0.025, 0.3, speed);
@@ -156,7 +172,9 @@ const waterFragment = /* glsl */ `
     float sky = pow(max(dot(outward, normalize(vec2(-0.3, 1.0))), 0.0), 4.0);
     water += vec3(0.40, 0.43, 0.40) * rim * sky * 0.72;
     water -= vec3(0.045, 0.055, 0.045) * rim * max(-outward.y, 0.0);
-    gl_FragColor = vec4(mix(background, water, coverage), 1.0);
+    // Composite translucency against the actual backing. The canvas itself
+    // stays opaque so the maze and controls do not bleed through the stage.
+    gl_FragColor = vec4(mix(background, water, coverage * uOpacity), 1.0);
   }
 `
 
@@ -166,6 +184,13 @@ export class FreeSurfaceRenderer {
   private readonly renderer: THREE.WebGLRenderer
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100)
   private readonly scene = new THREE.Scene()
+  private readonly flatWalls = new THREE.Group()
+  private readonly funnel: THREE.Group
+  private readonly boardTarget: THREE.WebGLRenderTarget
+  private presentation3d: FreeSurfacePresentation3D | null = null
+  private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
+  private yaw = 0.24
+  private pitch = 0.18
   private readonly densityScene = new THREE.Scene()
   private readonly densityTarget: THREE.WebGLRenderTarget
   private readonly filterScene = new THREE.Scene()
@@ -207,6 +232,8 @@ export class FreeSurfaceRenderer {
     this.renderer.info.autoReset = false
     this.canvas = this.renderer.domElement
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'
+    this.canvas.dataset.viewMode = 'free-surface'
+    this.canvas.dataset.waterOpacity = '0.58'
     this.canvas.setAttribute('aria-label', '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none;'
     this.canvas.tabIndex = 0
@@ -223,6 +250,7 @@ export class FreeSurfaceRenderer {
     })
     this.filterTarget = this.densityTarget.clone()
     this.surfaceTarget = this.densityTarget.clone()
+    this.boardTarget = this.densityTarget.clone()
     // Mip-averaged binary coverage supplies a smooth thickness field without
     // the stepped rings caused by a few distant silhouette samples.
     this.surfaceTarget.texture.generateMipmaps = true
@@ -272,6 +300,7 @@ export class FreeSurfaceRenderer {
         uStyle: { value: 0.5 },
         uTime: { value: 0 },
         uOpticalLod: { value: 0 },
+        uOpacity: { value: 0.58 },
       },
       depthTest: false,
       depthWrite: false,
@@ -298,7 +327,10 @@ export class FreeSurfaceRenderer {
     surface.renderOrder = -10
     this.scene.add(surface)
     this.geometries.push(screenGeometry)
+    this.scene.add(this.flatWalls)
     this.buildWalls()
+    this.funnel = buildFunnelVisual(layout)
+    this.scene.add(this.funnel)
 
     this.canvas.addEventListener('pointerdown', this.onPointerDown)
     this.canvas.addEventListener('pointermove', this.onPointerMove)
@@ -336,6 +368,7 @@ export class FreeSurfaceRenderer {
     const rim = new THREE.Color('#6f7b7f')
     const shadow = new THREE.Color('#4e636b')
     for (const wall of this.layout.walls) {
+      if (wall.kind === 'funnel') continue
       const { x0, y0, x1, y1 } = wall
       addRect(shadowPositions, shadowColors, x0 + 0.018, y0 + 0.024, x1 + 0.025, y1 + 0.035, 0.05, shadow, shadow)
       addRect(fillPositions, fillColors, x0, y0, x1, y1, 0.1, top, bottom)
@@ -356,7 +389,7 @@ export class FreeSurfaceRenderer {
       })
       const mesh = new THREE.Mesh(geometry, material)
       mesh.renderOrder = shadowLayer ? 0 : 1
-      this.scene.add(mesh)
+      this.flatWalls.add(mesh)
       this.geometries.push(geometry)
       this.materials.push(material)
     }
@@ -392,6 +425,30 @@ export class FreeSurfaceRenderer {
     this.draw()
   }
 
+  setInflow(enabled: boolean): void {
+    if (this.disposed) return
+    this.canvas.dataset.inflow = enabled ? 'enabled' : 'disabled'
+    const indicator = this.funnel.getObjectByName('supply-glint')
+    if (indicator) indicator.visible = enabled
+    const indicator3d = this.presentation3d?.content.getObjectByName('supply-glint')
+    if (indicator3d) indicator3d.visible = enabled
+    this.draw()
+  }
+
+  setViewMode(mode: 'free-surface' | 'surface-3d'): void {
+    if (this.disposed || this.viewMode === mode) return
+    this.viewMode = mode
+    this.canvas.dataset.viewMode = mode
+    this.canvas.setAttribute('aria-label', mode === 'surface-3d'
+      ? '같은 미로 물의 입체 보기. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
+      : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
+    if (mode === 'surface-3d' && !this.presentation3d) {
+      this.presentation3d = new FreeSurfacePresentation3D(this.layout, this.boardTarget.texture)
+      this.presentation3d.content.add(this.funnel.clone(true))
+    }
+    this.resetCamera()
+  }
+
   resize(): void {
     if (this.disposed) return
     this.width = Math.max(1, this.mount.clientWidth)
@@ -405,6 +462,7 @@ export class FreeSurfaceRenderer {
     this.densityTarget.setSize(width, height)
     this.filterTarget.setSize(width, height)
     this.surfaceTarget.setSize(width, height)
+    this.boardTarget.setSize(width, height)
     this.waterMaterial.uniforms.uTexel.value.set(1 / width, 1 / height)
     this.updateCamera()
     this.draw()
@@ -415,11 +473,32 @@ export class FreeSurfaceRenderer {
     this.zoom = 1
     this.panX = 0
     this.panY = 0
+    this.yaw = 0.24
+    this.pitch = 0.18
     this.updateCamera()
     this.draw()
   }
 
   private updateCamera(): void {
+    if (this.viewMode === 'surface-3d') {
+      // The field remains in fixed maze coordinates while only the presentation
+      // camera orbits. Both views consume the identical particle snapshot.
+      this.viewWidth = this.layout.maxX - this.layout.minX + 2 * SURFACE_FIELD_PADDING
+      this.viewHeight = this.layout.maxY - this.layout.minY + 2 * SURFACE_FIELD_PADDING
+      this.camera.left = this.layout.minX - SURFACE_FIELD_PADDING
+      this.camera.right = this.layout.maxX + SURFACE_FIELD_PADDING
+      this.camera.top = -this.layout.minY + SURFACE_FIELD_PADDING
+      this.camera.bottom = -this.layout.maxY - SURFACE_FIELD_PADDING
+      this.camera.updateProjectionMatrix()
+      this.waterMaterial.uniforms.uCenter.value.set(
+        (this.layout.minX + this.layout.maxX) / 2,
+        -(this.layout.minY + this.layout.maxY) / 2,
+      )
+      this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
+      this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
+      this.presentation3d?.updateView(this.width, this.height, this.zoom, this.panX, this.panY, this.yaw, this.pitch)
+      return
+    }
     const contentWidth = this.layout.maxX - this.layout.minX + 0.65
     const contentHeight = this.layout.maxY - this.layout.minY + 0.65
     const aspect = this.width / this.height
@@ -451,9 +530,21 @@ export class FreeSurfaceRenderer {
     this.filterMaterial.uniforms.uStep.value.set(0, 0.035 / this.viewHeight)
     this.renderer.setRenderTarget(this.surfaceTarget)
     this.renderer.render(this.filterScene, this.camera)
-    this.renderer.setRenderTarget(null)
-    this.renderer.setClearColor(0xf4f3ed, 1)
-    this.renderer.render(this.scene, this.camera)
+    if (this.viewMode === 'surface-3d' && this.presentation3d) {
+      this.flatWalls.visible = false
+      this.funnel.visible = false
+      this.renderer.setRenderTarget(this.boardTarget)
+      this.renderer.setClearColor(0xf4f3ed, 1)
+      this.renderer.render(this.scene, this.camera)
+      this.flatWalls.visible = true
+      this.funnel.visible = true
+      this.renderer.setRenderTarget(null)
+      this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
+    } else {
+      this.renderer.setRenderTarget(null)
+      this.renderer.setClearColor(0xf4f3ed, 1)
+      this.renderer.render(this.scene, this.camera)
+    }
     this.drawCalls = this.renderer.info.render.calls
     this.triangles = this.renderer.info.render.triangles
   }
@@ -478,6 +569,9 @@ export class FreeSurfaceRenderer {
       this.pinchDistance = distance
       this.panX -= dx * this.viewWidth / this.width * 0.5
       this.panY += dy * this.viewHeight / this.height * 0.5
+    } else if (this.viewMode === 'surface-3d' && !event.shiftKey) {
+      this.yaw = THREE.MathUtils.clamp(this.yaw - dx * 0.006, -0.65, 0.65)
+      this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.006, -0.48, 0.48)
     } else {
       this.panX -= dx * this.viewWidth / this.width
       this.panY += dy * this.viewHeight / this.height
@@ -507,8 +601,10 @@ export class FreeSurfaceRenderer {
     const oldHeight = this.viewHeight
     this.zoom = THREE.MathUtils.clamp(this.zoom * Math.exp(-event.deltaY * 0.0012), 0.75, 6)
     this.updateCamera()
-    this.panX += x * (oldWidth - this.viewWidth)
-    this.panY += y * (oldHeight - this.viewHeight)
+    if (this.viewMode === 'free-surface') {
+      this.panX += x * (oldWidth - this.viewWidth)
+      this.panY += y * (oldHeight - this.viewHeight)
+    }
     this.updateCamera()
     this.draw()
   }
@@ -549,6 +645,18 @@ export class FreeSurfaceRenderer {
     this.densityTarget.dispose()
     this.filterTarget.dispose()
     this.surfaceTarget.dispose()
+    this.boardTarget.dispose()
+    this.presentation3d?.dispose()
+    const accessoryGeometries = new Set<THREE.BufferGeometry>()
+    const accessoryMaterials = new Set<THREE.Material>()
+    this.funnel.traverse(object => {
+      if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
+        accessoryGeometries.add(object.geometry)
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) accessoryMaterials.add(material)
+      }
+    })
+    for (const geometry of accessoryGeometries) geometry.dispose()
+    for (const material of accessoryMaterials) material.dispose()
     this.filterMaterial.dispose()
     this.wallTexture.dispose()
     for (const geometry of this.geometries) geometry.dispose()

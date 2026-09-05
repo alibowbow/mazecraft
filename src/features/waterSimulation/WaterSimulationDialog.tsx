@@ -16,11 +16,9 @@ import {
 } from 'react'
 import { Modal } from '../../components/Modal'
 import type { MazeProject } from '../../core/maze'
-import {
-  WaterSceneRuntime,
-  type ResolvedWaterQuality,
-  type WaterPlaybackStatus,
-  type WaterRuntimeMetrics,
+import type {
+  ResolvedWaterQuality,
+  WaterRuntimeMetrics,
 } from './waterSceneRuntime'
 import type { WaterSurfaceStyle } from './rendering'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from './freeSurface/runtime'
@@ -34,7 +32,7 @@ interface WaterSimulationDialogProps {
   onClose: () => void
 }
 
-const EMPTY_STATUS: WaterPlaybackStatus = {
+const EMPTY_STATUS: FreeSurfaceStatus = {
   elapsedMs: 0,
   simulationTime: 0,
   filledCells: 0,
@@ -52,6 +50,9 @@ const EMPTY_STATUS: WaterPlaybackStatus = {
   relativeMassError: 0,
   maxVelocity: 0,
   outletDischarge: 0,
+  particleCount: 0,
+  escapedVolume: 0,
+  saturated: false,
 }
 
 const EMPTY_METRICS: WaterRuntimeMetrics = {
@@ -90,10 +91,11 @@ export default function WaterSimulationDialog({
   onClose,
 }: WaterSimulationDialogProps) {
   const canvasMountRef = useRef<HTMLDivElement>(null)
-  const runtimeRef = useRef<WaterSceneRuntime | FreeSurfaceRuntime | null>(null)
+  const runtimeRef = useRef<FreeSurfaceRuntime | null>(null)
   const [mode, setMode] = useState<'free-surface' | 'surface-3d'>('free-surface')
+  const viewModeRef = useRef(mode)
   const [inflow, setInflow] = useState(true)
-  const [status, setStatus] = useState<WaterPlaybackStatus>(EMPTY_STATUS)
+  const [status, setStatus] = useState<FreeSurfaceStatus>(EMPTY_STATUS)
   const [metrics, setMetrics] = useState<WaterRuntimeMetrics>(EMPTY_METRICS)
   const [paused, setPaused] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -123,7 +125,7 @@ export default function WaterSimulationDialog({
     if (!open || !canvasMountRef.current) return
     const mount = canvasMountRef.current
     let disposed = false
-    let runtime: WaterSceneRuntime | FreeSurfaceRuntime | null = null
+    let runtime: FreeSurfaceRuntime | null = null
     setStatus({ ...EMPTY_STATUS, totalCells: activeCellCount })
     setMetrics(EMPTY_METRICS)
     setPaused(false)
@@ -131,8 +133,7 @@ export default function WaterSimulationDialog({
     setRenderState('initializing')
     setErrorMessage('')
     try {
-      const Runtime = mode === 'free-surface' ? FreeSurfaceRuntime : WaterSceneRuntime
-      runtime = new Runtime(
+      runtime = new FreeSurfaceRuntime(
         mount,
         project,
         resolvedQuality,
@@ -153,6 +154,7 @@ export default function WaterSimulationDialog({
         },
         reducedMotion,
       )
+      runtime.setViewMode(viewModeRef.current)
       runtime.setSpeed(speed)
       runtimeRef.current = runtime
     } catch (error) {
@@ -187,8 +189,12 @@ export default function WaterSimulationDialog({
     project,
     reducedMotion,
     resolvedQuality,
-    mode,
   ])
+
+  useEffect(() => {
+    viewModeRef.current = mode
+    if (open) runtimeRef.current?.setViewMode(mode)
+  }, [mode, open])
 
   useEffect(() => {
     runtimeRef.current?.setSpeed(speed)
@@ -214,31 +220,13 @@ export default function WaterSimulationDialog({
   const wetFraction = status.totalCells > 0
     ? status.filledCells / status.totalCells
     : 0
-  const fluidStatus = status as Partial<FreeSurfaceStatus>
   const isFreeSurface = mode === 'free-surface'
-  const phaseProgress = isFreeSurface
-    ? Math.min(100, Math.max(0, wetFraction * 100))
-    : status.reachedExit
-      ? Math.min(100, 82 + wetFraction * 18)
-      : Math.max(8, Math.min(78, wetFraction * 78))
+  const phaseProgress = Math.min(100, Math.max(0, wetFraction * 100))
   const toggleInflow = () => {
     const next = !inflow
-    if (runtimeRef.current instanceof FreeSurfaceRuntime) runtimeRef.current.setInflow(next)
+    runtimeRef.current?.setInflow(next)
     setInflow(next)
   }
-  const statusLabel = paused
-    ? '사용자가 일시정지함'
-    : isFreeSurface && !inflow
-      ? '공급을 멈추고 남은 물이 흐르는 중'
-    : isFreeSurface && fluidStatus.saturated
-      ? '유입을 조절하며 물이 빠지기를 기다리는 중'
-    : status.complete
-      ? '유입과 하단 배출이 계속되는 중'
-      : status.reachedExit
-        ? '하단 출구로 물이 떨어지는 중'
-        : status.filledCells > 1
-          ? '물길을 따라 흐르고 고이는 중'
-          : '상단 저장조에서 물을 붓는 중'
   const phase = renderState === 'error'
     ? 'error'
     : paused
@@ -264,12 +252,13 @@ export default function WaterSimulationDialog({
           className="water-simulation-stage"
           data-testid="water-simulation-stage"
           data-renderer={renderState}
-          data-fluid-renderer={isFreeSurface ? 'particle-density-free-boundary' : 'dynamic-topology-depth-velocity-foam'}
-          data-fluid-model={isFreeSurface ? 'position-based-free-surface' : 'dynamic-head-discharge-network'}
-          data-particle-count={isFreeSurface ? fluidStatus.particleCount ?? 0 : undefined}
-          data-escaped-volume={isFreeSurface ? fluidStatus.escapedVolume ?? 0 : undefined}
+          data-fluid-renderer="particle-density-free-boundary"
+          data-fluid-model="position-based-free-surface"
+          data-view-mode={mode}
+          data-particle-count={status.particleCount}
+          data-escaped-volume={status.escapedVolume}
           data-inflow={inflow ? 'enabled' : 'disabled'}
-          data-saturated={fluidStatus.saturated ?? false}
+          data-saturated={status.saturated}
           data-flow-mode="continuous-until-user-pauses"
           data-water-continuity="coupled-source-surface"
           data-phase={phase}
@@ -302,21 +291,18 @@ export default function WaterSimulationDialog({
           data-closed-wall-leak-texels={metrics.closedWallLeakTexels}
           data-draw-calls={metrics.drawCalls}
           data-triangles={metrics.triangles}
-          data-inlet-renderer={isFreeSurface ? 'simulated-particle-inlet' : 'coupled-gravity-jet'}
+          data-inlet-renderer="simulated-particle-inlet"
           data-inlet-state={status.inletState}
           data-inlet-visible={status.inletVisible}
           data-inlet-drop-height={metrics.inletDropHeight.toFixed(2)}
           data-inlet-contact-gap={metrics.inletContactGap.toFixed(3)}
-          data-outlet-renderer={isFreeSurface ? 'simulated-particle-free-fall' : 'continuous-waterfall-and-catch-basin'}
+          data-outlet-renderer="simulated-particle-free-fall"
           data-outlet-visible={status.outletVisible}
           data-outlet-drop-height={metrics.outletDropHeight.toFixed(2)}
-          data-water-surface-renderer={isFreeSurface ? 'continuous-density-contour' : 'flow-coupled-multiband-optics'}
+          data-water-surface-renderer="continuous-density-contour"
           data-water-surface-style={surfaceStyle}
           data-wave-bands={metrics.waveBands}
-          data-wave-dispersion={isFreeSurface ? undefined : 'finite-depth-phase-modulation'}
-          data-water-reflection={isFreeSurface ? 'density-gradient-lighting' : 'analytic-studio-sky-approximation'}
-          data-water-scattering={isFreeSurface ? undefined : 'crest-subsurface-approximation'}
-          data-detail-normal-texture={isFreeSurface ? undefined : 'dual-scale-rg'}
+          data-water-reflection="continuous-surface-lighting"
           data-foam-mode={metrics.foamMode}
           data-elapsed-ms={Math.round(status.simulationTime * 1_000)}
           data-scene-elapsed-ms={Math.round(status.elapsedMs)}
@@ -338,12 +324,6 @@ export default function WaterSimulationDialog({
             <i />
             <span>BOTTOM EXIT</span>
           </div>
-          {status.reachedExit && renderState === 'ready' && !isFreeSurface && (
-            <div className="water-success-cue" aria-hidden="true">
-              <span />
-              출구 도달
-            </div>
-          )}
           {renderState === 'initializing' && (
             <div className="water-stage-message">
               <Waves size={28} />
@@ -367,23 +347,6 @@ export default function WaterSimulationDialog({
         </div>
 
         <div className="water-simulation-status">
-          <div className="water-status-copy" aria-live="polite">
-            <span className={status.reachedExit ? 'reached' : ''}>
-              <Waves size={16} />
-              {statusLabel}
-            </span>
-            <small>
-              젖은 구역 {status.filledCells.toLocaleString()} /{' '}
-              {activeCellCount.toLocaleString()} ·{' '}
-              {isFreeSurface
-                ? status.reachedExit ? '출구로 배출 중' : '유로 형성'
-                : status.complete
-                ? '정상 유동'
-                : status.reachedExit
-                  ? '수위 안정화'
-                  : '유로 형성'}
-            </small>
-          </div>
           <div className="water-simulation-controls">
             <label className="water-speed-control water-mode-control">
               <select aria-label="물 시뮬레이션 방식" value={mode}
@@ -418,13 +381,11 @@ export default function WaterSimulationDialog({
               <RotateCcw size={17} />
               처음부터
             </button>
-            {isFreeSurface && (
-              <button className="button secondary water-inflow-control" onClick={toggleInflow}
-                disabled={renderState !== 'ready'} aria-pressed={inflow}
-                aria-label={inflow ? '물 공급 멈추기' : '물 공급 시작하기'}>
-                <Droplets size={17} />{inflow ? '공급 끄기' : '물 붓기'}
-              </button>
-            )}
+            <button className="button secondary water-inflow-control" onClick={toggleInflow}
+              disabled={renderState !== 'ready'} aria-pressed={inflow}
+              aria-label={inflow ? '물 공급 멈추기' : '물 공급 시작하기'}>
+              <Droplets size={17} />{inflow ? '공급 끄기' : '물 붓기'}
+            </button>
             <button
               className="button secondary"
               onClick={() => runtimeRef.current?.resetCamera()}
@@ -492,25 +453,25 @@ export default function WaterSimulationDialog({
               <dd>{status.simulationTime.toFixed(3)} s</dd>
             </div>
             <div>
-              <dt>{isFreeSurface ? '물의 단면적' : '부피'}</dt>
+              <dt>물의 단면적</dt>
               <dd>
                 유입 {status.cumulativeInjectedVolume.toExponential(3)} / 저장{' '}
                 {status.currentStoredVolume.toExponential(3)} / 유출{' '}
-                {status.cumulativeOutletVolume.toExponential(3)} {isFreeSurface ? '셀²' : 'm³'}
+                {status.cumulativeOutletVolume.toExponential(3)} 셀²
               </dd>
             </div>
             <div>
               <dt>질량 오차</dt>
               <dd>
-                {status.absoluteMassError.toExponential(3)} {isFreeSurface ? '셀²' : 'm³'} ·{' '}
+                {status.absoluteMassError.toExponential(3)} 셀² ·{' '}
                 {(status.relativeMassError * 100).toFixed(4)}%
               </dd>
             </div>
             <div>
-              <dt>{isFreeSurface ? '유체 입자' : '활성 유로'}</dt>
+              <dt>유체 입자</dt>
               <dd>
-                {isFreeSurface ? fluidStatus.particleCount : status.activeFlowEdgeCount} · 최고{' '}
-                {status.maxVelocity.toFixed(3)} {isFreeSurface ? '셀/s' : 'm/s'}
+                {status.particleCount} · 최고{' '}
+                {status.maxVelocity.toFixed(3)} 셀/s
               </dd>
             </div>
           </dl>

@@ -157,7 +157,15 @@ export class FreeSurfaceRuntime {
     this.lastFrame = 0
     if (this.snapshot) this.publish(this.snapshot.diagnostics)
   }
-  setInflow(value: boolean) { this.inflow = value ? 1 : 0 }
+  setInflow(value: boolean) {
+    this.inflow = value ? 1 : 0
+    this.renderer.setInflow(value)
+    if (this.snapshot) this.publish(this.snapshot.diagnostics)
+  }
+  setViewMode(mode: 'free-surface' | 'surface-3d') {
+    this.renderer.setViewMode(mode)
+    if (this.snapshot) this.publish(this.snapshot.diagnostics)
+  }
   setSurfaceStyle(style: WaterSurfaceStyle) {
     this.renderer.setSurfaceStyle(style)
     if (this.snapshot) this.renderer.render(this.snapshot)
@@ -167,6 +175,7 @@ export class FreeSurfaceRuntime {
     this.generation++
     this.paused = false
     this.inflow = 1
+    this.renderer.setInflow(true)
     this.debt = 0
     this.lastFrame = 0
     this.lastPublish = 0

@@ -1,5 +1,14 @@
 /** Coordinates are maze-cell units, x rightwards and y downwards. */
-export interface FluidWall { x0: number; y0: number; x1: number; y1: number }
+export interface FluidWall { x0: number; y0: number; x1: number; y1: number; kind?: 'funnel' }
+
+export interface FluidFunnel {
+  mouthY: number
+  neckY: number
+  halfWidth: number
+  neckHalfWidth: number
+  sourceY: number
+  collarTopY: number
+}
 
 export interface FluidLayout {
   rows: number
@@ -7,6 +16,7 @@ export interface FluidLayout {
   activeCellCount: number
   activeCells: Uint8Array
   walls: FluidWall[]
+  funnel: FluidFunnel
   inletX: number
   inletY: number
   outletX: number

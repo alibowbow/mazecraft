@@ -1,5 +1,5 @@
 import type { MazeProject } from '../../../core/maze'
-import type { FluidLayout, FluidWall } from './types'
+import type { FluidFunnel, FluidLayout, FluidWall } from './types'
 
 /** Geometry and sampling are independent of the renderer's quality setting. */
 export function buildFluidLayout(project: MazeProject): FluidLayout {
@@ -33,11 +33,11 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
   const inletX = sourceCol + 0.5, outletX = exitCol + 0.5
   const walls: FluidWall[] = []
   const halfWall = 0.05
-  const horizontal = (x0: number, x1: number, y: number) => {
-    if (x1 > x0) walls.push({ x0: x0 - halfWall, x1: x1 + halfWall, y0: y - halfWall, y1: y + halfWall })
+  const horizontal = (x0: number, x1: number, y: number, kind?: 'funnel') => {
+    if (x1 > x0) walls.push({ x0: x0 - halfWall, x1: x1 + halfWall, y0: y - halfWall, y1: y + halfWall, ...(kind ? { kind } : {}) })
   }
-  const vertical = (x: number, y0: number, y1: number) => {
-    if (y1 > y0) walls.push({ x0: x - halfWall, x1: x + halfWall, y0: y0 - halfWall, y1: y1 + halfWall })
+  const vertical = (x: number, y0: number, y1: number, kind?: 'funnel') => {
+    if (y1 > y0) walls.push({ x0: x - halfWall, x1: x + halfWall, y0: y0 - halfWall, y1: y1 + halfWall, ...(kind ? { kind } : {}) })
   }
   const active = (row: number, col: number) => row >= 0 && row < rows && col >= 0 && col < cols && activeCells[row * cols + col] === 1
   for (let row = 0; row < rows; row++) {
@@ -59,23 +59,44 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
       if (!active(row, col + 1) || cell.walls.right || graph.cells[row * cols + col + 1]?.walls.left) vertical(col + 1, row, row + 1)
     }
   }
-  // A finite, capped reservoir supplies a real opening, rather than spawning water inside cells.
+  // A physical funnel directs the real source stream into the existing entrance.
+  // Thin AABB slices approximate the sloped bowl without changing the solver.
   const reservoirHalfWidth = Math.min(1.5, Math.max(0.7, (right - left) * 0.32))
   const reservoirLeft = inletX - reservoirHalfWidth
   const reservoirRight = inletX + reservoirHalfWidth
-  const reservoirTop = topY - 1.6
-  horizontal(reservoirLeft, reservoirRight, reservoirTop)
-  horizontal(reservoirLeft, inletX - 0.4, topY)
-  horizontal(inletX + 0.4, reservoirRight, topY)
-  vertical(reservoirLeft, reservoirTop, topY)
-  vertical(reservoirRight, reservoirTop, topY)
+  const funnel: FluidFunnel = {
+    mouthY: topY - 0.95, neckY: topY - 0.16,
+    halfWidth: reservoirHalfWidth, neckHalfWidth: 0.4,
+    sourceY: topY - 1.3, collarTopY: topY - 1.6,
+  }
+  const slices = 20
+  for (let i = 0; i < slices; i++) {
+    const y0 = funnel.mouthY + (funnel.neckY - funnel.mouthY) * i / slices
+    const y1 = funnel.mouthY + (funnel.neckY - funnel.mouthY) * (i + 1) / slices
+    const half = funnel.halfWidth + (funnel.neckHalfWidth - funnel.halfWidth) * (i + 1) / slices
+    walls.push({ x0: reservoirLeft - halfWall, x1: inletX - half + halfWall, y0: y0 - 0.002, y1: y1 + 0.002, kind: 'funnel' })
+    walls.push({ x0: inletX + half - halfWall, x1: reservoirRight + halfWall, y0: y0 - 0.002, y1: y1 + 0.002, kind: 'funnel' })
+  }
+  vertical(inletX - funnel.neckHalfWidth, funnel.neckY, topY, 'funnel')
+  vertical(inletX + funnel.neckHalfWidth, funnel.neckY, topY, 'funnel')
+
+  // A clear splash collar contains backpressure in a closed maze. Its top has a
+  // genuine source port into the nozzle: no water is drawn through a solid cap.
+  vertical(reservoirLeft, funnel.collarTopY, funnel.mouthY, 'funnel')
+  vertical(reservoirRight, funnel.collarTopY, funnel.mouthY, 'funnel')
+  horizontal(reservoirLeft, inletX - 0.5, funnel.collarTopY, 'funnel')
+  horizontal(inletX + 0.5, reservoirRight, funnel.collarTopY, 'funnel')
+  const sourceTop = funnel.collarTopY - 0.25
+  vertical(inletX - 0.5, sourceTop, funnel.sourceY - 0.15, 'funnel')
+  vertical(inletX + 0.5, sourceTop, funnel.sourceY - 0.15, 'funnel')
+  horizontal(inletX - 0.5, inletX + 0.5, sourceTop, 'funnel')
   const radius = 0.07
   return {
-    rows, cols, activeCells, activeCellCount, walls,
-    inletX, inletY: topY - 1.3, outletX, outletY: bottomY, topY, bottomY,
+    rows, cols, activeCells, activeCellCount, walls, funnel,
+    inletX, inletY: funnel.sourceY, outletX, outletY: bottomY, topY, bottomY,
     minX: Math.min(left - 0.4, reservoirLeft - 0.3),
     maxX: Math.max(right + 0.4, reservoirRight + 0.3),
-    minY: reservoirTop - 0.2, maxY: bottomY + 2.2,
+    minY: sourceTop - 0.2, maxY: bottomY + 2.2,
     radius, particleArea: (radius * 2) ** 2,
     capacity: Math.min(18_000, Math.max(320, Math.ceil(activeCellCount * 48 + reservoirHalfWidth * 150))),
   }

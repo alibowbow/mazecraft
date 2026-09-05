@@ -1,85 +1,31 @@
-import { expect, test, type Page } from '@playwright/test'
-import { createDefaultProject } from '../src/core/maze'
+import { expect, test } from '@playwright/test'
+import {
+  fallingWaterProject, importWaterProject, installWorkerProbe, numberAttribute,
+  openParticleWater, readWorkerProbe,
+} from './helpers/waterHarness'
 
-const project = createDefaultProject({
-  title: 'Blender 수면 atlas 검증 미로',
-  seed: 'blender-water-e2e',
-  grid: { rows: 6, cols: 6, minimumCellPixels: 8 },
-})
-
-async function openHighQualityWater(page: Page) {
-  await page.goto('/')
-  const importer = page.locator('input[type="file"][accept*=".mazecraft"]')
-  if (await importer.count()) {
-    await importer.setInputFiles({
-      name: 'blender-water.mazecraft',
-      mimeType: 'application/vnd.mazecraft+json',
-      buffer: Buffer.from(JSON.stringify(project)),
-    })
-  }
-  await page.locator('.studio-stage-rail button').filter({ hasText: '테스트' }).click()
-  await page.getByLabel('효과 품질').selectOption('high')
-  await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
-  await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
-  const stage = page.getByTestId('water-simulation-stage')
-  await expect(stage).toHaveAttribute('data-fluid-model', 'dynamic-head-discharge-network')
-  await expect(stage).toHaveAttribute('data-renderer', 'ready', {
-    timeout: 30_000,
+// The historical atlas UI was replaced by a second view of the particle water.
+// Keep its real-browser shader/asset-loading gate on the current visible mode.
+test('고화질 3D 물은 입자 Worker를 사용하고 레거시 atlas 없이 렌더링된다', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const errors: string[] = []
+  const legacyRequests: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  page.on('request', request => {
+    if (/blender.*(?:atlas|water)|hydraulic\.worker/i.test(request.url())) legacyRequests.push(request.url())
   })
-  return stage
-}
-
-test('Blender atlas가 실시간 수리 수면에 로드되고 셰이더 오류 없이 동작한다', async ({
-  page,
-}) => {
-  test.setTimeout(120_000)
-  const consoleErrors: string[] = []
-  const externalRequests: string[] = []
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
-  })
-  page.on('request', (request) => {
-    const url = new URL(request.url())
-    if (!['127.0.0.1', 'localhost'].includes(url.hostname)) {
-      externalRequests.push(request.url())
-    }
-  })
-
-  await page.addInitScript(() => {
-    const original = WebGL2RenderingContext.prototype.shaderSource
-    WebGL2RenderingContext.prototype.shaderSource = function (shader, source) {
-      if (source.includes('MAZECRAFT_BLENDER_BAKED_WATER_FRAGMENT')) {
-        document.documentElement.dataset.waterFlowShader = String(
-          source.includes('uBlenderWaterPhase') &&
-          source.includes('surface.rg = blenderNormalToWorld') &&
-          source.includes('fract(cycles + seed)'),
-        )
-      }
-      return original.call(this, shader, source)
-    }
-  })
-  const stage = await openHighQualityWater(page)
-  await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
-  await expect
-    .poll(
-      () =>
-        page.evaluate(
-          () => document.documentElement.dataset.blenderWaterAtlas ?? 'idle',
-        ),
-      { timeout: 30_000 },
-    )
-    .toBe('ready')
-
-  await page.getByLabel('물 흐름 속도').selectOption('4')
-  await expect
-    .poll(
-      async () => Number(await stage.getAttribute('data-filled-cells')),
-      { timeout: 20_000 },
-    )
-    .toBeGreaterThan(1)
-
-  await expect(page.locator('html')).toHaveAttribute('data-water-flow-shader', 'true')
-  await stage.screenshot({ path: 'test-results/water-atlas-review.png' })
-  expect(externalRequests).toEqual([])
-  expect(consoleErrors).toEqual([])
+  await installWorkerProbe(page)
+  await importWaterProject(page, fallingWaterProject, 'high')
+  const stage = await openParticleWater(page, 'surface-3d')
+  await expect.poll(() => numberAttribute(stage, 'data-filled-cells'), { timeout: 20_000 }).toBeGreaterThan(1)
+  await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
+  const probe = await readWorkerProbe(page)
+  expect(probe.fluidLayouts).toHaveLength(1)
+  expect(probe.urls.filter(url => /fluid\.worker/.test(url))).toHaveLength(1)
+  expect(probe.urls.some(url => /hydraulic\.worker/.test(url))).toBe(false)
+  await page.screenshot({ path: testInfo.outputPath('water-3d-runtime.png') })
+  expect(legacyRequests).toEqual([])
+  expect(errors).toEqual([])
 })

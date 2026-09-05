@@ -27,4 +27,28 @@ describe('free surface maze geometry', () => {
     expect(layout.radius).toBeLessThan(0.1)
     expect(layout.activeCells).toHaveLength(22_500)
   })
+
+  it('pours above the tapered funnel and leaves all emission lanes and the neck open', () => {
+    const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(4, 4) }))
+    expect(layout.funnel.sourceY).toBe(layout.inletY)
+    expect(layout.funnel.mouthY).toBeGreaterThan(layout.inletY)
+    expect(layout.funnel.neckY).toBeGreaterThan(layout.funnel.mouthY)
+    expect(layout.funnel.halfWidth).toBeGreaterThan(layout.funnel.neckHalfWidth)
+    const inSolid = (x: number, y: number, clearance: number) => layout.walls.some(wall =>
+      x > wall.x0 - clearance && x < wall.x1 + clearance
+        && y > wall.y0 - clearance && y < wall.y1 + clearance,
+    )
+    // This is the solver's actual six-lane footprint, including particle radius.
+    for (let lane = 0; lane < 6; lane++) {
+      const x = layout.inletX + (lane - 2.5) * layout.radius * 2.12
+      expect(inSolid(x, layout.inletY, layout.radius)).toBe(false)
+    }
+    for (let y = layout.inletY; y <= layout.topY; y += 0.02) {
+      expect(inSolid(layout.inletX, y, layout.radius)).toBe(false)
+    }
+    const taperedY = (layout.funnel.mouthY + layout.funnel.neckY) * 0.5
+    const outerX = layout.inletX + layout.funnel.halfWidth - 0.08
+    expect(inSolid(outerX, taperedY, 0)).toBe(true)
+    expect(layout.walls.some(wall => wall.kind === 'funnel')).toBe(true)
+  })
 })

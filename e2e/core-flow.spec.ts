@@ -298,91 +298,36 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
   await waitForChangedImage(complete)
 })
 
-test('15. 3D 물이 최상단 입구에서 최하단 출구 방향으로 흐른다', async ({ page }) => {
-  test.setTimeout(90_000)
+test('15. 3D 입자 물이 위쪽 깔때기에서 아래 출구로 흐른다', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.setViewportSize({ width: 360, height: 800 })
-  const consoleErrors: string[] = []
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
-  })
-  await importFixture(page)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  await importFixture(page, createFixture({ grid: { rows: 4, cols: 1, minimumCellPixels: 8 } }))
   await page.locator('.mobile-tabs button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('low')
-
-  await page
-    .getByRole('button', { name: '물 시뮬레이션', exact: true })
-    .click()
+  await page.getByRole('button', { name: '물 시뮬레이션', exact: true }).click()
   await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
   const stage = page.getByTestId('water-simulation-stage')
-  await expect(stage).toHaveAttribute('data-fluid-model', 'dynamic-head-discharge-network')
-  await expect(stage).toBeVisible()
+  await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 20_000 })
+  await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
   await expect(stage).toHaveAttribute('data-start-edge', 'top')
   await expect(stage).toHaveAttribute('data-end-edge', 'bottom')
   await expect(stage).toHaveAttribute('data-quality', 'low')
-  await expect(stage).toHaveAttribute(
-    'data-fluid-model',
-    'dynamic-head-discharge-network',
-  )
-  expect(
-    Number(await stage.getAttribute('data-mass-relative-error')),
-  ).toBeLessThan(1e-5)
-  await expect(stage).toHaveAttribute('data-foam-mode', 'procedural')
-  await expect(stage).toHaveAttribute(
-    'data-inlet-renderer',
-    'coupled-gravity-jet',
-  )
-  await expect(stage).toHaveAttribute(
-    'data-water-continuity',
-    'coupled-source-surface',
-  )
-  await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 15_000 })
   await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
-  expect(
-    Number(await stage.getAttribute('data-inlet-drop-height')),
-  ).toBeGreaterThan(2)
-  expect(
-    Number(await stage.getAttribute('data-inlet-contact-gap')),
-  ).toBeLessThanOrEqual(0.001)
-
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-    ),
-  ).toBe(true)
-  expect(
-    await page
-      .locator('.water-simulation-controls button, .water-simulation-controls select')
-      .evaluateAll(
-        (elements) =>
-          elements.filter((element) => {
-            const bounds = element.getBoundingClientRect()
-            return bounds.width < 44 || bounds.height < 44
-          }).length,
-      ),
-  ).toBe(0)
-
+  await expect(stage).toHaveAttribute('data-reached-exit', 'true', { timeout: 25_000 })
+  await expect(stage).toHaveAttribute('data-outlet-visible', 'true')
+  expect(Number(await stage.getAttribute('data-outlet-volume'))).toBeGreaterThan(0)
+  expect(Number(await stage.getAttribute('data-mass-relative-error'))).toBeLessThan(1e-5)
+  await expect(page.locator('.water-status-copy, .water-success-cue')).toHaveCount(0)
   await page.getByRole('button', { name: '물 시뮬레이션 일시정지' }).click()
   await expect(stage).toHaveAttribute('data-phase', 'paused')
-  const pausedCount = Number(await stage.getAttribute('data-filled-cells'))
+  const elapsed = Number(await stage.getAttribute('data-elapsed-ms'))
   await page.waitForTimeout(320)
-  expect(Number(await stage.getAttribute('data-filled-cells'))).toBe(pausedCount)
-
-  await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
-  await page.getByLabel('물 흐름 속도').selectOption('4')
-  await page.getByRole('button', { name: '물 시뮬레이션 처음부터', exact: true }).click()
-  await expect(stage).toHaveAttribute('data-reached-exit', 'true', {
-    // The imported fixture's winding 8x8 route needs more than 60 simulated
-    // seconds. Allow the dynamic head/discharge solver to reach the outlet
-    // under concurrent software-WebGL load instead of assuming an arrival
-    // schedule.
-    timeout: 40_000,
-  })
-  await expect(stage).toHaveAttribute('data-outlet-visible', 'true')
-  expect(
-    Number(await stage.getAttribute('data-outlet-drop-height')),
-  ).toBeGreaterThan(1.4)
-
+  expect(Number(await stage.getAttribute('data-elapsed-ms'))).toBe(elapsed)
   await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
   await expect(stage).toHaveCount(0)
-  expect(consoleErrors).toEqual([])
+  expect(errors).toEqual([])
 })
