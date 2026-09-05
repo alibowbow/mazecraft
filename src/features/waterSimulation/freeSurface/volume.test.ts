@@ -54,4 +54,3 @@ it('spills over a return passage with a bounded admitted volume', () => {
   expect(diagnostics.escaped).toBe(0)
   expect(diagnostics.massError).toBe(0)
 }, 30_000)
-
