@@ -76,10 +76,10 @@ const fragmentFixture = `
     vec2 vUv = vec2(0.5);
     float motion = smoothstep(0.002, 0.12, speed);
     float simulatedHeight = 0.0;
-    vec2 simulatedSlope = vec2(
-      dFdx(simulatedHeight),
-      dFdy(simulatedHeight)
-    ) * 7.2;
+    vec2 simulatedSlope = waterWorldSlope(
+      dFdx(vWorldPosition.xy), dFdy(vWorldPosition.xy),
+      dFdx(simulatedHeight), dFdy(simulatedHeight)
+    ) * 0.04;
     vec3 bodyColor = vec3(0.0);
     float caustic = 0.0;
     bodyColor += vec3(0.12, 0.72, 0.61) * caustic * 0.12;
