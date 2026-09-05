@@ -2290,7 +2290,7 @@ svg {
   }
 
   .water-simulation-modal {
-    width: calc(100vw - 12px) !important;
+    width: calc(100vw - 32px) !important;
     max-height: calc(100dvh - 12px) !important;
     border-radius: 15px !important;
   }
@@ -4895,7 +4895,7 @@ svg {
     gap: 5px;
   }
   .water-simulation-controls > * { flex: 1 0 auto; }
-  .water-simulation-controls .button.secondary { min-height: 44px; }
+  .water-simulation-controls .button.secondary { min-width: 44px; min-height: 44px; }
   .water-simulation-controls .water-mode-control { flex: 1 0 104px; }
   .water-simulation-controls .water-mode-control select { width: 100%; }
   .water-status-copy { flex: 0 0 auto; }

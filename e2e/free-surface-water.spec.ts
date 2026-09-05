@@ -195,6 +195,15 @@ test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기
     await expect.poll(() => numberAttribute(stage, 'data-particle-count')).toBeGreaterThan(0)
     expect((await workers()).active).toBe(before.active + 1)
     await expect(stage.locator('canvas.water-simulation-canvas')).toHaveCount(1)
+    // The backdrop can clip an oversized dialog without increasing the root
+    // scroll width, so measure the actual fixed-position modal rectangle too.
+    const dialog = await page.getByRole('dialog').boundingBox()
+    expect(dialog).not.toBeNull()
+    const viewport = page.viewportSize()!
+    expect(dialog!.x).toBeGreaterThanOrEqual(0)
+    expect(dialog!.y).toBeGreaterThanOrEqual(0)
+    expect(dialog!.x + dialog!.width).toBeLessThanOrEqual(viewport.width)
+    expect(dialog!.y + dialog!.height).toBeLessThanOrEqual(viewport.height)
     const layout = await page.locator('.water-simulation-controls').evaluate(element => {
       const controls = [...element.querySelectorAll('button, select')]
       return {
@@ -203,9 +212,13 @@ test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기
           const box = control.getBoundingClientRect()
           return box.width < 44 || box.height < 44
         }).length,
+        controlsOutsideViewport: controls.filter(control => {
+          const box = control.getBoundingClientRect()
+          return box.left < 0 || box.top < 0 || box.right > window.innerWidth || box.bottom > window.innerHeight
+        }).length,
       }
     })
-    expect(layout).toEqual({ pageOverflows: false, smallTargets: 0 })
+    expect(layout).toEqual({ pageOverflows: false, smallTargets: 0, controlsOutsideViewport: 0 })
     if (repeat === 0) {
       await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(2_000)
       await page.screenshot({ path: testInfo.outputPath('free-surface-mobile.png') })
