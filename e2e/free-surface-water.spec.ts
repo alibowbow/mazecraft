@@ -60,6 +60,12 @@ test('자유수면 입자가 실제로 흐르고 공급 중지·일시정지·�
     timeout: 15_000,
   }).toBeGreaterThan(1)
   await page.screenshot({ path: testInfo.outputPath('free-surface-flow.png') })
+  await page.getByLabel('물 흐름 속도').selectOption('4')
+  await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms'), {
+    timeout: 20_000,
+  }).toBeGreaterThan(12_000)
+  await page.getByLabel('물 흐름 속도').selectOption('1')
+  await page.screenshot({ path: testInfo.outputPath('free-surface-pooled.png') })
 
   await pause(page, stage)
   const pausedTime = await numberAttribute(stage, 'data-elapsed-ms')
@@ -84,16 +90,34 @@ test('자유수면 입자가 실제로 흐르고 공급 중지·일시정지·�
 
   await pause(page, stage)
   await page.getByLabel('물 흐름 속도').selectOption('0.1')
+  // Arm observation before clicking: reset is acknowledged asynchronously by
+  // the worker. Capture its exact zero snapshot without racing the next frame.
+  const resetPromise = stage.evaluate(element => new Promise<{
+    elapsed: number; injected: number; discharged: number; escaped: number; particles: number
+  }>((resolve, reject) => {
+    const deadline = setTimeout(() => {
+      observer.disconnect()
+      reject(new Error('Worker did not publish the zero reset snapshot'))
+    }, 5_000)
+    const observer = new MutationObserver(() => {
+      const state = {
+        elapsed: Number(element.getAttribute('data-elapsed-ms')),
+        injected: Number(element.getAttribute('data-injected-volume')),
+        discharged: Number(element.getAttribute('data-outlet-volume')),
+        escaped: Number(element.getAttribute('data-escaped-volume')),
+        particles: Number(element.getAttribute('data-particle-count')),
+      }
+      if (Object.values(state).every(value => value === 0)) {
+        clearTimeout(deadline)
+        observer.disconnect()
+        resolve(state)
+      }
+    })
+    observer.observe(element, { attributes: true })
+  }))
   await page.getByRole('button', { name: '물 시뮬레이션 처음부터', exact: true }).click()
   await expect(stage).toHaveAttribute('data-inflow', 'enabled')
-  // Read all reset counters together before the first throttled status update.
-  const reset = await stage.evaluate(element => ({
-    elapsed: Number(element.getAttribute('data-elapsed-ms')),
-    injected: Number(element.getAttribute('data-injected-volume')),
-    discharged: Number(element.getAttribute('data-outlet-volume')),
-    escaped: Number(element.getAttribute('data-escaped-volume')),
-    particles: Number(element.getAttribute('data-particle-count')),
-  }))
+  const reset = await resetPromise
   expect(reset).toEqual({ elapsed: 0, injected: 0, discharged: 0, escaped: 0, particles: 0 })
   await page.getByLabel('물 흐름 속도').selectOption('1')
   await expect.poll(() => numberAttribute(stage, 'data-particle-count')).toBeGreaterThan(0)
@@ -126,10 +150,16 @@ test('수직 수로에서 물이 출구로 떨어지고 입자 질량이 보존�
   expect(Math.abs(state.injected - state.discharged - state.escaped - state.stored)).toBeLessThan(1e-5)
   expect(state.error).toBeLessThan(1e-5)
   expect(state.relativeError).toBeLessThan(1e-5)
+  // An occupied emitter lane can legitimately throttle active supply. Its
+  // backpressure indicator must clear once the inlet is switched off.
+  const pausedTime = await numberAttribute(stage, 'data-elapsed-ms')
+  await page.getByRole('button', { name: '물 공급 멈추기' }).click()
+  await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
+  await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(pausedTime + 150)
   await expect(stage).toHaveAttribute('data-saturated', 'false')
 })
 
-test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기에서 Worker를 회수한다', async ({ page }) => {
+test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기에서 Worker를 회수한다', async ({ page }, testInfo) => {
   test.setTimeout(60_000)
   await page.setViewportSize({ width: 360, height: 800 })
   await page.addInitScript(() => {
@@ -176,6 +206,10 @@ test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기
       }
     })
     expect(layout).toEqual({ pageOverflows: false, smallTargets: 0 })
+    if (repeat === 0) {
+      await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(2_000)
+      await page.screenshot({ path: testInfo.outputPath('free-surface-mobile.png') })
+    }
     await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
     await expect(stage).toHaveCount(0)
     await expect.poll(workers).toEqual({

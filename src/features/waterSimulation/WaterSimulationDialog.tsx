@@ -214,11 +214,13 @@ export default function WaterSimulationDialog({
   const wetFraction = status.totalCells > 0
     ? status.filledCells / status.totalCells
     : 0
-  const phaseProgress = status.reachedExit
-    ? Math.min(100, 82 + wetFraction * 18)
-    : Math.max(8, Math.min(78, wetFraction * 78))
   const fluidStatus = status as Partial<FreeSurfaceStatus>
   const isFreeSurface = mode === 'free-surface'
+  const phaseProgress = isFreeSurface
+    ? Math.min(100, Math.max(0, wetFraction * 100))
+    : status.reachedExit
+      ? Math.min(100, 82 + wetFraction * 18)
+      : Math.max(8, Math.min(78, wetFraction * 78))
   const toggleInflow = () => {
     const next = !inflow
     if (runtimeRef.current instanceof FreeSurfaceRuntime) runtimeRef.current.setInflow(next)
@@ -373,7 +375,9 @@ export default function WaterSimulationDialog({
             <small>
               젖은 구역 {status.filledCells.toLocaleString()} /{' '}
               {activeCellCount.toLocaleString()} ·{' '}
-              {status.complete
+              {isFreeSurface
+                ? status.reachedExit ? '출구로 배출 중' : '유로 형성'
+                : status.complete
                 ? '정상 유동'
                 : status.reachedExit
                   ? '수위 안정화'
