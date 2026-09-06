@@ -17,6 +17,8 @@ export class FreeSurfacePresentation3D {
   readonly content = new THREE.Group()
   readonly target = new THREE.Vector3()
   readonly viewSize = new THREE.Vector2(1, 1)
+  /** Constant fragment-to-eye direction of this orthographic board camera. */
+  readonly viewDirection = new THREE.Vector3(0, 0, 1)
 
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
@@ -164,6 +166,7 @@ export class FreeSurfacePresentation3D {
       this.target.z + cy * cp * this.distance,
     )
     this.camera.lookAt(this.target)
+    this.viewDirection.subVectors(this.camera.position, this.target).normalize()
     this.camera.updateProjectionMatrix()
     this.camera.updateMatrixWorld()
   }

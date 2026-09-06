@@ -1,12 +1,21 @@
 /** Optical controls only: changing appearance never changes the liquid state. */
 export interface WaterAppearance {
-  /** null keeps the original clear-water absorption and reflection. */
+  /** Presets may have their own optics; a custom color always uses dye tinting. */
+  readonly profile?: 'clear' | 'aqua' | 'tinted'
   readonly color: string | null
   readonly opacity: number
 }
 
 export const DEFAULT_WATER_APPEARANCE: WaterAppearance = {
+  profile: 'clear',
   color: null,
+  opacity: 0.82,
+}
+
+/** Preserve the former default's turquoise appearance under its honest name. */
+export const AQUA_WATER_APPEARANCE: WaterAppearance = {
+  profile: 'aqua',
+  color: '#16aeb7',
   opacity: 0.58,
 }
 

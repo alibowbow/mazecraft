@@ -17,7 +17,7 @@ function layoutFor(graph: MazeGraph, startCol = 0, endCol = graph.cols - 1) {
 function tankLayout(width: number, height: number): FluidLayout {
   const base = layoutFor(createEmptyGraph(height, width))
   return {
-    ...base, activeCellCount: 16, // Exactly 100 particles/s, at most one per tick.
+    ...base, activeCellCount: 16, // 100 particles/s at the explicit 1/3 test inflow.
     inletX: width / 2, inletY: 0, outletX: width + 5,
     minX: -0.2, maxX: width + 0.2, minY: -2, maxY: height + 1,
     walls: [
@@ -52,7 +52,7 @@ describe('free surface liquid', () => {
     for (let row = 0; row < 3; row++) openPassage(graph, { row, col: 0 }, { row: row + 1, col: 0 })
     const layout = layoutFor(graph)
     const solver = new FreeSurfaceSolver(layout)
-    solver.step(1 / 60)
+    solver.step(1 / 60, 1 / 3)
     const before = solver.snapshot()
     expect(before.count).toBe(1)
     solver.step(0.1, 0)
@@ -91,10 +91,10 @@ describe('free surface liquid', () => {
     const solver = new FreeSurfaceSolver(layout)
     solver.step(1)
     const flowing = solver.snapshot()
-    // A 36-cell maze requests 110 particles/s. Previously only 60 arrived even
-    // with an open passage, because a single busy lane discarded its budget.
-    expect(flowing.diagnostics.injected / layout.particleArea).toBeGreaterThanOrEqual(107)
-    expect(flowing.diagnostics.injected / layout.particleArea).toBeLessThanOrEqual(110)
+    // The stronger default requests 330 particles/s in a 36-cell maze. Check
+    // actual admitted water, not merely the larger nominal supply budget.
+    expect(flowing.diagnostics.injected / layout.particleArea).toBeGreaterThanOrEqual(327)
+    expect(flowing.diagnostics.injected / layout.particleArea).toBeLessThanOrEqual(330)
     expect(flowing.diagnostics.maxVelocity).toBeLessThanOrEqual(11 + 1e-10)
     expect(flowing.diagnostics.massError).toBe(0)
     solver.step(0.5, 0)
@@ -119,6 +119,35 @@ describe('free surface liquid', () => {
     expect(snapshot.diagnostics.discharged).toBe(0)
     expect(snapshot.diagnostics.escaped).toBe(0)
     expect(snapshot.diagnostics.massError).toBe(0)
+  })
+
+  it.each([6, 8])('fills a %i-cell-wide maze basin promptly at the default speed', size => {
+    const graph = createEmptyGraph(size, size)
+    for (let row = 0; row < size - 1; row++) openPassage(graph, { row, col: 0 }, { row: row + 1, col: 0 })
+    for (let col = 0; col < size - 2; col++) openPassage(graph, { row: size - 1, col }, { row: size - 1, col: col + 1 })
+    const layout = layoutFor(graph, 0, size - 1)
+    const solver = new FreeSurfaceSolver(layout)
+    solver.step(1)
+    const entering = solver.snapshot()
+    let insideMaze = 0
+    for (let i = 0; i < entering.count; i++) if (entering.positions[i * 2 + 1] >= 0) insideMaze++
+    // The real taper remains in place: particles stuck in the funnel do not
+    // count toward this requirement. The old default admitted only 48–54 here.
+    expect(insideMaze).toBeGreaterThanOrEqual(140)
+    solver.step(2)
+    const pooled = solver.snapshot()
+    let settledAboveHalfHeight = 0
+    for (let i = 0; i < pooled.count; i++) {
+      const x = pooled.positions[i * 2], y = pooled.positions[i * 2 + 1]
+      const speed = Math.hypot(pooled.velocities[i * 2], pooled.velocities[i * 2 + 1])
+      if (x > 1 && y > size - 1 && y < size - 0.5 && speed < 1) settledAboveHalfHeight++
+    }
+    // Geometric rise in the receiving basin, away from the falling jet.
+    expect(settledAboveHalfHeight).toBeGreaterThanOrEqual(12)
+    expect(pooled.diagnostics.time).toBe(3)
+    expect(pooled.diagnostics.discharged).toBe(0)
+    expect(pooled.diagnostics.escaped).toBe(0)
+    expect(pooled.diagnostics.massError).toBe(0)
   })
 
   it('pools above solid walls without tunnelling or inventing outlet discharge', () => {
@@ -189,7 +218,7 @@ describe('free surface liquid', () => {
     (width, height, count) => {
       const layout = tankLayout(width, height)
       const solver = new FreeSurfaceSolver(layout)
-      while (solver.snapshot().count < count) solver.step(1 / 120)
+      while (solver.snapshot().count < count) solver.step(1 / 120, 1 / 3)
       const admitted = solver.snapshot().diagnostics.injected
       solver.step(6, 0)
       // No active jet remains. A uniform pool's median is halfway through

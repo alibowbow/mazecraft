@@ -32,6 +32,7 @@ export class FreeSurfaceRuntime {
   private lastAdvance: number | null = null
   private lastPublish = 0
   private frameId = 0
+  private lastFrameTime: number | null = null
   private watchdog: ReturnType<typeof setTimeout> | undefined
 
   constructor(
@@ -159,7 +160,12 @@ export class FreeSurfaceRuntime {
 
   private tick = () => {
     if (this.disposed) return
-    this.advance(performance.now())
+    const now = performance.now()
+    if (this.ready && !this.paused && !document.hidden) {
+      if (this.lastFrameTime !== null) this.renderer.recordFrameTime(now - this.lastFrameTime)
+      this.lastFrameTime = now
+    } else this.lastFrameTime = null
+    this.advance(now)
     if (this.pendingSnapshot && !this.paused && !document.hidden) {
       const snapshot = this.pendingSnapshot
       this.pendingSnapshot = null
@@ -168,7 +174,7 @@ export class FreeSurfaceRuntime {
     this.frameId = requestAnimationFrame(this.tick)
   }
 
-  private visibilityChanged = () => { this.lastAdvance = null; this.debt = 0; this.pendingSnapshot = null }
+  private visibilityChanged = () => { this.lastAdvance = null; this.lastFrameTime = null; this.debt = 0; this.pendingSnapshot = null }
   setSpeed(value: number) {
     this.speed = Math.max(0.1, Math.min(4, value))
     this.debt = 0
@@ -176,6 +182,7 @@ export class FreeSurfaceRuntime {
   }
   setPaused(value: boolean) {
     this.paused = value
+    this.lastFrameTime = null
     this.debt = 0
     this.lastAdvance = performance.now()
     this.pendingSnapshot = null
@@ -206,6 +213,7 @@ export class FreeSurfaceRuntime {
     this.lastAdvance = null
     this.lastPublish = 0
     this.ready = false
+    this.lastFrameTime = null
     this.snapshot = null
     this.pendingSnapshot = null
     if (this.worker) {

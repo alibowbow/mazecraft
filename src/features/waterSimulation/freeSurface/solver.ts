@@ -3,6 +3,10 @@ import type { FluidLayout, FluidSnapshot } from './types'
 const FIXED_DT = 1 / 120
 const GRAVITY = 12
 const MAX_SPEED = 11
+const DEFAULT_SUPPLY_GAIN = 3
+// Six non-overlapping lanes can clear one particle every two fixed steps.
+// Larger requested budgets cannot make this physical nozzle deliver more.
+const MAX_SOURCE_RATE = 360
 
 /** Position-based 2D liquid with area-normalized density projection and conservative accounting.
  * Each admitted particle keeps its area until it leaves the domain. This is a
@@ -21,6 +25,7 @@ export class FreeSurfaceSolver {
   private readonly density: Float64Array
   private readonly gradientSquared: Float64Array
   private pairs = new Uint32Array(512)
+  private pairGeometry = new Float64Array(1024)
   private pairCount = 0
   private readonly deltaX: Float64Array
   private readonly deltaY: Float64Array
@@ -97,12 +102,17 @@ export class FreeSurfaceSolver {
   private emit(inflow: number): void {
     this.saturated = false
     if (inflow <= 0) { this.emission = 0; return }
-    const rate = Math.min(220, 80 + Math.sqrt(this.layout.activeCellCount) * 5) * inflow
+    // A visible pouring effect needs enough actual volume to raise a basin,
+    // not merely a faster animation of the former thin stream.
+    const rate = Math.min(MAX_SOURCE_RATE, (80 + Math.sqrt(this.layout.activeCellCount) * 5) * DEFAULT_SUPPLY_GAIN * inflow)
     const lanes = 6
     const laneSpacing = this.layout.radius * 2.12
-    // Supply speed must clear a lane before its next particle is due. A fixed
-    // 1.6-cell/s launch silently throttled the requested flow as maze size grew.
-    const launchSpeed = Math.min(MAX_SPEED, Math.max(1.6, rate / lanes * laneSpacing))
+    // A lane must clear at its earliest discrete revisit, including the .006
+    // source stagger. Using only the average emission interval misses the
+    // two-tick clearance by a fraction and throttles a 330/s source to 240/s.
+    const lanePeriodSteps = Math.max(1, Math.floor(lanes / (rate * FIXED_DT)))
+    const minimumClearanceSpeed = (this.layout.radius * 1.9 + 0.006) / (lanePeriodSteps * FIXED_DT)
+    const launchSpeed = Math.min(MAX_SPEED, Math.max(1.6, rate / lanes * laneSpacing, minimumClearanceSpeed))
     this.emission = Math.min(8, this.emission + rate * FIXED_DT)
     while (this.emission >= 1) {
       if (this.count >= this.layout.capacity) { this.saturated = true; this.emission = 0; break }
@@ -189,9 +199,11 @@ export class FreeSurfaceSolver {
     for (let i = 0; i < n; i++) {
       this.oldX[i] = this.x[i]; this.oldY[i] = this.y[i]
       this.vy[i] += GRAVITY * FIXED_DT
-      const speed = Math.hypot(this.vx[i], this.vy[i])
-      const factor = speed > MAX_SPEED ? MAX_SPEED / speed : 1
-      this.vx[i] *= factor; this.vy[i] *= factor
+      const speed2 = this.vx[i] * this.vx[i] + this.vy[i] * this.vy[i]
+      if (speed2 > MAX_SPEED * MAX_SPEED) {
+        const factor = MAX_SPEED / Math.sqrt(speed2)
+        this.vx[i] *= factor; this.vy[i] *= factor
+      }
       this.move(i, this.x[i] + this.vx[i] * FIXED_DT, this.y[i] + this.vy[i] * FIXED_DT)
     }
     // The 2D poly6 kernel integrates to one. Multiplying by the SAME area used
@@ -203,9 +215,11 @@ export class FreeSurfaceSolver {
       this.rebuildNeighbors()
       this.density.fill(normalization, 0, n); this.gradientSquared.fill(0, 0, n)
       this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
-      this.forEachPair((i, j, dx, dy, d2) => {
-        if (d2 >= h2) return
-        const q = 1 - d2 / h2, q2 = q * q
+      for (let pair = 0; pair < this.pairCount; pair += 2) {
+        const i = this.pairs[pair], j = this.pairs[pair + 1], geometry = pair * 2
+        const dx = this.pairGeometry[geometry], dy = this.pairGeometry[geometry + 1]
+        const q = 1 - this.pairGeometry[geometry + 2] / h2
+        const q2 = this.pairGeometry[geometry + 3]
         const rho = normalization * q2 * q
         this.density[i] += rho; this.density[j] += rho
         const gx = gradientScale * q2 * dx, gy = gradientScale * q2 * dy
@@ -213,7 +227,7 @@ export class FreeSurfaceSolver {
         this.deltaX[j] -= gx; this.deltaY[j] -= gy
         const gradient2 = gx * gx + gy * gy
         this.gradientSquared[i] += gradient2; this.gradientSquared[j] += gradient2
-      })
+      }
       for (let i = 0; i < n; i++) {
         const gradient2 = this.gradientSquared[i] + this.deltaX[i] ** 2 + this.deltaY[i] ** 2
         // Unilateral density constraint: free surfaces never attract or support
@@ -221,22 +235,23 @@ export class FreeSurfaceSolver {
         this.density[i] = -Math.max(0, this.density[i] - 1) / (gradient2 + 1e-6)
       }
       this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
-      this.forEachPair((i, j, dx, dy, d2) => {
-        if (d2 >= h2) return
+      for (let pair = 0; pair < this.pairCount; pair += 2) {
+        const i = this.pairs[pair], j = this.pairs[pair + 1], geometry = pair * 2
+        let dx = this.pairGeometry[geometry], dy = this.pairGeometry[geometry + 1]
+        const d2 = this.pairGeometry[geometry + 2]
         let distance = Math.sqrt(d2)
         if (distance < 1e-7) { dx = 1e-6; dy = 0; distance = 1e-6 }
-        const q = 1 - d2 / h2
-        const pressure = -(this.density[i] + this.density[j]) * gradientScale * q * q * distance
+        const pressure = -(this.density[i] + this.density[j]) * gradientScale * this.pairGeometry[geometry + 3] * distance
         // Contact support also covers missing kernel neighbours at solid walls.
         const separation = Math.max(0, this.layout.radius * 2 - distance) * 0.35
         const correction = Math.min(0.018, pressure * 0.7 + separation)
         const cx = dx / distance * correction, cy = dy / distance * correction
         this.deltaX[i] -= cx; this.deltaY[i] -= cy
         this.deltaX[j] += cx; this.deltaY[j] += cy
-      })
+      }
       for (let i = 0; i < n; i++) {
-        const length = Math.hypot(this.deltaX[i], this.deltaY[i])
-        const scale = length > 0.035 ? 0.035 / length : 1
+        const length2 = this.deltaX[i] * this.deltaX[i] + this.deltaY[i] * this.deltaY[i]
+        const scale = length2 > 0.035 * 0.035 ? 0.035 / Math.sqrt(length2) : 1
         this.move(i, this.x[i] + this.deltaX[i] * scale, this.y[i] + this.deltaY[i] * scale)
       }
     }
@@ -247,19 +262,23 @@ export class FreeSurfaceSolver {
     // XSPH damping exchanges momentum symmetrically; falling jets retain acceleration.
     this.rebuildNeighbors()
     this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
-    this.forEachPair((i, j, dx, dy, d2) => {
-      if (d2 >= h2) return
+    for (let pair = 0; pair < this.pairCount; pair += 2) {
+      const i = this.pairs[pair], j = this.pairs[pair + 1]
+      const d2 = this.pairGeometry[pair * 2 + 2]
       const q = 1 - Math.sqrt(d2) / h
       const amount = q * 0.035
       const cx = (this.vx[j] - this.vx[i]) * amount, cy = (this.vy[j] - this.vy[i]) * amount
       this.deltaX[i] += cx; this.deltaY[i] += cy
       this.deltaX[j] -= cx; this.deltaY[j] -= cy
-    })
+    }
     let newlyDischarged = 0
     for (let i = 0; i < this.count; i++) {
       this.vx[i] += this.deltaX[i]; this.vy[i] += this.deltaY[i]
-      const speed = Math.hypot(this.vx[i], this.vy[i])
-      if (speed > MAX_SPEED) { this.vx[i] *= MAX_SPEED / speed; this.vy[i] *= MAX_SPEED / speed }
+      const speed2 = this.vx[i] * this.vx[i] + this.vy[i] * this.vy[i]
+      if (speed2 > MAX_SPEED * MAX_SPEED) {
+        const factor = MAX_SPEED / Math.sqrt(speed2)
+        this.vx[i] *= factor; this.vy[i] *= factor
+      }
       if (!this.crossed[i] && this.oldY[i] <= this.layout.outletY && this.y[i] > this.layout.outletY && Math.abs(this.x[i] - this.layout.outletX) <= 0.4) {
         this.crossed[i] = 1; this.dischargedCount++; this.fallingCount++; newlyDischarged++
       }
@@ -306,26 +325,27 @@ export class FreeSurfaceSolver {
       const row = Math.floor((this.y[i] - this.layout.minY) / h)
       for (let cy = Math.max(0, row - 1); cy <= Math.min(this.hashRows - 1, row + 1); cy++) {
         for (let cx = Math.max(0, col - 1); cx <= Math.min(this.hashCols - 1, col + 1); cx++) {
-          for (let j = this.heads[cy * this.hashCols + cx]; j >= 0; j = this.next[j]) {
-            if (j <= i) continue
+          // rebuildHash inserts increasing indices at the head. Each bucket is
+          // descending, so the remaining tail is already processed once j<=i.
+          for (let j = this.heads[cy * this.hashCols + cx]; j > i; j = this.next[j]) {
             const dx = this.x[j] - this.x[i], dy = this.y[j] - this.y[i]
-            if (dx * dx + dy * dy >= h2 || !this.visiblePair(i, j)) continue
+            const d2 = dx * dx + dy * dy
+            if (d2 >= h2 || !this.visiblePair(i, j)) continue
             if (this.pairCount + 2 > this.pairs.length) {
               const expanded = new Uint32Array(this.pairs.length * 2)
               expanded.set(this.pairs); this.pairs = expanded
+              const geometry = new Float64Array(this.pairGeometry.length * 2)
+              geometry.set(this.pairGeometry); this.pairGeometry = geometry
             }
+            // Positions stay unchanged through density and correction accumulation.
+            // Reuse this geometry only until their resulting moves, then rebuild.
+            const geometry = this.pairCount * 2, q = 1 - d2 / h2
+            this.pairGeometry[geometry] = dx; this.pairGeometry[geometry + 1] = dy
+            this.pairGeometry[geometry + 2] = d2; this.pairGeometry[geometry + 3] = q * q
             this.pairs[this.pairCount++] = i; this.pairs[this.pairCount++] = j
           }
         }
       }
-    }
-  }
-
-  private forEachPair(visit: (i: number, j: number, dx: number, dy: number, distanceSquared: number) => void): void {
-    for (let pair = 0; pair < this.pairCount; pair += 2) {
-      const i = this.pairs[pair], j = this.pairs[pair + 1]
-      const dx = this.x[j] - this.x[i], dy = this.y[j] - this.y[i]
-      visit(i, j, dx, dy, dx * dx + dy * dy)
     }
   }
 

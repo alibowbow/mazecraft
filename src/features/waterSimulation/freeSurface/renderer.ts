@@ -3,7 +3,8 @@ import type { FluidLayout, FluidSnapshot } from './types'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
 import { buildFunnelVisual } from './funnelVisual'
-import type { WaterAppearance } from './appearance'
+import { RenderPerformanceBudget } from './renderBudget'
+import { DEFAULT_WATER_APPEARANCE, type WaterAppearance } from './appearance'
 
 type SurfaceStyle = 'calm' | 'natural' | 'dynamic'
 
@@ -98,6 +99,10 @@ const waterFragment = /* glsl */ `
   uniform float uTime;
   uniform float uOpticalLod;
   uniform float uOpacity;
+  uniform float uClearOptics;
+  uniform float uPresentation3D;
+  uniform float uRippleDetail;
+  uniform vec3 uViewDirection;
   uniform vec3 uAbsorption;
   uniform vec3 uScatter;
   varying vec2 vUv;
@@ -117,6 +122,55 @@ const waterFragment = /* glsl */ `
   }
   float wetAt(vec2 uv) {
     return textureLod(uDensity, uv, uOpticalLod).b;
+  }
+  vec2 rippleSlope(vec2 point, float motion) {
+    // Independent finite wave bands: analytic slopes need no displacement
+    // texture, FFT or extra render pass. Derivative filtering removes detail
+    // smaller than a screen pixel before it can shimmer on a distant board.
+    float footprint = max(length(dFdx(point)), length(dFdy(point)));
+    float detail = (1.0 - smoothstep(0.035, 0.13, footprint)) * uRippleDetail;
+    vec2 broadA = vec2(0.38, -0.92);
+    vec2 broadB = vec2(-0.81, -0.59);
+    vec2 fineA = vec2(0.91, -0.41);
+    vec2 fineB = vec2(-0.24, -0.97);
+    vec2 slope = broadA * cos(dot(point, broadA) * 5.1 - uTime * 2.7) * 0.13;
+    slope += broadB * cos(dot(point, broadB) * 8.7 - uTime * 3.9 + 1.8) * 0.085;
+    slope += fineA * cos(dot(point, fineA) * 19.3 - uTime * 6.4 + 0.7) * 0.047 * detail;
+    slope += fineB * cos(dot(point, fineB) * 33.7 - uTime * 9.1 + 2.4) * 0.024 * detail;
+    // Measured speed controls agitation. Static pools receive no perpetual
+    // invented current; every moving phase uses the accepted solver time.
+    return slope * motion * (0.65 + uStyle * 0.65);
+  }
+  vec3 waterOptics3D(vec2 maze, vec3 normal, float thickness) {
+    vec3 view = normalize(uViewDirection);
+    float noV = max(0.06, dot(normal, view));
+    float opticalPath = thickness / max(0.55, noV);
+    vec3 transmission = exp(-uAbsorption * opticalPath);
+    vec3 backing = boardAt(maze + normal.xy * vec2(0.10, -0.10));
+    vec3 water = backing * transmission + uScatter * (1.0 - transmission);
+    vec3 reflected = reflect(-view, normal);
+    // A neutral studio environment suits a clear maze board. The user's dye
+    // selection remains in transmission, never in a blanket white overlay.
+    float environment = 0.28 + 0.54 * smoothstep(-0.65, 0.75, reflected.y);
+    float fresnel = 0.02 + 0.98 * pow(1.0 - noV, 5.0);
+    water = mix(water, vec3(environment), fresnel);
+    vec3 light = normalize(vec3(-0.35, 0.45, 0.82));
+    vec3 halfway = normalize(view + light);
+    float noL = max(0.0, dot(normal, light));
+    float noH = max(0.0, dot(normal, halfway));
+    float voH = max(0.0, dot(view, halfway));
+    float alpha = 0.055;
+    float alpha2 = alpha * alpha;
+    float denominator = noH * noH * (alpha2 - 1.0) + 1.0;
+    float distribution = alpha2 / (3.14159265 * denominator * denominator);
+    float visibility = 0.5 / max(0.01,
+      noL * sqrt(noV * noV * (1.0 - alpha2) + alpha2)
+      + noV * sqrt(noL * noL * (1.0 - alpha2) + alpha2));
+    float sunFresnel = 0.02 + 0.98 * pow(1.0 - voH, 5.0);
+    // Bound the narrow GGX glint to retain the refracted backing even when a
+    // wave aligns with the light. This is an optical approximation, not foam.
+    water += vec3(min(0.17, distribution * visibility * sunFresnel * noL * 0.32));
+    return water;
   }
   void main() {
     vec2 world = uCenter + (vUv - 0.5) * uViewSize;
@@ -159,22 +213,38 @@ const waterFragment = /* glsl */ `
     float core = wetAt(vUv);
     float thickness = 0.18 + core * 0.95 + depthTone * 0.20;
     vec3 normal = normalize(vec3(vec2(left - right, down - up) * 1.35, 1.0));
-    vec3 transmission = exp(-uAbsorption * thickness);
-    vec3 transmittedBacking = boardAt(maze + normal.xy * vec2(0.035, -0.035));
-    vec3 water = transmittedBacking * transmission;
-    water += uScatter * (1.0 - transmission);
-    float reflection = pow(max(dot(normal, normalize(vec3(-0.42, 0.32, 1.0))), 0.0), 36.0);
-    float fresnel = 0.02 + 0.32 * pow(1.0 - normal.z, 3.0);
-    water = mix(water, vec3(0.84, 0.95, 1.0), fresnel);
-    water += vec3(0.15, 0.19, 0.20) * reflection * (0.65 + uStyle * 0.20);
-    // Only moving water receives a subtle travelling light band. Time is the
-    // accepted physics snapshot's time, so pause and still pools stay still.
     float motion = smoothstep(0.025, 0.3, speed);
-    float band = pow(0.5 + 0.5 * sin(maze.x * 6.4 + sin(maze.y * 3.1 - uTime * 1.7) * 0.8), 8.0);
-    water += vec3(0.035, 0.045, 0.05) * band * motion * (0.6 + uStyle * 0.4);
+    vec3 water;
+    if (uPresentation3D > 0.5) {
+      vec2 slope = rippleSlope(world, motion) * (1.0 - rim * 0.6);
+      normal = normalize(vec3(normal.xy / max(normal.z, 0.15) + slope, 1.0));
+      water = waterOptics3D(maze, normal, thickness);
+    } else {
+      vec3 transmission = exp(-uAbsorption * thickness);
+      float refractionScale = mix(0.035, 0.07, uClearOptics);
+      vec3 transmittedBacking = boardAt(maze + normal.xy * vec2(refractionScale, -refractionScale));
+      water = transmittedBacking * transmission;
+      water += uScatter * (1.0 - transmission);
+      float reflection = pow(max(dot(normal, normalize(vec3(-0.42, 0.32, 1.0))), 0.0), 36.0);
+      float fresnel = 0.02 + 0.32 * pow(1.0 - normal.z, 3.0);
+      // Colorless water transmits the warm backing and reflects neutral light.
+      // Keep the original blue environment only for the named colored profiles.
+      water = mix(water, mix(vec3(0.84, 0.95, 1.0), vec3(0.58), uClearOptics), fresnel);
+      water += mix(vec3(0.15, 0.19, 0.20), vec3(0.065), uClearOptics)
+        * reflection * (0.65 + uStyle * 0.20);
+      // Only moving water receives a subtle travelling light band. Time is the
+      // accepted physics snapshot's time, so pause and still pools stay still.
+      float band = pow(0.5 + 0.5 * sin(maze.x * 6.4 + sin(maze.y * 3.1 - uTime * 1.7) * 0.8), 8.0);
+      water += mix(vec3(0.035, 0.045, 0.05), vec3(0.016), uClearOptics)
+        * band * motion * (0.6 + uStyle * 0.4);
+    }
     float sky = pow(max(dot(outward, normalize(vec2(-0.3, 1.0))), 0.0), 4.0);
-    water += vec3(0.40, 0.43, 0.40) * rim * sky * 0.72;
-    water -= vec3(0.045, 0.055, 0.045) * rim * max(-outward.y, 0.0);
+    water += mix(vec3(0.40, 0.43, 0.40), vec3(0.16), uClearOptics) * rim * sky * 0.72;
+    water -= mix(vec3(0.045, 0.055, 0.045), vec3(0.18), uClearOptics)
+      * rim * max(-outward.y, 0.0);
+    // A broad reflected shade reveals the clear jet's curvature without dye,
+    // a white fill, or a separate outline around each underlying particle.
+    water -= vec3(0.055) * uClearOptics * (1.0 - normal.z);
     // Composite translucency against the actual backing. The canvas itself
     // stays opaque so the maze and controls do not bleed through the stage.
     gl_FragColor = vec4(mix(background, water, coverage * uOpacity), 1.0);
@@ -225,6 +295,9 @@ export class FreeSurfaceRenderer {
   private fieldDirty = true
   private boardDirty = true
   private surfaceBuilds = 0
+  private opticalBuilds = 0
+  private readonly performanceBudget = new RenderPerformanceBudget()
+  private resolutionDirty = false
 
   constructor(
     private readonly mount: HTMLElement,
@@ -239,8 +312,10 @@ export class FreeSurfaceRenderer {
     this.canvas = this.renderer.domElement
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'
     this.canvas.dataset.viewMode = 'free-surface'
-    this.canvas.dataset.waterOpacity = '0.58'
+    this.canvas.dataset.waterOpacity = String(DEFAULT_WATER_APPEARANCE.opacity)
     this.canvas.dataset.waterColor = 'transparent'
+    this.canvas.dataset.waterOptics = 'clear'
+    this.canvas.dataset.waterDetail = 'flat-meniscus'
     this.canvas.setAttribute('aria-label', '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none;'
     this.canvas.tabIndex = 0
@@ -307,9 +382,13 @@ export class FreeSurfaceRenderer {
         uStyle: { value: 0.5 },
         uTime: { value: 0 },
         uOpticalLod: { value: 0 },
-        uOpacity: { value: 0.58 },
-        uAbsorption: { value: new THREE.Vector3(1.25, 0.34, 0.18) },
-        uScatter: { value: new THREE.Vector3(0.035, 0.20, 0.24) },
+        uOpacity: { value: DEFAULT_WATER_APPEARANCE.opacity },
+        uClearOptics: { value: 1 },
+        uPresentation3D: { value: 0 },
+        uRippleDetail: { value: quality === 'high' ? 1 : 0.45 },
+        uViewDirection: { value: new THREE.Vector3(0, 0, 1) },
+        uAbsorption: { value: new THREE.Vector3(0.045, 0.045, 0.045) },
+        uScatter: { value: new THREE.Vector3(0, 0, 0) },
       },
       depthTest: false,
       depthWrite: false,
@@ -408,6 +487,7 @@ export class FreeSurfaceRenderer {
 
   render(snapshot: FluidSnapshot): void {
     if (this.disposed) return
+    if (this.resolutionDirty) this.configureSize()
     this.waterMaterial.uniforms.uTime.value = snapshot.diagnostics.time
     const count = Math.min(snapshot.count, this.layout.capacity)
     const positions = this.positionAttribute.array as Float32Array
@@ -437,22 +517,32 @@ export class FreeSurfaceRenderer {
   setAppearance(appearance: WaterAppearance): void {
     if (this.disposed) return
     const color = appearance.color && /^#[0-9a-f]{6}$/i.test(appearance.color) ? appearance.color.toLowerCase() : null
+    const profile = appearance.profile === 'aqua' ? 'aqua' : color ? 'tinted' : 'clear'
     const absorption = this.waterMaterial.uniforms.uAbsorption.value as THREE.Vector3
     const scatter = this.waterMaterial.uniforms.uScatter.value as THREE.Vector3
-    if (color) {
+    if (profile === 'aqua') {
+      absorption.set(1.25, 0.34, 0.18)
+      scatter.set(0.035, 0.20, 0.24)
+    } else if (color) {
       const tint = new THREE.Color(color)
       // Channel-dependent absorption retains the etched backing and meniscus;
       // changing dye never replaces the continuous surface with an opaque fill.
       absorption.set(0.12 + (1 - tint.r) * 2.2, 0.12 + (1 - tint.g) * 2.2, 0.12 + (1 - tint.b) * 2.2)
       scatter.set(tint.r * 0.24, tint.g * 0.24, tint.b * 0.24)
     } else {
-      absorption.set(1.25, 0.34, 0.18)
-      scatter.set(0.035, 0.20, 0.24)
+      // At maze scale clear water has no visible dye. Equal, weak extinction
+      // leaves the backing readable; only refraction and neutral light shape it.
+      absorption.set(0.045, 0.045, 0.045)
+      scatter.set(0, 0, 0)
     }
-    const opacity = Number.isFinite(appearance.opacity) ? THREE.MathUtils.clamp(appearance.opacity, 0.1, 0.9) : 0.58
+    const opacity = Number.isFinite(appearance.opacity)
+      ? THREE.MathUtils.clamp(appearance.opacity, 0.1, 0.9)
+      : DEFAULT_WATER_APPEARANCE.opacity
+    this.waterMaterial.uniforms.uClearOptics.value = profile === 'clear' ? 1 : 0
     this.waterMaterial.uniforms.uOpacity.value = opacity
     this.canvas.dataset.waterColor = color ?? 'transparent'
     this.canvas.dataset.waterOpacity = String(opacity)
+    this.canvas.dataset.waterOptics = profile
     this.boardDirty = true
     this.draw()
   }
@@ -470,8 +560,10 @@ export class FreeSurfaceRenderer {
   setViewMode(mode: 'free-surface' | 'surface-3d'): void {
     if (this.disposed || this.viewMode === mode) return
     this.viewMode = mode
+    this.waterMaterial.uniforms.uPresentation3D.value = mode === 'surface-3d' ? 1 : 0
     this.fieldDirty = true
     this.canvas.dataset.viewMode = mode
+    this.canvas.dataset.waterDetail = mode === 'surface-3d' ? 'multiband-ripples' : 'flat-meniscus'
     this.canvas.setAttribute('aria-label', mode === 'surface-3d'
       ? '같은 미로 물의 입체 보기. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
@@ -484,11 +576,22 @@ export class FreeSurfaceRenderer {
 
   resize(): void {
     if (this.disposed) return
+    this.configureSize()
+    this.draw()
+  }
+
+  recordFrameTime(frameMs: number): void {
+    if (!this.disposed && this.performanceBudget.observe(frameMs)) this.resolutionDirty = true
+  }
+
+  private configureSize(): void {
+    this.resolutionDirty = false
     this.width = Math.max(1, this.mount.clientWidth)
     this.height = Math.max(1, this.mount.clientHeight)
     // Bound GPU work on high-DPR and large displays without changing physics.
     const maxPixels = this.quality === 'high' ? 1_600_000 : 900_000
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 1.5 : 1,
+    const performanceScale = this.performanceBudget.scale
+    this.renderer.setPixelRatio(performanceScale * Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 1.5 : 1,
       Math.sqrt(maxPixels / (this.width * this.height))))
     this.renderer.setSize(this.width, this.height, false)
     const ratio = this.renderer.getPixelRatio()
@@ -502,9 +605,9 @@ export class FreeSurfaceRenderer {
     this.boardTarget.setSize(Math.max(1, Math.round(this.width * ratio)), Math.max(1, Math.round(this.height * ratio)))
     this.waterMaterial.uniforms.uTexel.value.set(1 / width, 1 / height)
     this.canvas.dataset.surfaceResolution = `${width}x${height}`
+    this.canvas.dataset.renderScale = String(performanceScale)
     this.fieldDirty = true
     this.updateCamera()
-    this.draw()
   }
 
   resetCamera(): void {
@@ -536,6 +639,12 @@ export class FreeSurfaceRenderer {
       this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
       this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
       this.presentation3d?.updateView(this.width, this.height, this.zoom, this.panX, this.panY, this.yaw, this.pitch)
+      if (this.presentation3d) {
+        this.waterMaterial.uniforms.uViewDirection.value.copy(this.presentation3d.viewDirection)
+      }
+      // View-dependent optics must follow orbiting, but the particle density
+      // and its filtered surface remain in the same fixed maze coordinates.
+      this.boardDirty = true
       return
     }
     const contentWidth = this.layout.maxX - this.layout.minX + 0.65
@@ -582,6 +691,7 @@ export class FreeSurfaceRenderer {
         this.funnel.visible = false
         this.renderer.setRenderTarget(this.boardTarget)
         this.renderer.render(this.scene, this.camera)
+        this.canvas.dataset.opticalBuilds = String(++this.opticalBuilds)
         this.flatWalls.visible = true
         this.funnel.visible = true
         this.boardDirty = false

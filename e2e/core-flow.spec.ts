@@ -308,7 +308,7 @@ test('15. 3D 입자 물이 위쪽 깔때기에서 아래 출구로 흐른다', a
   await page.locator('.mobile-tabs button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('low')
   await page.getByRole('button', { name: '물 시뮬레이션', exact: true }).click()
-  await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
+  await page.getByRole('button', { name: '3D 수면', exact: true }).click()
   const stage = page.getByTestId('water-simulation-stage')
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 20_000 })
   await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')

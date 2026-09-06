@@ -53,6 +53,9 @@ test('화면이 8fps로 느려져도 물리 시간을 버리지 않고 미로에
   expect(progress.simulatedMs).toBeGreaterThan(progress.wallMs * 0.72)
   expect(progress.simulatedMs).toBeLessThan(progress.wallMs * 1.15)
   expect(progress.storedGain).toBeGreaterThan(0.5)
+  // Sustained presentation load reduces only the GPU drawing-buffer scale.
+  // The fixed-step progress checks above and paused pixels below still apply.
+  await expect(stage.locator('canvas')).toHaveAttribute('data-render-scale', /^0\.(85|7|6)$/)
   await pauseWater(page, stage)
   const paused = await readWaterState(stage)
   const image = await stage.locator('canvas').screenshot()

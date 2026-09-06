@@ -11,6 +11,7 @@ vi.mock('./renderer', () => ({
     dispose = rendering.dispose
     setViewMode = rendering.setViewMode
     setSurfaceStyle() {}
+    recordFrameTime() {}
     setInflow() {}
     resetCamera() {}
   },

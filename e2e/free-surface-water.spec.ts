@@ -29,7 +29,8 @@ async function importProject(page: Page, project: MazeProject, mobile = false) {
 async function openDefaultWater(page: Page) {
   await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
   const stage = page.getByTestId('water-simulation-stage')
-  await expect(page.getByLabel('물 시뮬레이션 방식')).toHaveValue('free-surface')
+  await expect(page.getByRole('button', { name: '2D 물 흐름', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '3D 수면', exact: true })).toBeVisible()
   await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 20_000 })
   await expect(stage).toHaveAttribute('data-solver-mode', 'worker')

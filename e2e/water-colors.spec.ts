@@ -23,6 +23,41 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   const initialFieldBuilds = await canvas.getAttribute('data-surface-builds')
   expect(Number(initialFieldBuilds)).toBeGreaterThan(0)
 
+  await expect(canvas).toHaveAttribute('data-water-optics', 'clear')
+  await page.screenshot({ path: testInfo.outputPath('water-colorless-desktop.png') })
+  await palette.getByRole('button', { name: '물 색상 청록', exact: true }).click()
+  await expect(canvas).toHaveAttribute('data-water-optics', 'aqua')
+  const aqua = await canvas.screenshot()
+  await page.screenshot({ path: testInfo.outputPath('water-original-aqua-desktop.png') })
+  // Compare actual water pixels, selected by their cyan tint in the aqua
+  // rendering. Clear water may refract the warm backing, but must not be dyed.
+  const chroma = await page.evaluate(async ({ clear, aqua }) => {
+    const pixels = async (encoded: string) => {
+      const source = new Image()
+      source.src = 'data:image/png;base64,' + encoded
+      await source.decode()
+      const image = document.createElement('canvas')
+      image.width = source.naturalWidth; image.height = source.naturalHeight
+      const context = image.getContext('2d')!
+      context.drawImage(source, 0, 0)
+      return context.getImageData(0, 0, image.width, image.height).data
+    }
+    const [neutral, tinted] = await Promise.all([pixels(clear), pixels(aqua)])
+    let count = 0, neutralChroma = 0, aquaChroma = 0
+    for (let i = 0; i < neutral.length; i += 4) {
+      if (tinted[i + 1] - tinted[i] < 25 || Math.abs(neutral[i] - tinted[i]) < 15) continue
+      count++
+      neutralChroma += Math.max(neutral[i], neutral[i + 1], neutral[i + 2]) - Math.min(neutral[i], neutral[i + 1], neutral[i + 2])
+      aquaChroma += tinted[i + 1] - tinted[i]
+    }
+    return { count, neutral: neutralChroma / Math.max(1, count), aqua: aquaChroma / Math.max(1, count) }
+  }, { clear: clear.toString('base64'), aqua: aqua.toString('base64') })
+  expect(chroma.count).toBeGreaterThan(200)
+  expect(chroma.neutral).toBeLessThan(12)
+  expect(chroma.aqua).toBeGreaterThan(25)
+  expect(await readWaterState(stage)).toEqual(state)
+  await expect(canvas).toHaveAttribute('data-surface-builds', initialFieldBuilds!)
+
   await palette.getByRole('button', { name: '물 색상 파랑', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color-preset', 'blue')
   await expect(stage).toHaveAttribute('data-water-color', '#3786e8')
@@ -47,22 +82,29 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   expect(await readWaterState(stage)).toEqual(state)
   await expect(canvas).toHaveAttribute('data-surface-builds', initialFieldBuilds!)
 
-  await page.getByLabel('물 시뮬레이션 방식').selectOption('surface-3d')
+  await page.getByRole('button', { name: '3D 수면', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color', '#ed2f79')
   const threeDColored = await canvas.screenshot()
   await page.screenshot({ path: testInfo.outputPath('water-custom-3d-desktop.png') })
   const threeDFieldBuilds = await canvas.getAttribute('data-surface-builds')
+  const threeDOpticalBuilds = Number(await canvas.getAttribute('data-optical-builds'))
+  await expect(canvas).toHaveAttribute('data-water-detail', 'multiband-ripples')
   const box = (await canvas.boundingBox())!
   await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.45)
   await page.mouse.down()
   await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.5, { steps: 3 })
   await page.mouse.up()
   await expect(canvas).toHaveAttribute('data-surface-builds', threeDFieldBuilds!)
+  expect(Number(await canvas.getAttribute('data-optical-builds'))).toBeGreaterThan(threeDOpticalBuilds)
   await palette.getByRole('button', { name: '물 색상 투명 물', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color', 'clear')
   await expect(canvas).toHaveAttribute('data-surface-builds', threeDFieldBuilds!)
   expect((await canvas.screenshot()).equals(threeDColored)).toBe(false)
-  await page.getByLabel('물 시뮬레이션 방식').selectOption('free-surface')
+  const clearThreeD = await canvas.screenshot()
+  await page.screenshot({ path: testInfo.outputPath('water-colorless-ripple-3d-desktop.png') })
+  await page.waitForTimeout(320)
+  expect((await canvas.screenshot()).equals(clearThreeD)).toBe(true)
+  await page.getByRole('button', { name: '2D 물 흐름', exact: true }).click()
   expect((await canvas.screenshot()).equals(clear)).toBe(true)
   expect(await readWaterState(stage)).toEqual(state)
   expect(await readWorkerProbe(page)).toEqual(workers)
@@ -85,6 +127,15 @@ test('15. 물 색상과 수면 표현이 모바일과 태블릿에서 바로 보
     const styles = page.getByRole('group', { name: '수면 표현', exact: true })
     await expect(palette).toBeVisible()
     await expect(styles).toBeVisible()
+    const controlsFit = await page.locator('.water-simulation-controls button, .water-simulation-controls select').evaluateAll(controls => {
+      const boxes = controls.map(control => control.getBoundingClientRect())
+      return boxes.every((box, index) => box.width >= 44 && box.height >= 44
+        && box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight
+        && boxes.slice(index + 1).every(other =>
+          Math.min(box.right, other.right) - Math.max(box.left, other.left) <= 0.5
+          || Math.min(box.bottom, other.bottom) - Math.max(box.top, other.top) <= 0.5))
+    })
+    expect(controlsFit).toBe(true)
     const layout = await page.locator('.water-appearance-controls').evaluate(element => ({
       overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       invalidTargets: [...element.querySelectorAll('button, input')].flatMap(control => {

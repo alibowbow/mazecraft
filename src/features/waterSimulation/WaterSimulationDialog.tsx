@@ -24,6 +24,7 @@ import type {
 import type { WaterSurfaceStyle } from './rendering'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from './freeSurface/runtime'
 import {
+  AQUA_WATER_APPEARANCE,
   COLORED_WATER_OPACITY,
   DEFAULT_WATER_APPEARANCE,
   WATER_COLOR_PRESETS,
@@ -113,12 +114,13 @@ export default function WaterSimulationDialog({
   const [colorPreset, setColorPreset] = useState<WaterColorPresetId>('clear')
   const [customColor, setCustomColor] = useState('#db668f')
   const appearance = useMemo<WaterAppearance>(() => {
+    if (colorPreset === 'aqua') return AQUA_WATER_APPEARANCE
     const color = colorPreset === 'custom'
       ? customColor
       : WATER_COLOR_PRESETS.find((preset) => preset.id === colorPreset)?.color ?? null
     return color === null
       ? DEFAULT_WATER_APPEARANCE
-      : { color, opacity: COLORED_WATER_OPACITY }
+      : { profile: 'tinted', color, opacity: COLORED_WATER_OPACITY }
   }, [colorPreset, customColor])
   const appearanceRef = useRef(appearance)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
@@ -376,13 +378,16 @@ export default function WaterSimulationDialog({
 
         <div className="water-simulation-status">
           <div className="water-simulation-controls">
-            <label className="water-speed-control water-mode-control">
-              <select aria-label="물 시뮬레이션 방식" value={mode}
-                onChange={(event) => setMode(event.target.value as typeof mode)}>
-                <option value="free-surface">물 흐름</option>
-                <option value="surface-3d">3D 수면</option>
-              </select>
-            </label>
+            <div className="water-mode-control" role="group" aria-label="물 시뮬레이션 방식">
+              <button type="button" aria-pressed={mode === 'free-surface'}
+                onClick={() => setMode('free-surface')}>
+                2D 물 흐름
+              </button>
+              <button type="button" aria-pressed={mode === 'surface-3d'}
+                onClick={() => setMode('surface-3d')}>
+                3D 수면
+              </button>
+            </div>
             <button
               className="button secondary"
               onClick={togglePlayback}
@@ -465,7 +470,7 @@ export default function WaterSimulationDialog({
                   >
                     <span
                       className={`water-color-preview${preset.color === null ? ' is-clear' : ''}`}
-                      style={{ '--water-swatch': preset.color ?? '#d4ecee' } as CSSProperties}
+                      style={{ '--water-swatch': preset.color ?? '#e8e8e8' } as CSSProperties}
                       aria-hidden="true"
                     />
                     <span>{preset.label}</span>
