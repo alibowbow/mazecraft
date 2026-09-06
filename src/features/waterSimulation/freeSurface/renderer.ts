@@ -2,8 +2,8 @@ import * as THREE from 'three'
 import type { FluidLayout, FluidSnapshot } from './types'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
+import { SurfaceTrackball } from './camera3d'
 import { buildFunnelVisual } from './funnelVisual'
-import { RenderPerformanceBudget } from './renderBudget'
 import { DEFAULT_WATER_APPEARANCE, type WaterAppearance } from './appearance'
 
 type SurfaceStyle = 'calm' | 'natural' | 'dynamic'
@@ -12,11 +12,15 @@ const densityVertex = /* glsl */ `
   attribute vec2 center;
   attribute vec2 velocity;
   uniform float uRadius;
+  uniform sampler2D uClearance;
+  uniform vec4 uWallBounds;
+  uniform float uClearanceScale;
   varying vec2 vLocal;
   varying vec2 vCenter;
   varying vec2 vPoint;
   varying float vSpeed;
   varying float vStretch;
+  varying float vClearance;
   void main() {
     float speed = length(velocity);
     vec2 direction = speed > 0.05 ? velocity / speed : vec2(0.0, 1.0);
@@ -28,6 +32,11 @@ const densityVertex = /* glsl */ `
     vCenter = center;
     vPoint = center + offset;
     vSpeed = min(speed / 12.0, 1.0);
+    vec2 wallUv = (center - uWallBounds.xy) / uWallBounds.zw;
+    vClearance = 0.0;
+    if (all(greaterThanEqual(wallUv, vec2(0.0))) && all(lessThanEqual(wallUv, vec2(1.0)))) {
+      vClearance = texture2D(uClearance, wallUv).r * uClearanceScale;
+    }
     gl_Position = projectionMatrix * modelViewMatrix * vec4(vPoint.x, -vPoint.y, 0.0, 1.0);
   }
 `
@@ -39,10 +48,15 @@ const densityFragment = /* glsl */ `
   varying vec2 vPoint;
   varying float vSpeed;
   varying float vStretch;
+  varying float vClearance;
   void main() {
     float r2 = dot(vLocal, vLocal);
     if (r2 >= 1.0) discard;
-    if (clearSegment(vCenter, vPoint) < 0.5) discard;
+    vec2 segment = vPoint - vCenter;
+    // The cached lower bound proves the entire segment misses every solid.
+    // Close to a wall, retain all eight original visibility samples.
+    if (dot(segment, segment) >= vClearance * vClearance
+      && clearSegment(vCenter, vPoint) < 0.5) discard;
     // Elongate only the optical footprint; particle positions/mass are untouched.
     float kernel = pow(1.0 - r2, 3.0) * 0.34 / sqrt(vStretch);
     gl_FragColor = vec4(kernel, kernel * vSpeed, 0.0, kernel);
@@ -57,9 +71,8 @@ const waterVertex = /* glsl */ `
   }
 `
 
-const filterFragment = /* glsl */ `
+const filterWeightsFragment = /* glsl */ `
   ${WATER_WALL_VISIBILITY}
-  uniform sampler2D uInput;
   uniform vec2 uStep;
   uniform vec2 uCenter;
   uniform vec2 uViewSize;
@@ -70,7 +83,31 @@ const filterFragment = /* glsl */ `
   }
   void main() {
     vec2 here = mazeAt(vUv);
-    if (wallAt(here) > 0.5) { gl_FragColor = vec4(0.0); return; }
+    // RGBA stores the four binary open-neighbour predicates. A half-valued
+    // alpha marks a solid centre; it cannot be confused with binary 0/1.
+    if (wallAt(here) > 0.5) { gl_FragColor = vec4(0.0, 0.0, 0.0, 0.5); return; }
+    vec4 weights = vec4(0.0);
+    for (int i = -2; i <= 2; i++) {
+      if (i == 0) continue;
+      float offset = abs(i) == 1 ? 1.384615 : 3.230769;
+      vec2 uv = vUv + uStep * offset * sign(float(i));
+      vec2 there = mazeAt(uv);
+      // Each filter segment is at most .113 cells long, shorter than two walls.
+      float open = (1.0 - wallAt(there)) * (1.0 - wallAt((here + there) * 0.5));
+      weights[i < 0 ? i + 2 : i + 1] = open;
+    }
+    gl_FragColor = weights;
+  }
+`
+
+const filterFragment = /* glsl */ `
+  uniform sampler2D uInput;
+  uniform sampler2D uWeights;
+  uniform vec2 uStep;
+  varying vec2 vUv;
+  void main() {
+    vec4 weights = texture2D(uWeights, vUv);
+    if (weights.a > 0.25 && weights.a < 0.75) { gl_FragColor = vec4(0.0); return; }
     vec2 sum = texture2D(uInput, vUv).rg * 0.227027;
     float weight = 0.227027;
     for (int i = -2; i <= 2; i++) {
@@ -78,9 +115,7 @@ const filterFragment = /* glsl */ `
       float offset = abs(i) == 1 ? 1.384615 : 3.230769;
       float w = abs(i) == 1 ? 0.316216 : 0.070270;
       vec2 uv = vUv + uStep * offset * sign(float(i));
-      vec2 there = mazeAt(uv);
-      // Each filter segment is at most .113 cells long, shorter than two walls.
-      float open = (1.0 - wallAt(there)) * (1.0 - wallAt((here + there) * 0.5));
+      float open = weights[i < 0 ? i + 2 : i + 1];
       sum += texture2D(uInput, uv).rg * w * open;
       weight += w * open;
     }
@@ -262,14 +297,18 @@ export class FreeSurfaceRenderer {
   private readonly boardTarget: THREE.WebGLRenderTarget
   private presentation3d: FreeSurfacePresentation3D | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
-  private yaw = 0.24
-  private pitch = 0.18
+  private readonly trackball = new SurfaceTrackball()
   private readonly densityScene = new THREE.Scene()
   private readonly densityTarget: THREE.WebGLRenderTarget
   private readonly filterScene = new THREE.Scene()
+  private readonly weightsScene = new THREE.Scene()
   private readonly filterTarget: THREE.WebGLRenderTarget
   private readonly surfaceTarget: THREE.WebGLRenderTarget
   private readonly wallTexture: THREE.DataTexture
+  private readonly clearanceTexture: THREE.DataTexture
+  private readonly weightsX: THREE.WebGLRenderTarget
+  private readonly weightsY: THREE.WebGLRenderTarget
+  private readonly weightsMaterial: THREE.ShaderMaterial
   private readonly filterMaterial: THREE.ShaderMaterial
   private readonly densityMaterial: THREE.ShaderMaterial
   private readonly waterMaterial: THREE.ShaderMaterial
@@ -289,6 +328,8 @@ export class FreeSurfaceRenderer {
   private panX = 0
   private panY = 0
   private pinchDistance = 0
+  private pinchCenterX = 0
+  private pinchCenterY = 0
   private disposed = false
   private drawCalls = 0
   private triangles = 0
@@ -296,8 +337,10 @@ export class FreeSurfaceRenderer {
   private boardDirty = true
   private surfaceBuilds = 0
   private opticalBuilds = 0
-  private readonly performanceBudget = new RenderPerformanceBudget()
-  private resolutionDirty = false
+  private weightsDirty = true
+  private weightBuilds = 0
+  private cameraFrame: number | undefined
+  private readonly wetBounds = new THREE.Vector4()
 
   constructor(
     private readonly mount: HTMLElement,
@@ -333,6 +376,14 @@ export class FreeSurfaceRenderer {
     this.filterTarget = this.densityTarget.clone()
     this.surfaceTarget = this.densityTarget.clone()
     this.boardTarget = this.densityTarget.clone()
+    this.weightsX = this.densityTarget.clone()
+    this.weightsY = this.densityTarget.clone()
+    this.weightsX.texture.minFilter = this.weightsX.texture.magFilter = THREE.NearestFilter
+    this.weightsY.texture.minFilter = this.weightsY.texture.magFilter = THREE.NearestFilter
+    // RG8 preserves the exact R/G precision used by these two passes while
+    // halving their colour-buffer traffic. Coverage still uses RGBA8 below.
+    this.densityTarget.texture.format = THREE.RGFormat
+    this.filterTarget.texture.format = THREE.RGFormat
     // Mip-averaged binary coverage supplies a smooth thickness field without
     // the stepped rings caused by a few distant silhouette samples.
     this.surfaceTarget.texture.generateMipmaps = true
@@ -342,6 +393,10 @@ export class FreeSurfaceRenderer {
     this.wallTexture.minFilter = this.wallTexture.magFilter = THREE.NearestFilter
     this.wallTexture.unpackAlignment = 1
     this.wallTexture.needsUpdate = true
+    this.clearanceTexture = new THREE.DataTexture(mask.clearance, mask.width, mask.height, THREE.RedFormat)
+    this.clearanceTexture.minFilter = this.clearanceTexture.magFilter = THREE.NearestFilter
+    this.clearanceTexture.unpackAlignment = 1
+    this.clearanceTexture.needsUpdate = true
     const wallUniforms = {
       uWalls: { value: this.wallTexture },
       uWallBounds: { value: new THREE.Vector4(...mask.bounds) },
@@ -349,7 +404,11 @@ export class FreeSurfaceRenderer {
     this.densityMaterial = new THREE.ShaderMaterial({
       vertexShader: densityVertex,
       fragmentShader: densityFragment,
-      uniforms: { ...wallUniforms, uRadius: { value: layout.radius * 2.8 } },
+      uniforms: {
+        ...wallUniforms, uRadius: { value: layout.radius * 2.8 },
+        uClearance: { value: this.clearanceTexture },
+        uClearanceScale: { value: mask.clearanceScale },
+      },
       transparent: true,
       depthTest: false,
       depthWrite: false,
@@ -397,8 +456,18 @@ export class FreeSurfaceRenderer {
       vertexShader: waterVertex,
       fragmentShader: filterFragment,
       uniforms: {
-        ...wallUniforms,
         uInput: { value: this.densityTarget.texture },
+        uWeights: { value: this.weightsX.texture },
+        uStep: { value: new THREE.Vector2() },
+      },
+      depthTest: false,
+      depthWrite: false,
+    })
+    this.weightsMaterial = new THREE.ShaderMaterial({
+      vertexShader: waterVertex,
+      fragmentShader: filterWeightsFragment,
+      uniforms: {
+        ...wallUniforms,
         uStep: { value: new THREE.Vector2() },
         uCenter: this.waterMaterial.uniforms.uCenter,
         uViewSize: this.waterMaterial.uniforms.uViewSize,
@@ -410,6 +479,9 @@ export class FreeSurfaceRenderer {
     const filter = new THREE.Mesh(screenGeometry, this.filterMaterial)
     filter.frustumCulled = false
     this.filterScene.add(filter)
+    const weights = new THREE.Mesh(screenGeometry, this.weightsMaterial)
+    weights.frustumCulled = false
+    this.weightsScene.add(weights)
     const surface = new THREE.Mesh(screenGeometry, this.waterMaterial)
     surface.frustumCulled = false
     surface.renderOrder = -10
@@ -487,13 +559,21 @@ export class FreeSurfaceRenderer {
 
   render(snapshot: FluidSnapshot): void {
     if (this.disposed) return
-    if (this.resolutionDirty) this.configureSize()
     this.waterMaterial.uniforms.uTime.value = snapshot.diagnostics.time
     const count = Math.min(snapshot.count, this.layout.capacity)
     const positions = this.positionAttribute.array as Float32Array
     const velocities = this.velocityAttribute.array as Float32Array
     positions.set(snapshot.positions.subarray(0, count * 2))
     velocities.set(snapshot.velocities.subarray(0, count * 2))
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (let i = 0; i < count * 2; i += 2) {
+      const x = positions[i], y = positions[i + 1]
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+    this.wetBounds.set(minX, minY, maxX, maxY)
     this.positionAttribute.clearUpdateRanges()
     this.velocityAttribute.clearUpdateRanges()
     if (count > 0) {
@@ -560,6 +640,7 @@ export class FreeSurfaceRenderer {
   setViewMode(mode: 'free-surface' | 'surface-3d'): void {
     if (this.disposed || this.viewMode === mode) return
     this.viewMode = mode
+    this.weightsDirty = true
     this.waterMaterial.uniforms.uPresentation3D.value = mode === 'surface-3d' ? 1 : 0
     this.fieldDirty = true
     this.canvas.dataset.viewMode = mode
@@ -580,18 +661,12 @@ export class FreeSurfaceRenderer {
     this.draw()
   }
 
-  recordFrameTime(frameMs: number): void {
-    if (!this.disposed && this.performanceBudget.observe(frameMs)) this.resolutionDirty = true
-  }
-
   private configureSize(): void {
-    this.resolutionDirty = false
     this.width = Math.max(1, this.mount.clientWidth)
     this.height = Math.max(1, this.mount.clientHeight)
     // Bound GPU work on high-DPR and large displays without changing physics.
     const maxPixels = this.quality === 'high' ? 1_600_000 : 900_000
-    const performanceScale = this.performanceBudget.scale
-    this.renderer.setPixelRatio(performanceScale * Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 1.5 : 1,
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 1.5 : 1,
       Math.sqrt(maxPixels / (this.width * this.height))))
     this.renderer.setSize(this.width, this.height, false)
     const ratio = this.renderer.getPixelRatio()
@@ -602,10 +677,13 @@ export class FreeSurfaceRenderer {
     this.densityTarget.setSize(width, height)
     this.filterTarget.setSize(width, height)
     this.surfaceTarget.setSize(width, height)
+    this.weightsX.setSize(width, height)
+    this.weightsY.setSize(width, height)
     this.boardTarget.setSize(Math.max(1, Math.round(this.width * ratio)), Math.max(1, Math.round(this.height * ratio)))
     this.waterMaterial.uniforms.uTexel.value.set(1 / width, 1 / height)
     this.canvas.dataset.surfaceResolution = `${width}x${height}`
-    this.canvas.dataset.renderScale = String(performanceScale)
+    this.canvas.dataset.renderScale = '1'
+    this.weightsDirty = true
     this.fieldDirty = true
     this.updateCamera()
   }
@@ -615,8 +693,7 @@ export class FreeSurfaceRenderer {
     this.zoom = 1
     this.panX = 0
     this.panY = 0
-    this.yaw = 0.24
-    this.pitch = 0.18
+    this.trackball.reset()
     this.updateCamera()
     this.draw()
   }
@@ -638,9 +715,12 @@ export class FreeSurfaceRenderer {
       )
       this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
       this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
-      this.presentation3d?.updateView(this.width, this.height, this.zoom, this.panX, this.panY, this.yaw, this.pitch)
+      this.presentation3d?.updateView(this.width, this.height, this.zoom, this.panX, this.panY, this.trackball.orientation)
       if (this.presentation3d) {
         this.waterMaterial.uniforms.uViewDirection.value.copy(this.presentation3d.viewDirection)
+        this.canvas.dataset.cameraOrientation = this.trackball.orientation.toArray().join(',')
+        this.canvas.dataset.cameraView = this.presentation3d.viewSize.toArray().join(',')
+        this.canvas.dataset.cameraTarget = this.presentation3d.target.toArray().join(',')
       }
       // View-dependent optics must follow orbiting, but the particle density
       // and its filtered surface remain in the same fixed maze coordinates.
@@ -663,23 +743,73 @@ export class FreeSurfaceRenderer {
     this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
     this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
     this.fieldDirty = true
+    this.weightsDirty = true
+  }
+
+  private scheduleDraw(): void {
+    if (this.disposed || this.cameraFrame !== undefined) return
+    this.cameraFrame = requestAnimationFrame(() => {
+      this.cameraFrame = undefined
+      this.draw()
+    })
+  }
+
+  private filterSurface(target: THREE.WebGLRenderTarget): void {
+    target.scissorTest = false
+    this.renderer.setRenderTarget(target)
+    // Clear the whole previous field, then shade only pixels that can receive
+    // water. Include the maximum splat/filter support plus two texels; all
+    // omitted R/G/coverage values are mathematically zero, at full resolution.
+    this.renderer.clear(true, false, false)
+    const center = this.waterMaterial.uniforms.uCenter.value as THREE.Vector2
+    const pad = this.layout.radius * 5.6 + 0.035 * 3.230769
+    const left = center.x - this.viewWidth * 0.5
+    const bottom = center.y - this.viewHeight * 0.5
+    const x0 = Math.max(0, Math.min(target.width, Math.floor((this.wetBounds.x - pad - left) / this.viewWidth * target.width) - 2))
+    const y0 = Math.max(0, Math.min(target.height, Math.floor((-this.wetBounds.w - pad - bottom) / this.viewHeight * target.height) - 2))
+    const x1 = Math.max(0, Math.min(target.width, Math.ceil((this.wetBounds.z + pad - left) / this.viewWidth * target.width) + 2))
+    const y1 = Math.max(0, Math.min(target.height, Math.ceil((-this.wetBounds.y + pad - bottom) / this.viewHeight * target.height) + 2))
+    // Render-target scissor uses physical texels. renderer.setScissor would
+    // multiply these coordinates by the canvas DPR and crop water on phones.
+    target.scissor.set(x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0))
+    target.scissorTest = true
+    this.renderer.setRenderTarget(target)
+    this.renderer.autoClear = false
+    this.renderer.render(this.filterScene, this.camera)
+    this.renderer.autoClear = true
+    target.scissorTest = false
+    this.renderer.setScissorTest(false)
   }
 
   private draw(): void {
     if (this.disposed) return
+    if (this.cameraFrame !== undefined) {
+      cancelAnimationFrame(this.cameraFrame)
+      this.cameraFrame = undefined
+    }
     this.renderer.info.reset()
+    if (this.weightsDirty) {
+      this.weightsMaterial.uniforms.uStep.value.set(0.035 / this.viewWidth, 0)
+      this.renderer.setRenderTarget(this.weightsX)
+      this.renderer.render(this.weightsScene, this.camera)
+      this.weightsMaterial.uniforms.uStep.value.set(0, 0.035 / this.viewHeight)
+      this.renderer.setRenderTarget(this.weightsY)
+      this.renderer.render(this.weightsScene, this.camera)
+      this.weightsDirty = false
+      this.canvas.dataset.wallWeightBuilds = String(++this.weightBuilds)
+    }
     if (this.fieldDirty) {
       this.renderer.setRenderTarget(this.densityTarget)
       this.renderer.setClearColor(0x000000, 0)
       this.renderer.render(this.densityScene, this.camera)
       this.filterMaterial.uniforms.uInput.value = this.densityTarget.texture
+      this.filterMaterial.uniforms.uWeights.value = this.weightsX.texture
       this.filterMaterial.uniforms.uStep.value.set(0.035 / this.viewWidth, 0)
-      this.renderer.setRenderTarget(this.filterTarget)
-      this.renderer.render(this.filterScene, this.camera)
+      this.filterSurface(this.filterTarget)
       this.filterMaterial.uniforms.uInput.value = this.filterTarget.texture
+      this.filterMaterial.uniforms.uWeights.value = this.weightsY.texture
       this.filterMaterial.uniforms.uStep.value.set(0, 0.035 / this.viewHeight)
-      this.renderer.setRenderTarget(this.surfaceTarget)
-      this.renderer.render(this.filterScene, this.camera)
+      this.filterSurface(this.surfaceTarget)
       this.fieldDirty = false
       this.boardDirty = true
       this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
@@ -709,10 +839,16 @@ export class FreeSurfaceRenderer {
 
   private onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    if (this.pointers.size >= 2) return
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     this.canvas.setPointerCapture(event.pointerId)
     this.canvas.style.cursor = 'grabbing'
-    if (this.pointers.size === 2) this.pinchDistance = this.getPinchDistance()
+    if (this.pointers.size === 2) {
+      const pinch = this.getPinch()
+      this.pinchDistance = pinch.distance
+      this.pinchCenterX = pinch.x
+      this.pinchCenterY = pinch.y
+    }
   }
 
   private onPointerMove = (event: PointerEvent): void => {
@@ -722,20 +858,26 @@ export class FreeSurfaceRenderer {
     const dy = event.clientY - previous.y
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     if (this.pointers.size === 2) {
-      const distance = this.getPinchDistance()
-      if (this.pinchDistance > 0) this.zoom = THREE.MathUtils.clamp(this.zoom * distance / this.pinchDistance, 0.75, 6)
-      this.pinchDistance = distance
-      this.panX -= dx * this.viewWidth / this.width * 0.5
-      this.panY += dy * this.viewHeight / this.height * 0.5
+      const pinch = this.getPinch()
+      const zoom = this.pinchDistance > 0 ? this.zoom * pinch.distance / this.pinchDistance : this.zoom
+      this.zoomAt(zoom, this.pinchCenterX, this.pinchCenterY, pinch.x, pinch.y)
+      this.pinchDistance = pinch.distance
+      this.pinchCenterX = pinch.x
+      this.pinchCenterY = pinch.y
     } else if (this.viewMode === 'surface-3d' && !event.shiftKey) {
-      this.yaw = THREE.MathUtils.clamp(this.yaw - dx * 0.006, -0.65, 0.65)
-      this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.006, -0.48, 0.48)
+      const rect = this.canvas.getBoundingClientRect()
+      this.trackball.rotate(
+        previous.x - rect.left, previous.y - rect.top,
+        event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height,
+      )
     } else {
-      this.panX -= dx * this.viewWidth / this.width
-      this.panY += dy * this.viewHeight / this.height
+      const rect = this.canvas.getBoundingClientRect()
+      const view = this.interactionView()
+      this.panX -= dx * view.width / rect.width
+      this.panY += dy * view.height / rect.height
     }
     this.updateCamera()
-    this.draw()
+    this.scheduleDraw()
   }
 
   private onPointerUp = (event: PointerEvent): void => {
@@ -745,26 +887,42 @@ export class FreeSurfaceRenderer {
     if (this.pointers.size === 0) this.canvas.style.cursor = 'grab'
   }
 
-  private getPinchDistance(): number {
-    const points = [...this.pointers.values()]
-    return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
+  private getPinch(): { distance: number; x: number; y: number } {
+    const points = this.pointers.values()
+    const first = points.next().value!
+    const second = points.next().value!
+    return {
+      distance: Math.hypot(first.x - second.x, first.y - second.y),
+      x: (first.x + second.x) * 0.5,
+      y: (first.y + second.y) * 0.5,
+    }
+  }
+
+  private interactionView(): { width: number; height: number } {
+    return this.viewMode === 'surface-3d' && this.presentation3d
+      ? { width: this.presentation3d.viewSize.x, height: this.presentation3d.viewSize.y }
+      : { width: this.viewWidth, height: this.viewHeight }
+  }
+
+  private zoomAt(zoom: number, fromX: number, fromY: number, toX = fromX, toY = fromY): void {
+    const rect = this.canvas.getBoundingClientRect()
+    const before = this.interactionView()
+    this.zoom = THREE.MathUtils.clamp(zoom, this.viewMode === 'surface-3d' ? 0.25 : 0.75, 6)
+    this.updateCamera()
+    const after = this.interactionView()
+    // Preserve the grabbed camera-plane point as the pinch midpoint moves.
+    // The same basis is used in 2D and after any 3D orbit, including the back.
+    this.panX += ((fromX - rect.left) / rect.width - 0.5) * before.width
+      - ((toX - rect.left) / rect.width - 0.5) * after.width
+    this.panY += (0.5 - (fromY - rect.top) / rect.height) * before.height
+      - (0.5 - (toY - rect.top) / rect.height) * after.height
   }
 
   private onWheel = (event: WheelEvent): void => {
     event.preventDefault()
-    const rect = this.canvas.getBoundingClientRect()
-    const x = (event.clientX - rect.left) / this.width - 0.5
-    const y = 0.5 - (event.clientY - rect.top) / this.height
-    const oldWidth = this.viewWidth
-    const oldHeight = this.viewHeight
-    this.zoom = THREE.MathUtils.clamp(this.zoom * Math.exp(-event.deltaY * 0.0012), 0.75, 6)
+    this.zoomAt(this.zoom * Math.exp(-event.deltaY * 0.0012), event.clientX, event.clientY)
     this.updateCamera()
-    if (this.viewMode === 'free-surface') {
-      this.panX += x * (oldWidth - this.viewWidth)
-      this.panY += y * (oldHeight - this.viewHeight)
-    }
-    this.updateCamera()
-    this.draw()
+    this.scheduleDraw()
   }
 
   private onDoubleClick = (): void => this.resetCamera()
@@ -775,13 +933,14 @@ export class FreeSurfaceRenderer {
       this.resetCamera()
     } else if (event.key === '+' || event.key === '=' || event.key === '-') {
       event.preventDefault()
-      this.zoom = THREE.MathUtils.clamp(this.zoom * (event.key === '-' ? 1 / 1.2 : 1.2), 0.75, 6)
+      this.zoom = THREE.MathUtils.clamp(this.zoom * (event.key === '-' ? 1 / 1.2 : 1.2), this.viewMode === 'surface-3d' ? 0.25 : 0.75, 6)
       this.updateCamera()
       this.draw()
     }
   }
 
   dispose(): void {
+    if (this.cameraFrame !== undefined) cancelAnimationFrame(this.cameraFrame)
     if (this.disposed) return
     this.disposed = true
     this.observer.disconnect()
@@ -816,12 +975,17 @@ export class FreeSurfaceRenderer {
     for (const geometry of accessoryGeometries) geometry.dispose()
     for (const material of accessoryMaterials) material.dispose()
     this.filterMaterial.dispose()
+    this.weightsMaterial.dispose()
+    this.weightsX.dispose()
+    this.weightsY.dispose()
     this.wallTexture.dispose()
+    this.clearanceTexture.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     this.scene.clear()
     this.densityScene.clear()
     this.filterScene.clear()
+    this.weightsScene.clear()
     this.renderer.dispose()
     this.renderer.forceContextLoss()
     this.canvas.remove()

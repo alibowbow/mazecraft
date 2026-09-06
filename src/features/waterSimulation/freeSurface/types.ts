@@ -47,9 +47,13 @@ export interface FluidDiagnostics {
   saturated: boolean
 }
 
-export interface FluidSnapshot {
+/** Owned by exactly one thread at a time; recycled after the renderer copies it. */
+export interface FluidSnapshotBuffers {
   positions: Float32Array
   velocities: Float32Array
+}
+
+export interface FluidSnapshot extends FluidSnapshotBuffers {
   count: number
   diagnostics: FluidDiagnostics
 }

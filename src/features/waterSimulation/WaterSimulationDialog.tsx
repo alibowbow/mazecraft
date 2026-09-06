@@ -552,8 +552,8 @@ export default function WaterSimulationDialog({
         )}
 
         <div className="water-simulation-legend">
-          <span>{isFreeSurface ? '드래그: 이동' : '드래그: 미세 시점 조절'}</span>
-          <span>두 손가락: 확대</span>
+          <span>{isFreeSurface ? '드래그: 이동' : '드래그: 자유 회전'}</span>
+          <span>두 손가락: 이동·확대</span>
           <span>
             {resolvedQuality === 'high' ? '고화질' : '모바일 최적화'}
           </span>

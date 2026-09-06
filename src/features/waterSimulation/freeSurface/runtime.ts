@@ -4,7 +4,7 @@ import type { ResolvedWaterQuality, WaterPlaybackStatus, WaterRuntimeMetrics } f
 import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
-import type { FluidDiagnostics, FluidSnapshot } from './types'
+import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers } from './types'
 import type { WaterAppearance } from './appearance'
 
 export interface FreeSurfaceStatus extends WaterPlaybackStatus {
@@ -19,8 +19,13 @@ export class FreeSurfaceRuntime {
   private readonly renderer: FreeSurfaceRenderer
   private worker: Worker | null = null
   private fallback: FreeSurfaceSolver | null = null
-  private snapshot: FluidSnapshot | null = null
+  private diagnostics: FluidDiagnostics | null = null
   private pendingSnapshot: FluidSnapshot | null = null
+  private readonly recycledBuffers: FluidSnapshotBuffers[] = []
+  private fallbackBuffers: FluidSnapshotBuffers | undefined
+  private displayRequested = false
+  private refineAfterCatchUp = false
+  private workerDirty = false
   private generation = 0
   private busy = true
   private ready = false
@@ -32,7 +37,6 @@ export class FreeSurfaceRuntime {
   private lastAdvance: number | null = null
   private lastPublish = 0
   private frameId = 0
-  private lastFrameTime: number | null = null
   private watchdog: ReturnType<typeof setTimeout> | undefined
 
   constructor(
@@ -53,13 +57,30 @@ export class FreeSurfaceRuntime {
       if (typeof Worker === 'undefined') throw new Error('Worker unavailable')
       this.worker = new Worker(new URL('./fluid.worker.ts', import.meta.url), { type: 'module' })
       this.worker.onmessage = ({ data }) => {
-        if (this.disposed || data.generation !== this.generation) return
+        if (this.disposed || !this.worker) return
+        if (data.generation !== this.generation) {
+          if (data.snapshot) this.recycle(data.snapshot as FluidSnapshot)
+          return
+        }
         if (data.type === 'error') { this.failWorker(); return }
         this.busy = false
+        if (data.type === 'advanced') {
+          this.workerDirty = true
+          this.advance(performance.now())
+          return
+        }
+        this.workerDirty = false
         // A message already in flight must never change a paused image.
-        if (this.ready && (this.paused || document.hidden)) return
+        if (this.ready && (this.paused || document.hidden)) {
+          this.recycle(data.snapshot as FluidSnapshot)
+          this.workerDirty = true
+          return
+        }
         if (!this.ready) this.accept(data.snapshot as FluidSnapshot)
-        else this.pendingSnapshot = data.snapshot as FluidSnapshot
+        else {
+          this.releasePending()
+          this.pendingSnapshot = data.snapshot as FluidSnapshot
+        }
         // Keep the worker occupied while the GPU renders the previous state.
         // Several completed batches may share one displayed animation frame.
         this.advance(performance.now())
@@ -78,10 +99,15 @@ export class FreeSurfaceRuntime {
     if (this.disposed) return
     this.worker?.terminate()
     this.worker = null
+    this.recycledBuffers.length = 0
     clearTimeout(this.watchdog)
     this.fallback = new FreeSurfaceSolver(this.layout)
+    this.fallbackBuffers = {
+      positions: new Float32Array(this.layout.capacity * 2),
+      velocities: new Float32Array(this.layout.capacity * 2),
+    }
     this.busy = false
-    this.accept(this.fallback.snapshot())
+    this.accept(this.fallback.snapshot(this.fallbackBuffers))
   }
 
   private failWorker() {
@@ -94,8 +120,9 @@ export class FreeSurfaceRuntime {
   }
 
   private accept(snapshot: FluidSnapshot) {
-    this.snapshot = snapshot
+    this.diagnostics = snapshot.diagnostics
     this.renderer.render(snapshot)
+    if (this.worker) this.recycle(snapshot)
     if (!this.ready) {
       this.ready = true
       this.lastAdvance = performance.now()
@@ -105,6 +132,17 @@ export class FreeSurfaceRuntime {
     } else if (performance.now() - this.lastPublish >= 100) {
       this.publish(snapshot.diagnostics)
     }
+  }
+
+  private recycle(snapshot: FluidSnapshotBuffers) {
+    if (snapshot.positions.byteLength && snapshot.velocities.byteLength) {
+      this.recycledBuffers.push({ positions: snapshot.positions, velocities: snapshot.velocities })
+    }
+  }
+
+  private releasePending() {
+    if (this.pendingSnapshot) this.recycle(this.pendingSnapshot)
+    this.pendingSnapshot = null
   }
 
   private publish(d: FluidDiagnostics) {
@@ -145,14 +183,28 @@ export class FreeSurfaceRuntime {
     if (this.ready && !this.paused && !document.hidden) {
       this.debt = Math.min(0.5, this.debt + delta * this.speed)
       const steps = Math.min(this.fallback ? 4 : 12, Math.floor(this.debt * 120 + 1e-7))
-      if (steps && !this.busy) {
+      const refresh = this.worker && this.displayRequested && this.workerDirty
+      if ((steps || refresh) && !this.busy) {
         this.debt -= steps / 120
         if (this.worker) {
           this.busy = true
-          this.worker.postMessage({ type: 'advance', steps, inflow: this.inflow, generation: this.generation })
+          // Demand comes from rAF, not worker completion speed. Publish the
+          // next completed batch even while behind so catch-up never starves
+          // the display; intervening batches return lightweight acknowledgements.
+          // One final catch-up refinement keeps the latest completed state when
+          // several fixed batches finish within that same displayed frame.
+          const stillBehind = Math.floor(this.debt * 120 + 1e-7) > 0
+          const publish = this.displayRequested || (this.refineAfterCatchUp && !stillBehind)
+          if (this.displayRequested) {
+            this.displayRequested = false
+            this.refineAfterCatchUp = stillBehind
+          } else if (publish) this.refineAfterCatchUp = false
+          const buffers = this.recycledBuffers.pop()
+          this.worker.postMessage({ type: 'advance', steps, inflow: this.inflow, generation: this.generation, publish, buffers },
+            buffers ? { transfer: [buffers.positions.buffer, buffers.velocities.buffer] } : undefined)
         } else if (this.fallback) {
           for (let i = 0; i < steps; i++) this.fallback.step(1 / 120, this.inflow)
-          this.accept(this.fallback.snapshot())
+          this.accept(this.fallback.snapshot(this.fallbackBuffers))
         }
       }
     }
@@ -161,10 +213,7 @@ export class FreeSurfaceRuntime {
   private tick = () => {
     if (this.disposed) return
     const now = performance.now()
-    if (this.ready && !this.paused && !document.hidden) {
-      if (this.lastFrameTime !== null) this.renderer.recordFrameTime(now - this.lastFrameTime)
-      this.lastFrameTime = now
-    } else this.lastFrameTime = null
+    if (this.ready && !this.paused && !document.hidden) this.displayRequested = true
     this.advance(now)
     if (this.pendingSnapshot && !this.paused && !document.hidden) {
       const snapshot = this.pendingSnapshot
@@ -174,7 +223,10 @@ export class FreeSurfaceRuntime {
     this.frameId = requestAnimationFrame(this.tick)
   }
 
-  private visibilityChanged = () => { this.lastAdvance = null; this.lastFrameTime = null; this.debt = 0; this.pendingSnapshot = null }
+  private visibilityChanged = () => {
+    this.lastAdvance = null; this.debt = 0; this.displayRequested = false; this.refineAfterCatchUp = false
+    this.releasePending()
+  }
   setSpeed(value: number) {
     this.speed = Math.max(0.1, Math.min(4, value))
     this.debt = 0
@@ -182,22 +234,23 @@ export class FreeSurfaceRuntime {
   }
   setPaused(value: boolean) {
     this.paused = value
-    this.lastFrameTime = null
+    this.displayRequested = false
+    this.refineAfterCatchUp = false
     this.debt = 0
     this.lastAdvance = performance.now()
-    this.pendingSnapshot = null
-    if (this.snapshot) this.publish(this.snapshot.diagnostics)
+    this.releasePending()
+    if (this.diagnostics) this.publish(this.diagnostics)
   }
   setInflow(value: boolean) {
     this.inflow = value ? 1 : 0
     this.debt = 0
     this.lastAdvance = performance.now()
     this.renderer.setInflow(value)
-    if (this.snapshot) this.publish(this.snapshot.diagnostics)
+    if (this.diagnostics) this.publish(this.diagnostics)
   }
   setViewMode(mode: 'free-surface' | 'surface-3d') {
     this.renderer.setViewMode(mode)
-    if (this.snapshot) this.publish(this.snapshot.diagnostics)
+    if (this.diagnostics) this.publish(this.diagnostics)
   }
   setSurfaceStyle(style: WaterSurfaceStyle) {
     this.renderer.setSurfaceStyle(style)
@@ -213,15 +266,19 @@ export class FreeSurfaceRuntime {
     this.lastAdvance = null
     this.lastPublish = 0
     this.ready = false
-    this.lastFrameTime = null
-    this.snapshot = null
-    this.pendingSnapshot = null
+    this.displayRequested = false
+    this.refineAfterCatchUp = false
+    this.workerDirty = false
+    this.diagnostics = null
+    this.releasePending()
     if (this.worker) {
       this.busy = true
-      this.worker.postMessage({ type: 'reset', generation: this.generation })
+      const buffers = this.recycledBuffers.pop()
+      this.worker.postMessage({ type: 'reset', generation: this.generation, buffers },
+        buffers ? { transfer: [buffers.positions.buffer, buffers.velocities.buffer] } : undefined)
     } else {
       this.fallback?.reset()
-      if (this.fallback) this.accept(this.fallback.snapshot())
+      if (this.fallback) this.accept(this.fallback.snapshot(this.fallbackBuffers))
     }
   }
   dispose() {
@@ -232,8 +289,10 @@ export class FreeSurfaceRuntime {
     this.worker?.terminate()
     this.worker = null
     this.fallback = null
-    this.snapshot = null
+    this.diagnostics = null
     this.pendingSnapshot = null
+    this.recycledBuffers.length = 0
+    this.fallbackBuffers = undefined
     this.renderer.dispose()
   }
 }

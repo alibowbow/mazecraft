@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { FluidLayout } from './types'
+import { INITIAL_SURFACE_PITCH, INITIAL_SURFACE_YAW, SurfaceTrackball } from './camera3d'
 
 // Particle centers stop at the solver bounds, but their optical footprints can
 // extend .392 cells farther. Preserve the whole silhouette at the board edge.
@@ -28,6 +29,7 @@ export class FreeSurfacePresentation3D {
   private readonly boardWidth: number
   private readonly boardHeight: number
   private readonly distance: number
+  private readonly screenOffset = new THREE.Vector3()
   private disposed = false
 
   constructor(layout: FluidLayout, texture: THREE.Texture) {
@@ -132,25 +134,23 @@ export class FreeSurfacePresentation3D {
     fill.position.set(this.centerX + 6, this.centerY - 2, 5)
     fill.target.position.set(this.centerX, this.centerY, 0)
     this.scene.add(ambient, key, key.target, fill, fill.target)
-    this.updateView(1, 1, 1, 0, 0, 0.18, 0.20)
+    this.updateView(1, 1, 1, 0, 0, new SurfaceTrackball().orientation)
   }
 
-  updateView(widthPx: number, heightPx: number, zoom: number, panX: number, panY: number, yaw: number, pitch: number): void {
+  updateView(widthPx: number, heightPx: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
     if (this.disposed) return
     const aspect = Math.max(1, widthPx) / Math.max(1, heightPx)
-    const angleX = THREE.MathUtils.clamp(yaw, -1.1, 1.1)
-    const angleY = THREE.MathUtils.clamp(pitch, -0.95, 0.95)
-    const sy = Math.sin(angleX), cy = Math.cos(angleX)
-    const sp = Math.sin(angleY), cp = Math.cos(angleY)
-
-    // Fit the rotated 3D bounds, including the slab and front accessories. A
-    // fixed screen-space fit would crop the board when the camera is orbited.
+    // Keep the original front-view framing at every orbit angle. Refitting
+    // rotated bounds on each touch made rotation unexpectedly zoom the board.
+    // Corners can leave the viewport during free roll; zoom remains explicit.
     const width = this.boardWidth + 0.60
     const height = this.boardHeight + 0.60
     const depth = 0.75
-    const projectedWidth = Math.abs(cy) * width + Math.abs(sy) * depth
-    const projectedHeight = Math.abs(sp * sy) * width + Math.abs(cp) * height + Math.abs(sp * cy) * depth
-    const viewHeight = Math.max(projectedHeight, projectedWidth / aspect) / Math.max(0.1, zoom)
+    const sy = Math.sin(INITIAL_SURFACE_YAW), cy = Math.cos(INITIAL_SURFACE_YAW)
+    const sp = Math.sin(INITIAL_SURFACE_PITCH), cp = Math.cos(INITIAL_SURFACE_PITCH)
+    const frontWidth = cy * width + sy * depth
+    const frontHeight = sp * sy * width + cp * height + sp * cy * depth
+    const viewHeight = Math.max(frontHeight, frontWidth / aspect) / Math.max(0.1, zoom)
     const viewWidth = viewHeight * aspect
     this.viewSize.set(viewWidth, viewHeight)
     this.camera.left = -viewWidth * 0.5
@@ -159,14 +159,12 @@ export class FreeSurfacePresentation3D {
     this.camera.bottom = -viewHeight * 0.5
     this.camera.near = 0.01
     this.camera.far = this.distance * 3
-    this.target.set(this.centerX + panX, this.centerY + panY, 0.04)
-    this.camera.position.set(
-      this.target.x + sy * cp * this.distance,
-      this.target.y + sp * this.distance,
-      this.target.z + cy * cp * this.distance,
-    )
-    this.camera.lookAt(this.target)
-    this.viewDirection.subVectors(this.camera.position, this.target).normalize()
+    this.screenOffset.set(panX, panY, 0).applyQuaternion(orientation)
+    this.target.set(this.centerX, this.centerY, 0.04).add(this.screenOffset)
+    this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
+    this.camera.position.copy(this.target).addScaledVector(this.viewDirection, this.distance)
+    this.camera.quaternion.copy(orientation)
+    this.camera.up.set(0, 1, 0).applyQuaternion(orientation)
     this.camera.updateProjectionMatrix()
     this.camera.updateMatrixWorld()
   }

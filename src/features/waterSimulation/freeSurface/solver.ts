@@ -1,4 +1,4 @@
-import type { FluidLayout, FluidSnapshot } from './types'
+import type { FluidLayout, FluidSnapshot, FluidSnapshotBuffers } from './types'
 
 const FIXED_DT = 1 / 120
 const GRAVITY = 12
@@ -22,6 +22,13 @@ export class FreeSurfaceSolver {
   private readonly crossed: Uint8Array
   private readonly next: Int32Array
   private readonly heads: Int32Array
+  private readonly hashKeys: Int32Array
+  private readonly nearbyWallStarts: Uint32Array
+  private readonly nearbyWallIndices: Uint32Array
+  private readonly collisionCells: Uint8Array
+  private readonly visibleCells: Uint16Array
+  private readonly wallGeometry: Float64Array
+  private readonly wet: Uint8Array
   private readonly density: Float64Array
   private readonly gradientSquared: Float64Array
   private pairs = new Uint32Array(512)
@@ -53,12 +60,84 @@ export class FreeSurfaceSolver {
     this.oldX = new Float64Array(n); this.oldY = new Float64Array(n)
     this.vx = new Float64Array(n); this.vy = new Float64Array(n)
     this.crossed = new Uint8Array(n); this.next = new Int32Array(n)
+    this.hashKeys = new Int32Array(n); this.wet = new Uint8Array(layout.activeCells.length)
     this.density = new Float64Array(n); this.gradientSquared = new Float64Array(n)
     this.deltaX = new Float64Array(n); this.deltaY = new Float64Array(n)
     this.kernel = layout.radius * 4.2
     this.hashCols = Math.ceil((layout.maxX - layout.minX) / this.kernel) + 2
     this.hashRows = Math.ceil((layout.maxY - layout.minY) / this.kernel) + 2
     this.heads = new Int32Array(this.hashCols * this.hashRows)
+    // Static fine-grid CSR lookup: every segment shorter than the interaction
+    // kernel stays within its first endpoint cell expanded by that kernel.
+    // Precompute that conservative wall set once instead of traversing coarse
+    // wall buckets (and recomputing wall bounds) for every particle pair.
+    const cellCount = this.heads.length
+    this.nearbyWallStarts = new Uint32Array(cellCount + 1)
+    this.collisionCells = new Uint8Array(cellCount)
+    this.visibleCells = new Uint16Array(cellCount)
+    this.wallGeometry = new Float64Array(layout.walls.length * 8)
+    const wallRanges = new Int32Array(layout.walls.length * 4)
+    const movementMargin = layout.radius + MAX_SPEED * FIXED_DT
+    for (let index = 0; index < layout.walls.length; index++) {
+      const wall = layout.walls[index], geometry = index * 8, range = index * 4
+      this.wallGeometry[geometry] = (wall.x0 + wall.x1) * 0.5
+      this.wallGeometry[geometry + 1] = (wall.y0 + wall.y1) * 0.5
+      this.wallGeometry[geometry + 2] = (wall.x1 - wall.x0) * 0.5
+      this.wallGeometry[geometry + 3] = (wall.y1 - wall.y0) * 0.5
+      this.wallGeometry[geometry + 4] = wall.x0 - layout.radius
+      this.wallGeometry[geometry + 5] = wall.x1 + layout.radius
+      this.wallGeometry[geometry + 6] = wall.y0 - layout.radius
+      this.wallGeometry[geometry + 7] = wall.y1 + layout.radius
+      const minCol = Math.max(0, Math.floor((wall.x0 - this.kernel - layout.minX) / this.kernel))
+      const maxCol = Math.min(this.hashCols - 1, Math.floor((wall.x1 + this.kernel - layout.minX) / this.kernel))
+      const minRow = Math.max(0, Math.floor((wall.y0 - this.kernel - layout.minY) / this.kernel))
+      const maxRow = Math.min(this.hashRows - 1, Math.floor((wall.y1 + this.kernel - layout.minY) / this.kernel))
+      wallRanges[range] = minCol; wallRanges[range + 1] = maxCol
+      wallRanges[range + 2] = minRow; wallRanges[range + 3] = maxRow
+      for (let row = minRow; row <= maxRow; row++) for (let col = minCol; col <= maxCol; col++) {
+        this.nearbyWallStarts[row * this.hashCols + col + 1]++
+      }
+      const collisionMinCol = Math.max(0, Math.floor((wall.x0 - movementMargin - layout.minX) / this.kernel))
+      const collisionMaxCol = Math.min(this.hashCols - 1, Math.floor((wall.x1 + movementMargin - layout.minX) / this.kernel))
+      const collisionMinRow = Math.max(0, Math.floor((wall.y0 - movementMargin - layout.minY) / this.kernel))
+      const collisionMaxRow = Math.min(this.hashRows - 1, Math.floor((wall.y1 + movementMargin - layout.minY) / this.kernel))
+      for (let row = collisionMinRow; row <= collisionMaxRow; row++) for (let col = collisionMinCol; col <= collisionMaxCol; col++) {
+        this.collisionCells[row * this.hashCols + col] = 1
+      }
+    }
+    for (let cell = 1; cell <= cellCount; cell++) this.nearbyWallStarts[cell] += this.nearbyWallStarts[cell - 1]
+    this.nearbyWallIndices = new Uint32Array(this.nearbyWallStarts[cellCount])
+    const wallCursor = this.nearbyWallStarts.slice(0, cellCount)
+    for (let index = 0; index < layout.walls.length; index++) {
+      const range = index * 4
+      for (let row = wallRanges[range + 2]; row <= wallRanges[range + 3]; row++) {
+        for (let col = wallRanges[range]; col <= wallRanges[range + 1]; col++) {
+          this.nearbyWallIndices[wallCursor[row * this.hashCols + col]++] = index
+        }
+      }
+    }
+    // A neighbour-cell pair whose enclosing rectangle has no wall needs no
+    // per-particle visibility test. Keep nine conservative direction bits per
+    // cell; all ambiguous boundary/corner cases still use the exact SAT test.
+    for (let cell = 0; cell < cellCount; cell++) {
+      const start = this.nearbyWallStarts[cell], end = this.nearbyWallStarts[cell + 1]
+      if (start === end) { this.visibleCells[cell] = 0x1ff; continue }
+      const col = cell % this.hashCols, row = Math.floor(cell / this.hashCols)
+      let mask = 0
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        const x0 = layout.minX + (col + Math.min(0, ox)) * this.kernel - 1e-10
+        const x1 = layout.minX + (col + Math.max(0, ox) + 1) * this.kernel + 1e-10
+        const y0 = layout.minY + (row + Math.min(0, oy)) * this.kernel - 1e-10
+        const y1 = layout.minY + (row + Math.max(0, oy) + 1) * this.kernel + 1e-10
+        let clear = true
+        for (let entry = start; entry < end; entry++) {
+          const wall = layout.walls[this.nearbyWallIndices[entry]]
+          if (x1 >= wall.x0 && x0 <= wall.x1 && y1 >= wall.y0 && y0 <= wall.y1) { clear = false; break }
+        }
+        if (clear) mask |= 1 << ((oy + 1) * 3 + ox + 1)
+      }
+      this.visibleCells[cell] = mask
+    }
     this.wallCols = Math.ceil(layout.maxX - layout.minX) + 2
     this.wallRows = Math.ceil(layout.maxY - layout.minY) + 2
     this.wallBuckets = Array.from({ length: this.wallCols * this.wallRows }, () => [])
@@ -95,7 +174,7 @@ export class FreeSurfaceSolver {
       const col = Math.max(0, Math.min(this.hashCols - 1, Math.floor((this.x[i] - this.layout.minX) / this.kernel)))
       const row = Math.max(0, Math.min(this.hashRows - 1, Math.floor((this.y[i] - this.layout.minY) / this.kernel)))
       const key = row * this.hashCols + col
-      this.next[i] = this.heads[key]; this.heads[key] = i
+      this.next[i] = this.heads[key]; this.heads[key] = i; this.hashKeys[i] = key
     }
   }
 
@@ -150,10 +229,22 @@ export class FreeSurfaceSolver {
   /** Axis swept movement stops at the first inflated wall, then slides tangentially. */
   private move(i: number, targetX: number, targetY: number): void {
     let px = this.x[i], py = this.y[i]
+    if (targetX === px && targetY === py) return
     const radius = this.layout.radius
     const stepLimit = radius * 0.7
     const steps = Math.max(1, Math.ceil(Math.max(Math.abs(targetX - px), Math.abs(targetY - py)) / stepLimit))
     const dx = (targetX - px) / steps, dy = (targetY - py) / steps
+    const hashCol = Math.floor((px - this.layout.minX) / this.kernel)
+    const hashRow = Math.floor((py - this.layout.minY) / this.kernel)
+    if (hashCol >= 0 && hashCol < this.hashCols && hashRow >= 0 && hashRow < this.hashRows &&
+        this.collisionCells[hashRow * this.hashCols + hashCol] === 0 &&
+        Math.max(Math.abs(targetX - px), Math.abs(targetY - py)) <= MAX_SPEED * FIXED_DT) {
+      // Keep the same rounded additions as the swept path. Only its provably
+      // empty collision queries disappear; no particle is frozen or skipped.
+      for (let s = 0; s < steps; s++) { px += dx; py += dy }
+      this.x[i] = px; this.y[i] = py
+      return
+    }
     for (let s = 0; s < steps; s++) {
       let nx = px + dx
       const row = Math.floor(py - this.layout.minY)
@@ -161,12 +252,12 @@ export class FreeSurfaceSolver {
       // intersected by this short sweep, rather than all nine neighbouring cells.
       const minCol = Math.floor(Math.min(px, nx) - this.layout.minX)
       const maxCol = Math.floor(Math.max(px, nx) - this.layout.minX)
-      if (row >= 0 && row < this.wallRows) {
+      if (dx !== 0 && row >= 0 && row < this.wallRows) {
         for (let cx = Math.max(0, minCol); cx <= Math.min(this.wallCols - 1, maxCol); cx++) {
           for (const index of this.wallBuckets[row * this.wallCols + cx]) {
-            const wall = this.layout.walls[index]
-            const x0 = wall.x0 - radius, x1 = wall.x1 + radius
-            if (py <= wall.y0 - radius || py >= wall.y1 + radius) continue
+            const geometry = index * 8
+            const x0 = this.wallGeometry[geometry + 4], x1 = this.wallGeometry[geometry + 5]
+            if (py <= this.wallGeometry[geometry + 6] || py >= this.wallGeometry[geometry + 7]) continue
             if (dx > 0 && px <= x0 && nx > x0) nx = Math.min(nx, x0)
             if (dx < 0 && px >= x1 && nx < x1) nx = Math.max(nx, x1)
           }
@@ -177,12 +268,12 @@ export class FreeSurfaceSolver {
       const nextCol = Math.floor(px - this.layout.minX)
       const minRow = Math.floor(Math.min(py, ny) - this.layout.minY)
       const maxRow = Math.floor(Math.max(py, ny) - this.layout.minY)
-      if (nextCol >= 0 && nextCol < this.wallCols) {
+      if (dy !== 0 && nextCol >= 0 && nextCol < this.wallCols) {
         for (let cy = Math.max(0, minRow); cy <= Math.min(this.wallRows - 1, maxRow); cy++) {
           for (const index of this.wallBuckets[cy * this.wallCols + nextCol]) {
-            const wall = this.layout.walls[index]
-            const y0 = wall.y0 - radius, y1 = wall.y1 + radius
-            if (px <= wall.x0 - radius || px >= wall.x1 + radius) continue
+            const geometry = index * 8
+            const y0 = this.wallGeometry[geometry + 6], y1 = this.wallGeometry[geometry + 7]
+            if (px <= this.wallGeometry[geometry + 4] || px >= this.wallGeometry[geometry + 5]) continue
             if (dy > 0 && py <= y0 && ny > y0) ny = Math.min(ny, y0)
             if (dy < 0 && py >= y1 && ny < y1) ny = Math.max(ny, y1)
           }
@@ -239,6 +330,9 @@ export class FreeSurfaceSolver {
         const i = this.pairs[pair], j = this.pairs[pair + 1], geometry = pair * 2
         let dx = this.pairGeometry[geometry], dy = this.pairGeometry[geometry + 1]
         const d2 = this.pairGeometry[geometry + 2]
+        // An uncompressed pair outside contact distance contributes exactly zero.
+        // Avoid its square root/divisions, while keeping all density neighbours.
+        if (this.density[i] === 0 && this.density[j] === 0 && d2 >= (this.layout.radius * 2) ** 2) continue
         let distance = Math.sqrt(d2)
         if (distance < 1e-7) { dx = 1e-6; dy = 0; distance = 1e-6 }
         const pressure = -(this.density[i] + this.density[j]) * gradientScale * this.pairGeometry[geometry + 3] * distance
@@ -294,23 +388,19 @@ export class FreeSurfaceSolver {
 
   /** A thin maze wall also blocks pressure and viscosity, not only movement. */
   private visiblePair(i: number, j: number): boolean {
+    const key = this.hashKeys[i], start = this.nearbyWallStarts[key], end = this.nearbyWallStarts[key + 1]
+    if (start === end) return true
     const x = this.x[i], y = this.y[i], endX = this.x[j], endY = this.y[j]
-    const minCol = Math.max(0, Math.floor(Math.min(x, endX) - this.layout.minX))
-    const maxCol = Math.min(this.wallCols - 1, Math.floor(Math.max(x, endX) - this.layout.minX))
-    const minRow = Math.max(0, Math.floor(Math.min(y, endY) - this.layout.minY))
-    const maxRow = Math.min(this.wallRows - 1, Math.floor(Math.max(y, endY) - this.layout.minY))
     const cx = (x + endX) * 0.5, cy = (y + endY) * 0.5
     const dx = (endX - x) * 0.5, dy = (endY - y) * 0.5
     const ax = Math.abs(dx), ay = Math.abs(dy)
-    for (let row = minRow; row <= maxRow; row++) for (let col = minCol; col <= maxCol; col++) {
-      for (const index of this.wallBuckets[row * this.wallCols + col]) {
-        const wall = this.layout.walls[index]
-        const wx = (wall.x1 - wall.x0) * 0.5, wy = (wall.y1 - wall.y0) * 0.5
-        const rx = cx - (wall.x0 + wall.x1) * 0.5, ry = cy - (wall.y0 + wall.y1) * 0.5
-        // Separating-axis segment/AABB test. No temporary objects or divisions.
-        if (Math.abs(rx) > wx + ax || Math.abs(ry) > wy + ay) continue
-        if (Math.abs(dx * ry - dy * rx) <= wx * ay + wy * ax) return false
-      }
+    for (let entry = start; entry < end; entry++) {
+      const geometry = this.nearbyWallIndices[entry] * 8
+      const wx = this.wallGeometry[geometry + 2], wy = this.wallGeometry[geometry + 3]
+      const rx = cx - this.wallGeometry[geometry], ry = cy - this.wallGeometry[geometry + 1]
+      // Separating-axis segment/AABB test, unchanged from the coarse lookup.
+      if (Math.abs(rx) > wx + ax || Math.abs(ry) > wy + ay) continue
+      if (Math.abs(dx * ry - dy * rx) <= wx * ay + wy * ax) return false
     }
     return true
   }
@@ -323,14 +413,16 @@ export class FreeSurfaceSolver {
     for (let i = 0; i < this.count; i++) {
       const col = Math.floor((this.x[i] - this.layout.minX) / h)
       const row = Math.floor((this.y[i] - this.layout.minY) / h)
+      const clearMask = col >= 0 && col < this.hashCols && row >= 0 && row < this.hashRows ? this.visibleCells[this.hashKeys[i]] : 0
       for (let cy = Math.max(0, row - 1); cy <= Math.min(this.hashRows - 1, row + 1); cy++) {
         for (let cx = Math.max(0, col - 1); cx <= Math.min(this.hashCols - 1, col + 1); cx++) {
+          const visibleBucket = (clearMask & (1 << ((cy - row + 1) * 3 + cx - col + 1))) !== 0
           // rebuildHash inserts increasing indices at the head. Each bucket is
           // descending, so the remaining tail is already processed once j<=i.
           for (let j = this.heads[cy * this.hashCols + cx]; j > i; j = this.next[j]) {
             const dx = this.x[j] - this.x[i], dy = this.y[j] - this.y[i]
             const d2 = dx * dx + dy * dy
-            if (d2 >= h2 || !this.visiblePair(i, j)) continue
+            if (d2 >= h2 || (!visibleBucket && !this.visiblePair(i, j))) continue
             if (this.pairCount + 2 > this.pairs.length) {
               const expanded = new Uint32Array(this.pairs.length * 2)
               expanded.set(this.pairs); this.pairs = expanded
@@ -359,14 +451,17 @@ export class FreeSurfaceSolver {
     this.deltaX[i] = this.deltaX[last]; this.deltaY[i] = this.deltaY[last]
   }
 
-  snapshot(): FluidSnapshot {
-    const positions = new Float32Array(this.count * 2), velocities = new Float32Array(this.count * 2)
-    const wet = new Uint8Array(this.layout.activeCells.length)
-    let maxVelocity = 0, wetCells = 0
+  snapshot(target?: FluidSnapshotBuffers): FluidSnapshot {
+    const length = this.count * 2
+    const positions = target && target.positions.length >= length ? target.positions : new Float32Array(length)
+    const velocities = target && target.velocities.length >= length ? target.velocities : new Float32Array(length)
+    const wet = this.wet
+    wet.fill(0)
+    let maxVelocitySquared = 0, wetCells = 0
     for (let i = 0; i < this.count; i++) {
       positions[i * 2] = this.x[i]; positions[i * 2 + 1] = this.y[i]
       velocities[i * 2] = this.vx[i]; velocities[i * 2 + 1] = this.vy[i]
-      maxVelocity = Math.max(maxVelocity, Math.hypot(this.vx[i], this.vy[i]))
+      maxVelocitySquared = Math.max(maxVelocitySquared, this.vx[i] * this.vx[i] + this.vy[i] * this.vy[i])
       const col = Math.floor(this.x[i]), row = Math.floor(this.y[i])
       const cell = row * this.layout.cols + col
       if (col >= 0 && col < this.layout.cols && row >= 0 && row < this.layout.rows && this.layout.activeCells[cell] && !wet[cell]) { wet[cell] = 1; wetCells++ }
@@ -380,7 +475,7 @@ export class FreeSurfaceSolver {
         time: this.ticks * FIXED_DT, count: this.count,
         injected: this.admitted * area, discharged: this.dischargedCount * area,
         escaped: this.escapedCount * area, stored: storedCount * area,
-        massError: particleBalance * area, maxVelocity, wetCells,
+        massError: particleBalance * area, maxVelocity: Math.sqrt(maxVelocitySquared), wetCells,
         reachedExit: this.dischargedCount > 0, outletRate: this.outletRate, saturated: this.saturated,
       },
     }

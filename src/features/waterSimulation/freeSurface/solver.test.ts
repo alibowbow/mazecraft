@@ -47,6 +47,77 @@ function seededSolver(layout: FluidLayout, particles: number[][]): FreeSurfaceSo
 }
 
 describe('free surface liquid', () => {
+  it('matches exhaustive wall visibility around thin walls, corners and the funnel', () => {
+    const layout = layoutFor(createEmptyGraph(4, 4))
+    let seed = 123456789
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 0x100000000 }
+    const particles = Array.from({ length: 420 }, () => [
+      layout.minX + random() * (layout.maxX - layout.minX),
+      layout.minY + random() * (layout.maxY - layout.minY), 0, 0,
+    ])
+    const solver = seededSolver({ ...layout, capacity: Math.max(layout.capacity, particles.length) }, particles)
+    const state = solver as unknown as { rebuildNeighbors(): void; pairs: Uint32Array; pairCount: number }
+    state.rebuildNeighbors()
+    const actual = new Set<string>()
+    for (let pair = 0; pair < state.pairCount; pair += 2) actual.add(`${state.pairs[pair]}:${state.pairs[pair + 1]}`)
+    const expected = new Set<string>()
+    // Independent slab intersection over every wall, without spatial buckets.
+    const intersects = (a: number[], b: number[], wall: FluidLayout['walls'][number]) => {
+      let enter = 0, leave = 1
+      for (const [start, end, min, max] of [[a[0], b[0], wall.x0, wall.x1], [a[1], b[1], wall.y0, wall.y1]]) {
+        const delta = end - start
+        if (delta === 0) { if (start < min || start > max) return false; continue }
+        const first = (min - start) / delta, second = (max - start) / delta
+        enter = Math.max(enter, Math.min(first, second)); leave = Math.min(leave, Math.max(first, second))
+        if (enter > leave) return false
+      }
+      return true
+    }
+    const h2 = (layout.radius * 4.2) ** 2
+    for (let i = 0; i < particles.length; i++) for (let j = i + 1; j < particles.length; j++) {
+      const a = particles[i], b = particles[j]
+      if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 >= h2) continue
+      if (!layout.walls.some(wall => intersects(a, b, wall))) expected.add(`${i}:${j}`)
+    }
+    expect(actual.size).toBeGreaterThan(100)
+    expect(actual).toEqual(expected)
+  })
+
+  it('keeps a dense unsupported falling group under gravity without internal net lift', () => {
+    const layout = { ...tankLayout(8, 9), walls: [] }
+    const particles = Array.from({ length: 50 }, (_, index) => [
+      2 + (index % 10) * 0.14, 1 + Math.floor(index / 10) * 0.14, 0, 0,
+    ])
+    const solver = seededSolver(layout, particles)
+    const initialY = particles.reduce((sum, particle) => sum + particle[1], 0) / particles.length
+    solver.step(0.4, 0)
+    const snapshot = solver.snapshot()
+    let meanY = 0, meanVy = 0
+    for (let i = 0; i < snapshot.count; i++) { meanY += snapshot.positions[i * 2 + 1]; meanVy += snapshot.velocities[i * 2 + 1] }
+    const steps = 48, dt = 1 / 120
+    expect(meanY / snapshot.count).toBeCloseTo(initialY + 12 * dt * dt * steps * (steps + 1) / 2, 6)
+    expect(meanVy / snapshot.count).toBeCloseTo(12 * 0.4, 6)
+    expect(snapshot.count).toBe(particles.length)
+    expect(snapshot.diagnostics.massError).toBe(0)
+  })
+
+  it('reuses supplied snapshot arrays and clears previous wet-cell diagnostics', () => {
+    const layout = tankLayout(3, 4)
+    const solver = seededSolver(layout, [[1.5, 2, 0, 0]])
+    const buffers = { positions: new Float32Array(32), velocities: new Float32Array(32) }
+    const first = solver.snapshot(buffers)
+    expect(first.positions).toBe(buffers.positions)
+    expect(first.velocities).toBe(buffers.velocities)
+    expect(first.count).toBe(1)
+    expect(first.diagnostics.wetCells).toBe(1)
+    solver.reset()
+    const empty = solver.snapshot(buffers)
+    expect(empty.positions).toBe(buffers.positions)
+    expect(empty.count).toBe(0)
+    expect(empty.diagnostics.wetCells).toBe(0)
+    expect(empty.diagnostics.maxVelocity).toBe(0)
+  })
+
   it('accelerates a falling particle under gravity and admits only actual particles', () => {
     const graph = createEmptyGraph(4, 1)
     for (let row = 0; row < 3; row++) openPassage(graph, { row, col: 0 }, { row: row + 1, col: 0 })

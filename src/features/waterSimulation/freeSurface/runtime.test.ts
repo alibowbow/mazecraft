@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDefaultProject } from '../../../core/maze'
-import type { FluidSnapshot } from './types'
+import type { FluidSnapshot, FluidSnapshotBuffers } from './types'
 import { FreeSurfaceRuntime } from './runtime'
 
 const rendering = vi.hoisted(() => ({ render: vi.fn(), dispose: vi.fn(), setViewMode: vi.fn() }))
@@ -11,13 +11,12 @@ vi.mock('./renderer', () => ({
     dispose = rendering.dispose
     setViewMode = rendering.setViewMode
     setSurfaceStyle() {}
-    recordFrameTime() {}
     setInflow() {}
     resetCamera() {}
   },
 }))
 
-type Command = { type: string; generation: number; steps?: number; inflow?: number }
+type Command = { type: string; generation: number; steps?: number; inflow?: number; publish?: boolean; buffers?: FluidSnapshotBuffers }
 class FakeWorker {
   static current: FakeWorker
   readonly commands: Command[] = []
@@ -26,11 +25,16 @@ class FakeWorker {
   terminated = false
   pending = false
   time = 0
+  snapshots = 0
+  arraysAllocated = 0
+  private buffers: FluidSnapshotBuffers[] = []
   constructor() { FakeWorker.current = this }
-  postMessage(command: Command) {
+  postMessage(command: Command, options?: StructuredSerializeOptions) {
     if (command.type === 'advance') expect(this.pending).toBe(false)
     this.pending = true
-    this.commands.push(command)
+    const received = structuredClone(command, options)
+    if (received.buffers) this.buffers.push(received.buffers)
+    this.commands.push(received)
   }
   terminate() { this.terminated = true }
   complete(generation = this.commands.at(-1)!.generation) {
@@ -40,7 +44,20 @@ class FakeWorker {
       if (command.type === 'advance') this.time += command.steps! / 120
       else this.time = 0
     }
-    this.onmessage?.({ data: { type: 'snapshot', generation, snapshot: snapshot(this.time) } })
+    if (command.type === 'advance' && command.publish === false) {
+      this.onmessage?.({ data: { type: 'advanced', generation } })
+      return
+    }
+    this.snapshots++
+    let buffers = this.buffers.pop()
+    if (!buffers) {
+      this.arraysAllocated += 2
+      buffers = { positions: new Float32Array(64), velocities: new Float32Array(64) }
+    }
+    buffers.positions[0] = this.time
+    const published = { ...snapshot(this.time), ...buffers }
+    const received = structuredClone(published, { transfer: [buffers.positions.buffer, buffers.velocities.buffer] })
+    this.onmessage?.({ data: { type: 'snapshot', generation, snapshot: received } })
   }
 }
 
@@ -114,7 +131,7 @@ describe('free-surface runtime clock and snapshot scheduling', () => {
     expect(steps(worker)).toBe(48)
   })
 
-  it('counts completion-to-frame intervals once and keeps only the latest pending snapshot', () => {
+  it('counts completion intervals once and refreshes unpublished physics on the next display demand', () => {
     const { worker } = setup()
     renderFrame(100)
     now = 125; worker.complete()
@@ -124,7 +141,59 @@ describe('free-surface runtime clock and snapshot scheduling', () => {
     renderFrame(150)
     expect(steps(worker)).toBe(18)
     expect(rendering.render).toHaveBeenCalledTimes(2)
+    expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', steps: 0, publish: true })
+    worker.complete()
+    renderFrame(150)
     expect(rendering.render.mock.calls.at(-1)![0].diagnostics.time).toBeCloseTo(0.15, 10)
+    expect(steps(worker)).toBe(18)
+  })
+
+  it('recycles transferred particle buffers across displayed frames without detaching visible data early', () => {
+    const { worker } = setup()
+    const visiblePositions: number[] = []
+    rendering.render.mockImplementation((state: FluidSnapshot) => { visiblePositions.push(state.positions[0]) })
+    for (let index = 1; index <= 120; index++) {
+      renderFrame(index * 1000 / 60)
+      worker.complete()
+    }
+    renderFrame(2000)
+    expect(worker.time).toBeCloseTo(2, 10)
+    expect(worker.arraysAllocated).toBeLessThanOrEqual(4)
+    expect(visiblePositions).toHaveLength(120)
+    expect(visiblePositions.every(Number.isFinite)).toBe(true)
+    expect(visiblePositions.at(-1)).toBeCloseTo(2, 6)
+  })
+
+  it('publishes demanded frames during persistent catch-up while intermediate batches carry no particles', () => {
+    const { runtime, worker } = setup()
+    runtime.setSpeed(4)
+    for (let time = 100; time <= 1000; time += 100) {
+      renderFrame(time)
+      // Work takes longer than the displayed interval can clear at 4×. A
+      // frame must still receive the next completed batch, never await zero debt.
+      now = time + 20; worker.complete()
+      now = time + 40; worker.complete()
+    }
+    renderFrame(1100)
+    expect(rendering.render.mock.calls.length).toBeGreaterThanOrEqual(10)
+    expect(advances(worker).some(command => command.publish === false)).toBe(true)
+    expect(worker.snapshots).toBeLessThan(advances(worker).length)
+    expect(worker.time).toBeGreaterThan(1)
+    expect(advances(worker).every(command => command.steps! <= 12)).toBe(true)
+  })
+
+  it('reuses fallback particle buffers while keeping its main-thread work bounded', () => {
+    vi.stubGlobal('Worker', undefined)
+    runtime = new FreeSurfaceRuntime(document.createElement('div'), project, 'low', 'natural', vi.fn(), status, vi.fn(), vi.fn())
+    const first = rendering.render.mock.calls[0][0] as FluidSnapshot
+    renderFrame(100)
+    const current = rendering.render.mock.calls.at(-1)![0] as FluidSnapshot
+    expect(current.positions).toBe(first.positions)
+    expect(current.velocities).toBe(first.velocities)
+    expect(current.diagnostics.time).toBeCloseTo(4 / 120, 10)
+    runtime.setPaused(true)
+    renderFrame(1000)
+    expect(rendering.render).toHaveBeenCalledTimes(2)
   })
 
   it('discards pending and in-flight pause snapshots and resumes without paused-time catch-up', () => {
