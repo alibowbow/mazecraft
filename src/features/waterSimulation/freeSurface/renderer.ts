@@ -146,9 +146,11 @@ const waterFragment = /* glsl */ `
     vec2 line = 1.0 - smoothstep(vec2(0.007), vec2(0.017), cell);
     float inside = step(0.0, maze.x) * step(maze.x, uMazeSize.x)
       * step(0.0, maze.y) * step(maze.y, uMazeSize.y);
-    // Give clear water a softly shaded backing, with room for white glints.
-    // Contrast belongs to the board and reflected light, never to water dye.
-    vec3 color = mix(vec3(0.968, 0.971, 0.953), vec3(0.89, 0.902, 0.897), inside * uClearOptics);
+    // Warm pastel peach keeps clear water readable without a gray backing.
+    // Its meniscus and refraction still supply the surface contrast.
+    float pastelBlend = clamp(maze.y / max(uMazeSize.y, 1.0), 0.0, 1.0);
+    vec3 pastel = mix(vec3(1.0, 0.925, 0.865), vec3(1.0, 0.955, 0.895), pastelBlend);
+    vec3 color = mix(vec3(0.968, 0.971, 0.953), pastel, uClearOptics);
     color -= max(line.x, line.y) * inside * mix(0.026, 0.065, uClearOptics);
     float dotMark = 1.0 - smoothstep(0.008, 0.020, length(fract(maze) - 0.5));
     color -= dotMark * inside * mix(0.045, 0.08, uClearOptics);
@@ -185,7 +187,8 @@ const waterFragment = /* glsl */ `
     vec3 reflected = reflect(-view, normal);
     // A neutral studio environment suits a clear maze board. The user's dye
     // selection remains in transmission, never in a blanket white overlay.
-    float environment = 0.28 + 0.54 * smoothstep(-0.65, 0.75, reflected.y);
+    float environment = mix(0.62, 0.28, uClearOptics)
+      + mix(0.30, 0.54, uClearOptics) * smoothstep(-0.65, 0.75, reflected.y);
     float fresnel = 0.02 + 0.98 * pow(1.0 - noV, 5.0);
     water = mix(water, vec3(environment), fresnel);
     vec3 light = normalize(vec3(-0.35, 0.45, 0.82));
@@ -353,7 +356,7 @@ export class FreeSurfaceRenderer {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 1.5 : 1))
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.setClearColor(0xf4f3ed, 1)
+    this.renderer.setClearColor(0xffefdf, 1)
     this.renderer.info.autoReset = false
     this.canvas = this.renderer.domElement
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'
@@ -604,14 +607,16 @@ export class FreeSurfaceRenderer {
     const absorption = this.waterMaterial.uniforms.uAbsorption.value as THREE.Vector3
     const scatter = this.waterMaterial.uniforms.uScatter.value as THREE.Vector3
     if (profile === 'aqua') {
-      absorption.set(1.25, 0.34, 0.18)
-      scatter.set(0.035, 0.20, 0.24)
+      absorption.set(1.15, 0.20, 0.12)
+      scatter.set(0.04, 0.32, 0.38)
     } else if (color) {
-      const tint = new THREE.Color(color)
+      // This compositor outputs display RGB directly, so use display RGB for
+      // the dye too; linearized picker colors excessively darken midtones.
+      const tint = new THREE.Color(color).convertLinearToSRGB()
       // Channel-dependent absorption retains the etched backing and meniscus;
       // changing dye never replaces the continuous surface with an opaque fill.
-      absorption.set(0.12 + (1 - tint.r) * 2.2, 0.12 + (1 - tint.g) * 2.2, 0.12 + (1 - tint.b) * 2.2)
-      scatter.set(tint.r * 0.24, tint.g * 0.24, tint.b * 0.24)
+      absorption.set(0.06 + (1 - tint.r) * 2.2, 0.06 + (1 - tint.g) * 2.2, 0.06 + (1 - tint.b) * 2.2)
+      scatter.set(tint.r * 0.35, tint.g * 0.35, tint.b * 0.35)
     } else {
       // At maze scale clear water has no visible dye. Equal, weak extinction
       // leaves the backing readable; only refraction and neutral light shape it.
@@ -817,7 +822,7 @@ export class FreeSurfaceRenderer {
       this.boardDirty = true
       this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
     }
-    this.renderer.setClearColor(0xf4f3ed, 1)
+    this.renderer.setClearColor(this.waterMaterial.uniforms.uClearOptics.value > 0.5 ? 0xffefdf : 0xf4f3ed, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
       if (this.boardDirty) {
         this.flatWalls.visible = false
@@ -833,7 +838,7 @@ export class FreeSurfaceRenderer {
       this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
     } else {
       this.renderer.setRenderTarget(null)
-      this.renderer.setClearColor(0xf4f3ed, 1)
+      this.renderer.setClearColor(this.waterMaterial.uniforms.uClearOptics.value > 0.5 ? 0xffefdf : 0xf4f3ed, 1)
       this.renderer.render(this.scene, this.camera)
     }
     this.drawCalls = this.renderer.info.render.calls

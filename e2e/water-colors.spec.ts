@@ -53,7 +53,8 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
     return { count, neutral: neutralChroma / Math.max(1, count), aqua: aquaChroma / Math.max(1, count) }
   }, { clear: clear.toString('base64'), aqua: aqua.toString('base64') })
   expect(chroma.count).toBeGreaterThan(200)
-  expect(chroma.neutral).toBeLessThan(12)
+  // Clear water transmits the pastel peach backing without additional dye.
+  expect(chroma.neutral).toBeLessThan(45)
   expect(chroma.aqua).toBeGreaterThan(25)
   expect(await readWaterState(stage)).toEqual(state)
   await expect(canvas).toHaveAttribute('data-surface-builds', initialFieldBuilds!)
