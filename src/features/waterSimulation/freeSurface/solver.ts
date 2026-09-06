@@ -20,6 +20,7 @@ export class FreeSurfaceSolver {
   private readonly vx: Float64Array
   private readonly vy: Float64Array
   private readonly crossed: Uint8Array
+  private readonly floorContact: Uint8Array
   private readonly next: Int32Array
   private readonly heads: Int32Array
   private readonly hashKeys: Int32Array
@@ -36,6 +37,9 @@ export class FreeSurfaceSolver {
   private pairCount = 0
   private readonly deltaX: Float64Array
   private readonly deltaY: Float64Array
+  private readonly shiftX: Float64Array
+  private readonly shifted: Uint8Array
+  private readonly shiftedIndices: Uint32Array
   private readonly wallBuckets: number[][]
   private readonly hashCols: number
   private readonly hashRows: number
@@ -60,9 +64,12 @@ export class FreeSurfaceSolver {
     this.oldX = new Float64Array(n); this.oldY = new Float64Array(n)
     this.vx = new Float64Array(n); this.vy = new Float64Array(n)
     this.crossed = new Uint8Array(n); this.next = new Int32Array(n)
+    this.floorContact = new Uint8Array(n)
     this.hashKeys = new Int32Array(n); this.wet = new Uint8Array(layout.activeCells.length)
     this.density = new Float64Array(n); this.gradientSquared = new Float64Array(n)
     this.deltaX = new Float64Array(n); this.deltaY = new Float64Array(n)
+    this.shiftX = new Float64Array(n)
+    this.shifted = new Uint8Array(n); this.shiftedIndices = new Uint32Array(n)
     this.kernel = layout.radius * 4.2
     this.hashCols = Math.ceil((layout.maxX - layout.minX) / this.kernel) + 2
     this.hashRows = Math.ceil((layout.maxY - layout.minY) / this.kernel) + 2
@@ -287,6 +294,7 @@ export class FreeSurfaceSolver {
   private substep(inflow: number): void {
     this.emit(inflow)
     const n = this.count, h = this.kernel, h2 = h * h
+    let hasFloorContact = false
     for (let i = 0; i < n; i++) {
       this.oldX[i] = this.x[i]; this.oldY[i] = this.y[i]
       this.vy[i] += GRAVITY * FIXED_DT
@@ -295,7 +303,10 @@ export class FreeSurfaceSolver {
         const factor = MAX_SPEED / Math.sqrt(speed2)
         this.vx[i] *= factor; this.vy[i] *= factor
       }
-      this.move(i, this.x[i] + this.vx[i] * FIXED_DT, this.y[i] + this.vy[i] * FIXED_DT)
+      const targetY = this.y[i] + this.vy[i] * FIXED_DT
+      this.move(i, this.x[i] + this.vx[i] * FIXED_DT, targetY)
+      this.floorContact[i] = Number(this.vy[i] > 0 && this.y[i] < targetY - 1e-9)
+      if (this.floorContact[i]) hasFloorContact = true
     }
     // The 2D poly6 kernel integrates to one. Multiplying by the SAME area used
     // in accounting makes rho=1 the intended occupied liquid area, rather than
@@ -306,6 +317,7 @@ export class FreeSurfaceSolver {
       this.rebuildNeighbors()
       this.density.fill(normalization, 0, n); this.gradientSquared.fill(0, 0, n)
       this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
+      let shiftedCount = 0
       for (let pair = 0; pair < this.pairCount; pair += 2) {
         const i = this.pairs[pair], j = this.pairs[pair + 1], geometry = pair * 2
         const dx = this.pairGeometry[geometry], dy = this.pairGeometry[geometry + 1]
@@ -339,7 +351,23 @@ export class FreeSurfaceSolver {
         // Contact support also covers missing kernel neighbours at solid walls.
         const separation = Math.max(0, this.layout.radius * 2 - distance) * 0.35
         const correction = Math.min(0.018, pressure * 0.7 + separation)
-        const cx = dx / distance * correction, cy = dy / distance * correction
+        let cx = dx / distance * correction, cy = dy / distance * correction
+        // A deficient free-surface neighbourhood must not behave like a stack
+        // of rigid discs. At a supporting floor, resolve an aligned contact in
+        // the available tangent plane: dx² + dy² = diameter². The pair receives
+        // equal/opposite offsets; genuine density pressure still acts normally.
+        // This contact manifold only opens after gravity actually hits a wall,
+        // so unsupported jets retain their original free-fall acceleration.
+        if (hasFloorContact && this.density[i] === 0 && this.density[j] === 0 && separation > 1e-5 &&
+            Math.abs(dx) < this.layout.radius * 0.1 && (this.floorContact[i] || this.floorContact[j])) {
+          const contactWidth = Math.sqrt(Math.max(0, (this.layout.radius * 2) ** 2 - dy * dy))
+          const direction = Math.abs(dx) > 1e-7 ? Math.sign(dx) : (dy > 0 ? 1 : -1)
+          const shift = Math.min(0.018, Math.max(0, contactWidth - Math.abs(dx)) * 0.35) * direction
+          if (!this.shifted[i]) { this.shifted[i] = 1; this.shiftedIndices[shiftedCount++] = i }
+          if (!this.shifted[j]) { this.shifted[j] = 1; this.shiftedIndices[shiftedCount++] = j }
+          this.shiftX[i] -= shift; this.shiftX[j] += shift
+          cx = 0; cy = 0
+        }
         this.deltaX[i] -= cx; this.deltaY[i] -= cy
         this.deltaX[j] += cx; this.deltaY[j] += cy
       }
@@ -347,6 +375,19 @@ export class FreeSurfaceSolver {
         const length2 = this.deltaX[i] * this.deltaX[i] + this.deltaY[i] * this.deltaY[i]
         const scale = length2 > 0.035 * 0.035 ? 0.035 / Math.sqrt(length2) : 1
         this.move(i, this.x[i] + this.deltaX[i] * scale, this.y[i] + this.deltaY[i] * scale)
+      }
+      // Only a sparse set of floor contacts needs redistribution. Keep its
+      // scratch state clear here rather than scanning every particle again.
+      for (let entry = 0; entry < shiftedCount; entry++) {
+        const i = this.shiftedIndices[entry]
+        if (this.shiftX[i] !== 0) {
+          const beforeX = this.x[i]
+          this.move(i, beforeX + Math.max(-0.018, Math.min(0.018, this.shiftX[i])), this.y[i])
+          // This is a sampling/transport correction, not a physical impulse.
+          // Exclude the actual collision-clipped shift from reconstructed vx.
+          this.oldX[i] += this.x[i] - beforeX
+        }
+        this.shiftX[i] = 0; this.shifted[i] = 0
       }
     }
     for (let i = 0; i < n; i++) {

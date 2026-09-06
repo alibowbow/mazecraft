@@ -19,15 +19,14 @@ const densityVertex = /* glsl */ `
   varying vec2 vCenter;
   varying vec2 vPoint;
   varying float vSpeed;
-  varying float vStretch;
   varying float vClearance;
   void main() {
     float speed = length(velocity);
-    vec2 direction = speed > 0.05 ? velocity / speed : vec2(0.0, 1.0);
-    vec2 side = vec2(-direction.y, direction.x);
-    vStretch = 1.0 + smoothstep(0.6, 5.0, speed);
-    float width = mix(1.0, 0.88, vStretch - 1.0);
-    vec2 offset = (direction * position.y * vStretch + side * position.x * width) * uRadius;
+    // Geometry represents occupied water, independent of velocity. Stretching
+    // a falling particle in both directions inflated upstream water and joined
+    // empty gaps. Retain the original smooth stationary kernel for every speed.
+    // Keep front-face winding after converting downward-positive maze Y.
+    vec2 offset = vec2(-position.x, position.y) * uRadius;
     vLocal = position.xy;
     vCenter = center;
     vPoint = center + offset;
@@ -47,7 +46,6 @@ const densityFragment = /* glsl */ `
   varying vec2 vCenter;
   varying vec2 vPoint;
   varying float vSpeed;
-  varying float vStretch;
   varying float vClearance;
   void main() {
     float r2 = dot(vLocal, vLocal);
@@ -57,8 +55,7 @@ const densityFragment = /* glsl */ `
     // Close to a wall, retain all eight original visibility samples.
     if (dot(segment, segment) >= vClearance * vClearance
       && clearSegment(vCenter, vPoint) < 0.5) discard;
-    // Elongate only the optical footprint; particle positions/mass are untouched.
-    float kernel = pow(1.0 - r2, 3.0) * 0.34 / sqrt(vStretch);
+    float kernel = pow(1.0 - r2, 3.0) * 0.34;
     gl_FragColor = vec4(kernel, kernel * vSpeed, 0.0, kernel);
   }
 `
@@ -145,14 +142,16 @@ const waterFragment = /* glsl */ `
   vec3 boardAt(vec2 maze) {
     // A quiet etched backing remains visible through the water. Refraction
     // samples this backing only, never geometry on the other side of a wall.
-    vec3 color = vec3(0.968, 0.971, 0.953);
     vec2 cell = abs(fract(maze + 0.5) - 0.5);
     vec2 line = 1.0 - smoothstep(vec2(0.007), vec2(0.017), cell);
     float inside = step(0.0, maze.x) * step(maze.x, uMazeSize.x)
       * step(0.0, maze.y) * step(maze.y, uMazeSize.y);
-    color -= max(line.x, line.y) * inside * 0.026;
+    // Give clear water a softly shaded backing, with room for white glints.
+    // Contrast belongs to the board and reflected light, never to water dye.
+    vec3 color = mix(vec3(0.968, 0.971, 0.953), vec3(0.89, 0.902, 0.897), inside * uClearOptics);
+    color -= max(line.x, line.y) * inside * mix(0.026, 0.065, uClearOptics);
     float dotMark = 1.0 - smoothstep(0.008, 0.020, length(fract(maze) - 0.5));
-    color -= dotMark * inside * 0.045;
+    color -= dotMark * inside * mix(0.045, 0.08, uClearOptics);
     return color;
   }
   float wetAt(vec2 uv) {
@@ -265,7 +264,7 @@ const waterFragment = /* glsl */ `
       // Colorless water transmits the warm backing and reflects neutral light.
       // Keep the original blue environment only for the named colored profiles.
       water = mix(water, mix(vec3(0.84, 0.95, 1.0), vec3(0.58), uClearOptics), fresnel);
-      water += mix(vec3(0.15, 0.19, 0.20), vec3(0.065), uClearOptics)
+      water += mix(vec3(0.15, 0.19, 0.20), vec3(0.028), uClearOptics)
         * reflection * (0.65 + uStyle * 0.20);
       // Only moving water receives a subtle travelling light band. Time is the
       // accepted physics snapshot's time, so pause and still pools stay still.
@@ -274,12 +273,16 @@ const waterFragment = /* glsl */ `
         * band * motion * (0.6 + uStyle * 0.4);
     }
     float sky = pow(max(dot(outward, normalize(vec2(-0.3, 1.0))), 0.0), 4.0);
-    water += mix(vec3(0.40, 0.43, 0.40), vec3(0.16), uClearOptics) * rim * sky * 0.72;
+    water += mix(vec3(0.40, 0.43, 0.40), vec3(0.34), uClearOptics) * rim * sky * 0.72;
     water -= mix(vec3(0.045, 0.055, 0.045), vec3(0.18), uClearOptics)
       * rim * max(-outward.y, 0.0);
     // A broad reflected shade reveals the clear jet's curvature without dye,
     // a white fill, or a separate outline around each underlying particle.
-    water -= vec3(0.055) * uClearOptics * (1.0 - normal.z);
+    water -= vec3(0.14) * uClearOptics * (1.0 - normal.z);
+    // The continuous silhouette reflects a dark surround opposite the light.
+    // Include side-facing edges so vertical jets remain legible on the board.
+    float shade = 1.0 - smoothstep(-0.35, 0.85, dot(outward, normalize(vec2(-0.3, 1.0))));
+    water -= vec3(0.12) * uClearOptics * rim * shade;
     // Composite translucency against the actual backing. The canvas itself
     // stays opaque so the maze and controls do not bleed through the stage.
     gl_FragColor = vec4(mix(background, water, coverage * uOpacity), 1.0);
@@ -762,7 +765,7 @@ export class FreeSurfaceRenderer {
     // omitted R/G/coverage values are mathematically zero, at full resolution.
     this.renderer.clear(true, false, false)
     const center = this.waterMaterial.uniforms.uCenter.value as THREE.Vector2
-    const pad = this.layout.radius * 5.6 + 0.035 * 3.230769
+    const pad = this.layout.radius * 2.8 + 0.035 * 3.230769
     const left = center.x - this.viewWidth * 0.5
     const bottom = center.y - this.viewHeight * 0.5
     const x0 = Math.max(0, Math.min(target.width, Math.floor((this.wetBounds.x - pad - left) / this.viewWidth * target.width) - 2))

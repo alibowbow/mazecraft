@@ -101,6 +101,79 @@ describe('free surface liquid', () => {
     expect(snapshot.diagnostics.massError).toBe(0)
   })
 
+  it.each([1, 2])('spreads an exactly aligned %i-column liquid stack across an open floor', columns => {
+    const layout = tankLayout(8, 6)
+    const floorCentreY = 6 - 0.05 - layout.radius
+    const particles = Array.from({ length: columns * 20 }, (_, index) => [
+      4 + (index % columns - (columns - 1) * 0.5) * 0.1484,
+      floorCentreY - Math.floor(index / columns) * 0.14, 0, 0,
+    ])
+    // Exact alignment is deliberate: adding random seed noise hides the
+    // pressure-deficient rigid-disc tower instead of correcting it.
+    const solver = seededSolver(layout, particles)
+    solver.step(2, 0)
+    const snapshot = solver.snapshot()
+    let minX = Infinity, maxX = -Infinity, minY = Infinity
+    for (let i = 0; i < snapshot.count; i++) {
+      minX = Math.min(minX, snapshot.positions[i * 2])
+      maxX = Math.max(maxX, snapshot.positions[i * 2])
+      minY = Math.min(minY, snapshot.positions[i * 2 + 1])
+    }
+    expect(maxX - minX).toBeGreaterThan(2)
+    expect(6 - 0.05 - minY).toBeLessThan(0.5)
+    expect(snapshot.count).toBe(particles.length)
+    expect(snapshot.diagnostics.injected).toBe(particles.length * layout.particleArea)
+    expect(snapshot.diagnostics.escaped).toBe(0)
+    expect(snapshot.diagnostics.massError).toBe(0)
+  })
+
+  it('opens a supported contact without converting particle redistribution into kinetic energy', () => {
+    const layout = tankLayout(8, 6)
+    const floorCentreY = 6 - 0.05 - layout.radius
+    const solver = seededSolver(layout, [[4, floorCentreY, 0, 0], [4, floorCentreY - 0.14, 0, 0]])
+    const initialEnergy = 12 * 0.14
+    for (let step = 0; step < 240; step++) {
+      solver.step(1 / 120, 0)
+      const snapshot = solver.snapshot()
+      let energy = 0, momentumX = 0, sumX = 0
+      for (let i = 0; i < snapshot.count; i++) {
+        const x = snapshot.positions[i * 2], y = snapshot.positions[i * 2 + 1]
+        const vx = snapshot.velocities[i * 2], vy = snapshot.velocities[i * 2 + 1]
+        energy += 12 * (floorCentreY - y) + (vx * vx + vy * vy) * 0.5
+        momentumX += vx; sumX += x
+      }
+      // No side wall is reached: contact redistribution cannot supply energy
+      // or translate the pair's centre. Allow only Float32 snapshot rounding.
+      expect(energy).toBeLessThanOrEqual(initialEnergy + 2e-5)
+      expect(Math.abs(momentumX)).toBeLessThan(1e-6)
+      expect(sumX / 2).toBeCloseTo(4, 6)
+      expect(snapshot.count).toBe(2)
+    }
+    const settled = solver.snapshot()
+    expect(Math.abs(settled.positions[0] - settled.positions[2])).toBeGreaterThan(0.14)
+    expect(settled.positions[1]).toBeCloseTo(floorCentreY, 5)
+    expect(settled.positions[3]).toBeCloseTo(floorCentreY, 5)
+  })
+
+  it('leaves the same aligned columns unchanged while unsupported and freely falling', () => {
+    const layout = { ...tankLayout(8, 8), walls: [] }
+    const particles = Array.from({ length: 40 }, (_, index) => [
+      4 + (index % 2 - 0.5) * 0.1484, 1 + Math.floor(index / 2) * 0.14, 0, 0,
+    ])
+    const solver = seededSolver(layout, particles)
+    solver.step(0.4, 0)
+    const snapshot = solver.snapshot()
+    const expectedFall = 12 / (120 * 120) * 48 * 49 / 2
+    for (let i = 0; i < snapshot.count; i++) {
+      expect(snapshot.positions[i * 2]).toBeCloseTo(particles[i][0], 6)
+      expect(snapshot.positions[i * 2 + 1]).toBeCloseTo(particles[i][1] + expectedFall, 6)
+      expect(snapshot.velocities[i * 2]).toBe(0)
+      expect(snapshot.velocities[i * 2 + 1]).toBeCloseTo(4.8, 6)
+    }
+    expect(snapshot.count).toBe(particles.length)
+    expect(snapshot.diagnostics.massError).toBe(0)
+  })
+
   it('reuses supplied snapshot arrays and clears previous wet-cell diagnostics', () => {
     const layout = tankLayout(3, 4)
     const solver = seededSolver(layout, [[1.5, 2, 0, 0]])
