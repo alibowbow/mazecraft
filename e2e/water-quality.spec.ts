@@ -37,7 +37,7 @@ test('2D와 3D 전환이 같은 물 입자·Worker·canvas와 정지 상태를 �
   expect((await canvas.screenshot()).equals(threeD)).toBe(true)
   expect(await readWaterState(stage)).toEqual(before)
   await expect(page.locator('.water-status-copy, .water-success-cue')).toHaveCount(0)
-  await page.getByLabel('수면 표현').selectOption('dynamic')
+  await page.getByRole('group', { name: '수면 표현' }).getByRole('button', { name: '역동' }).click()
   await expect(canvas).toHaveAttribute('data-e2e-identity', 'shared-canvas')
   await expect(stage).toHaveAttribute('data-water-surface-style', 'dynamic')
   expect(await readWaterState(stage)).toEqual(before)

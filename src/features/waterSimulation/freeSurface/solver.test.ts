@@ -3,6 +3,7 @@ import { createEmptyGraph, openPassage, type MazeGraph } from '../../../core/maz
 import { createTestProject } from '../../../test/projectFixture'
 import { buildFluidLayout } from './layout'
 import { FreeSurfaceSolver } from './solver'
+import type { FluidLayout, FluidSnapshot } from './types'
 
 function layoutFor(graph: MazeGraph, startCol = 0, endCol = graph.cols - 1) {
   return buildFluidLayout(createTestProject({
@@ -10,6 +11,39 @@ function layoutFor(graph: MazeGraph, startCol = 0, endCol = graph.cols - 1) {
     startCell: { row: 0, col: startCol },
     endCell: { row: graph.rows - 1, col: endCol },
   }))
+}
+
+/** An open-top rectangular tank isolates occupied area from nozzle throughput. */
+function tankLayout(width: number, height: number): FluidLayout {
+  const base = layoutFor(createEmptyGraph(height, width))
+  return {
+    ...base, activeCellCount: 16, // Exactly 100 particles/s, at most one per tick.
+    inletX: width / 2, inletY: 0, outletX: width + 5,
+    minX: -0.2, maxX: width + 0.2, minY: -2, maxY: height + 1,
+    walls: [
+      { x0: -0.1, x1: 0.05, y0: -2, y1: height + 0.1 },
+      { x0: width - 0.05, x1: width + 0.1, y0: -2, y1: height + 0.1 },
+      { x0: 0, x1: width, y0: height - 0.05, y1: height + 0.1 },
+    ],
+  }
+}
+
+function quantileDepth(snapshot: FluidSnapshot, floorY: number, quantile: number): number {
+  const heights = Array.from(snapshot.positions).filter((_, index) => index % 2 === 1).sort((a, b) => a - b)
+  return floorY - heights[Math.floor(heights.length * quantile)]
+}
+
+/** Deterministic particle-state fixture; no production seeding API is needed. */
+function seededSolver(layout: FluidLayout, particles: number[][]): FreeSurfaceSolver {
+  const solver = new FreeSurfaceSolver(layout)
+  const state = solver as unknown as {
+    count: number; admitted: number; x: Float64Array; y: Float64Array; vx: Float64Array; vy: Float64Array
+  }
+  state.count = particles.length; state.admitted = particles.length
+  particles.forEach(([x, y, vx, vy], index) => {
+    state.x[index] = x; state.y[index] = y; state.vx[index] = vx; state.vy[index] = vy
+  })
+  return solver
 }
 
 describe('free surface liquid', () => {
@@ -52,7 +86,8 @@ describe('free surface liquid', () => {
   it('delivers the requested flow through an unobstructed nozzle without losing occupied-lane turns', () => {
     const graph = createEmptyGraph(6, 6)
     for (let row = 0; row < 5; row++) openPassage(graph, { row, col: 0 }, { row: row + 1, col: 0 })
-    const layout = layoutFor(graph, 0, 0)
+    const layout = { ...layoutFor(graph, 0, 0), walls: [] }
+    // Isolate source admission from the real tapered funnel's backpressure.
     const solver = new FreeSurfaceSolver(layout)
     solver.step(1)
     const flowing = solver.snapshot()
@@ -71,17 +106,15 @@ describe('free surface liquid', () => {
     const solver = new FreeSurfaceSolver(layout)
     solver.step(1)
     const snapshot = solver.snapshot()
-    let basinParticles = 0, settledAboveHalfHeight = 0
+    let settledAboveHalfHeight = 0
     for (let i = 0; i < snapshot.count; i++) {
       const x = snapshot.positions[i * 2], y = snapshot.positions[i * 2 + 1]
       if (x < 0 || x >= 1 || y < 0 || y >= 1) continue
-      basinParticles++
       const speed = Math.hypot(snapshot.velocities[i * 2], snapshot.velocities[i * 2 + 1])
       if (y < 0.5 && speed < 0.75) settledAboveHalfHeight++
     }
-    // Count water inside the basin, excluding the funnel and fast falling jet.
-    // The former supply left only 28 particles here and no settled upper half.
-    expect(basinParticles).toBeGreaterThanOrEqual(40)
+    // Check geometric rise, excluding the funnel and fast falling jet. Requiring
+    // 40 particles per cell here rewarded the former compressed water packing.
     expect(settledAboveHalfHeight).toBeGreaterThanOrEqual(3)
     expect(snapshot.diagnostics.discharged).toBe(0)
     expect(snapshot.diagnostics.escaped).toBe(0)
@@ -150,6 +183,71 @@ describe('free surface liquid', () => {
     expect(result.diagnostics.escaped).toBe(0)
     expect(result.diagnostics.massError).toBe(0)
   }, 30_000)
+
+  it.each([[2, 8, 100], [2, 8, 300], [1, 10, 300]])(
+    'preserves occupied area after supply stops in a %i-wide, %i-high tank with %i particles',
+    (width, height, count) => {
+      const layout = tankLayout(width, height)
+      const solver = new FreeSurfaceSolver(layout)
+      while (solver.snapshot().count < count) solver.step(1 / 120)
+      const admitted = solver.snapshot().diagnostics.injected
+      solver.step(6, 0)
+      // No active jet remains. A uniform pool's median is halfway through
+      // area / clear width; the 5% quantile is 95% of that depth. Use quantiles
+      // rather than the highest droplet or a density rendering threshold.
+      const expectedDepth = admitted / (width - 0.1)
+      for (let check = 0; check < 2; check++) {
+        const snapshot = solver.snapshot()
+        const median = quantileDepth(snapshot, height - 0.05, 0.5)
+        const upperSurface = quantileDepth(snapshot, height - 0.05, 0.05)
+        expect(median / (expectedDepth * 0.5)).toBeGreaterThan(0.9)
+        expect(median / (expectedDepth * 0.5)).toBeLessThan(1.12)
+        expect(upperSurface / (expectedDepth * 0.95)).toBeGreaterThan(0.9)
+        expect(upperSurface / (expectedDepth * 0.95)).toBeLessThan(1.12)
+        expect(snapshot.count).toBe(count)
+        expect(snapshot.diagnostics.injected).toBe(admitted)
+        expect(snapshot.diagnostics.stored).toBe(admitted)
+        expect(snapshot.diagnostics.escaped).toBe(0)
+        expect(snapshot.diagnostics.massError).toBe(0)
+        if (check === 0) solver.step(2, 0)
+      }
+    },
+  )
+
+  it('does not transmit density or tangential momentum across a thin solid wall', () => {
+    const layout = tankLayout(2, 4)
+    layout.walls.push({ x0: 0, x1: 2, y0: 0.95, y1: 1.05 })
+    // Centres are only .24 apart, inside the .294 kernel, but a .10 wall
+    // separates the two chambers. The upper particle slides along the floor.
+    const lower = [1, 1.12, 0, 0]
+    const isolated = seededSolver(layout, [lower])
+    const opposite = seededSolver(layout, [lower, [1, 0.88, 3, 0]])
+    isolated.step(0.05, 0); opposite.step(0.05, 0)
+    const alone = isolated.snapshot(), withNeighbour = opposite.snapshot()
+    expect(withNeighbour.positions.slice(0, 2)).toEqual(alone.positions)
+    expect(withNeighbour.velocities.slice(0, 2)).toEqual(alone.velocities)
+    expect(withNeighbour.diagnostics.massError).toBe(0)
+  })
+
+  it('lets an unsupported sheet fall through an open vertical branch after supply stops', () => {
+    const layout = tankLayout(3, 6)
+    layout.walls.push(
+      { x0: 0, x1: 1.05, y0: 1.05, y1: 1.15 },
+      { x0: 1.95, x1: 3, y0: 1.05, y1: 1.15 },
+    )
+    const particles: number[][] = []
+    for (let row = 0; row < 3; row++) for (let col = 0; col < 5; col++) {
+      particles.push([1.2 + col * 0.15, 0.55 + row * 0.15, 0, 0])
+    }
+    const solver = seededSolver(layout, particles)
+    const admitted = solver.snapshot().diagnostics.injected
+    solver.step(1, 0)
+    const snapshot = solver.snapshot()
+    for (let i = 0; i < snapshot.count; i++) expect(snapshot.positions[i * 2 + 1]).toBeGreaterThan(1.2)
+    expect(snapshot.diagnostics.injected).toBe(admitted)
+    expect(snapshot.diagnostics.stored).toBe(admitted)
+    expect(snapshot.diagnostics.massError).toBe(0)
+  })
 
   it('keeps timestep partitioning deterministic and reset clears all accounting', () => {
     const layout = layoutFor(createEmptyGraph(2, 2))

@@ -1077,7 +1077,7 @@ export function StudioScreen({
                   }} /></label>
                 </div>
                 <div className="grid-presets" aria-label="미로 크기 빠른 선택">
-                  {([[16, 16], [24, 24], [32, 24], [48, 36]] as const).map(([cols, rows]) => (
+                  {([[8, 8], [16, 16], [24, 24], [32, 24], [48, 36]] as const).map(([cols, rows]) => (
                     <button key={`${cols}x${rows}`} disabled={state === 'generating'} aria-pressed={draftCols === cols && draftRows === rows} className={draftCols === cols && draftRows === rows ? 'active' : ''} onClick={() => setGridPreset(cols, rows)}>{cols}×{rows}</button>
                   ))}
                 </div>
@@ -1492,7 +1492,7 @@ export function StudioScreen({
               {project.attribution.creatorDisplayName && <small>{project.attribution.creatorDisplayName}</small>}
             </div>
           )}
-          <footer className="inspector-footer">
+          <footer className={`inspector-footer${step === 6 ? ' has-share-action' : ''}`}>
             <button
               className="button secondary"
               disabled={step === 1}
@@ -1501,19 +1501,17 @@ export function StudioScreen({
               이전
             </button>
             <span><strong>{step}</strong> / {steps.length}</span>
-            <button
-              className="button"
-              onClick={() => {
-                if (step === 6) {
+            {step === 6 && (
+              <button
+                className="button"
+                onClick={() => {
                   setSheetOpen(false)
                   onShare()
-                  return
-                }
-                selectStep(Math.min(6, step + 1) as StudioStep, compactLayout)
-              }}
-            >
-              {step === 6 ? '공유하기' : `다음 · ${steps.find((item) => item.id === step + 1)?.title}`}
-            </button>
+                }}
+              >
+                공유하기
+              </button>
+            )}
           </footer>
         </aside>
 

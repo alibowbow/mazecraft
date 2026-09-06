@@ -13,6 +13,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react'
 import { Modal } from '../../components/Modal'
 import type { MazeProject } from '../../core/maze'
@@ -22,6 +23,13 @@ import type {
 } from './waterSceneRuntime'
 import type { WaterSurfaceStyle } from './rendering'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from './freeSurface/runtime'
+import {
+  COLORED_WATER_OPACITY,
+  DEFAULT_WATER_APPEARANCE,
+  WATER_COLOR_PRESETS,
+  type WaterAppearance,
+  type WaterColorPresetId,
+} from './freeSurface/appearance'
 
 export type WaterEffectQuality = 'auto' | 'low' | 'high'
 
@@ -102,6 +110,17 @@ export default function WaterSimulationDialog({
   const [surfaceStyle, setSurfaceStyle] =
     useState<WaterSurfaceStyle>('natural')
   const surfaceStyleRef = useRef(surfaceStyle)
+  const [colorPreset, setColorPreset] = useState<WaterColorPresetId>('clear')
+  const [customColor, setCustomColor] = useState('#db668f')
+  const appearance = useMemo<WaterAppearance>(() => {
+    const color = colorPreset === 'custom'
+      ? customColor
+      : WATER_COLOR_PRESETS.find((preset) => preset.id === colorPreset)?.color ?? null
+    return color === null
+      ? DEFAULT_WATER_APPEARANCE
+      : { color, opacity: COLORED_WATER_OPACITY }
+  }, [colorPreset, customColor])
+  const appearanceRef = useRef(appearance)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [renderState, setRenderState] = useState<
     'initializing' | 'ready' | 'error'
@@ -155,6 +174,7 @@ export default function WaterSimulationDialog({
         reducedMotion,
       )
       runtime.setViewMode(viewModeRef.current)
+      runtime.setAppearance(appearanceRef.current)
       runtime.setSpeed(speed)
       runtimeRef.current = runtime
     } catch (error) {
@@ -204,6 +224,11 @@ export default function WaterSimulationDialog({
     surfaceStyleRef.current = surfaceStyle
     if (open) runtimeRef.current?.setSurfaceStyle(surfaceStyle)
   }, [open, surfaceStyle])
+
+  useEffect(() => {
+    appearanceRef.current = appearance
+    if (open) runtimeRef.current?.setAppearance(appearance)
+  }, [appearance, open])
 
   const restart = useCallback(() => {
     runtimeRef.current?.restart()
@@ -301,6 +326,9 @@ export default function WaterSimulationDialog({
           data-outlet-drop-height={metrics.outletDropHeight.toFixed(2)}
           data-water-surface-renderer="continuous-density-contour"
           data-water-surface-style={surfaceStyle}
+          data-water-color={appearance.color ?? 'clear'}
+          data-water-color-preset={colorPreset}
+          data-water-opacity={appearance.opacity}
           data-wave-bands={metrics.waveBands}
           data-water-reflection="continuous-surface-lighting"
           data-foam-mode={metrics.foamMode}
@@ -310,7 +338,7 @@ export default function WaterSimulationDialog({
           aria-label={
             renderState === 'error'
               ? undefined
-              : `${project.title}의 물리 기반 물 미로 실험. 청록색 물이 열린 아래쪽과 옆 통로를 따라 바닥부터 차오른 뒤 하단 출구 밖으로 떨어집니다.`
+              : `${project.title}의 물리 기반 물 미로 실험. 물이 열린 아래쪽과 옆 통로를 따라 바닥부터 차오른 뒤 하단 출구 밖으로 떨어집니다.`
           }
         >
           <div
@@ -410,22 +438,6 @@ export default function WaterSimulationDialog({
                 <option value={4}>4×</option>
               </select>
             </label>
-            <label className="water-speed-control water-surface-control">
-              <Waves size={16} aria-hidden="true" />
-              <span>수면 표현</span>
-              <select
-                aria-label="수면 표현"
-                value={surfaceStyle}
-                disabled={renderState !== 'ready'}
-                onChange={(event) =>
-                  setSurfaceStyle(event.target.value as WaterSurfaceStyle)
-                }
-              >
-                <option value="calm">잔잔함</option>
-                <option value="natural">자연</option>
-                <option value="dynamic">역동</option>
-              </select>
-            </label>
             {import.meta.env.DEV && (
               <button
                 className="button secondary water-diagnostics-toggle"
@@ -437,6 +449,63 @@ export default function WaterSimulationDialog({
                 물리 진단
               </button>
             )}
+          </div>
+          <div className="water-appearance-controls">
+            <div className="water-palette" role="group" aria-label="물 색상">
+              <span className="water-control-caption">물 색상</span>
+              <div className="water-color-options">
+                {WATER_COLOR_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="water-color-option"
+                    aria-label={`물 색상 ${preset.label}`}
+                    aria-pressed={colorPreset === preset.id}
+                    onClick={() => setColorPreset(preset.id)}
+                  >
+                    <span
+                      className={`water-color-preview${preset.color === null ? ' is-clear' : ''}`}
+                      style={{ '--water-swatch': preset.color ?? '#d4ecee' } as CSSProperties}
+                      aria-hidden="true"
+                    />
+                    <span>{preset.label}</span>
+                  </button>
+                ))}
+                <label className="water-color-option water-custom-color" data-selected={colorPreset === 'custom'}>
+                  <span className="water-color-preview" style={{ '--water-swatch': customColor } as CSSProperties} aria-hidden="true" />
+                  <span>직접 선택</span>
+                  <input
+                    type="color"
+                    value={customColor}
+                    aria-label="물 색상 직접 선택"
+                    onClick={() => setColorPreset('custom')}
+                    onChange={(event) => {
+                      setCustomColor(event.target.value)
+                      setColorPreset('custom')
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="water-surface-options" role="group" aria-label="수면 표현">
+              <span className="water-control-caption">수면 표현</span>
+              <div className="water-style-buttons">
+                {([
+                  ['calm', '잔잔함'],
+                  ['natural', '자연'],
+                  ['dynamic', '역동'],
+                ] as const).map(([style, label]) => (
+                  <button
+                    key={style}
+                    type="button"
+                    aria-pressed={surfaceStyle === style}
+                    onClick={() => setSurfaceStyle(style)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 

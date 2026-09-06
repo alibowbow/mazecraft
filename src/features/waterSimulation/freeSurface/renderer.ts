@@ -3,6 +3,7 @@ import type { FluidLayout, FluidSnapshot } from './types'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
 import { buildFunnelVisual } from './funnelVisual'
+import type { WaterAppearance } from './appearance'
 
 type SurfaceStyle = 'calm' | 'natural' | 'dynamic'
 
@@ -97,6 +98,8 @@ const waterFragment = /* glsl */ `
   uniform float uTime;
   uniform float uOpticalLod;
   uniform float uOpacity;
+  uniform vec3 uAbsorption;
+  uniform vec3 uScatter;
   varying vec2 vUv;
 
   vec3 boardAt(vec2 maze) {
@@ -156,10 +159,10 @@ const waterFragment = /* glsl */ `
     float core = wetAt(vUv);
     float thickness = 0.18 + core * 0.95 + depthTone * 0.20;
     vec3 normal = normalize(vec3(vec2(left - right, down - up) * 1.35, 1.0));
-    vec3 transmission = exp(-vec3(1.25, 0.34, 0.18) * thickness);
+    vec3 transmission = exp(-uAbsorption * thickness);
     vec3 transmittedBacking = boardAt(maze + normal.xy * vec2(0.035, -0.035));
     vec3 water = transmittedBacking * transmission;
-    water += vec3(0.035, 0.20, 0.24) * (1.0 - transmission);
+    water += uScatter * (1.0 - transmission);
     float reflection = pow(max(dot(normal, normalize(vec3(-0.42, 0.32, 1.0))), 0.0), 36.0);
     float fresnel = 0.02 + 0.32 * pow(1.0 - normal.z, 3.0);
     water = mix(water, vec3(0.84, 0.95, 1.0), fresnel);
@@ -219,6 +222,9 @@ export class FreeSurfaceRenderer {
   private disposed = false
   private drawCalls = 0
   private triangles = 0
+  private fieldDirty = true
+  private boardDirty = true
+  private surfaceBuilds = 0
 
   constructor(
     private readonly mount: HTMLElement,
@@ -226,7 +232,7 @@ export class FreeSurfaceRenderer {
     private readonly quality: 'low' | 'high',
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2 : 1.35))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 1.5 : 1))
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.setClearColor(0xf4f3ed, 1)
     this.renderer.info.autoReset = false
@@ -234,6 +240,7 @@ export class FreeSurfaceRenderer {
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'
     this.canvas.dataset.viewMode = 'free-surface'
     this.canvas.dataset.waterOpacity = '0.58'
+    this.canvas.dataset.waterColor = 'transparent'
     this.canvas.setAttribute('aria-label', '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none;'
     this.canvas.tabIndex = 0
@@ -301,6 +308,8 @@ export class FreeSurfaceRenderer {
         uTime: { value: 0 },
         uOpticalLod: { value: 0 },
         uOpacity: { value: 0.58 },
+        uAbsorption: { value: new THREE.Vector3(1.25, 0.34, 0.18) },
+        uScatter: { value: new THREE.Vector3(0.035, 0.20, 0.24) },
       },
       depthTest: false,
       depthWrite: false,
@@ -403,10 +412,8 @@ export class FreeSurfaceRenderer {
     const count = Math.min(snapshot.count, this.layout.capacity)
     const positions = this.positionAttribute.array as Float32Array
     const velocities = this.velocityAttribute.array as Float32Array
-    for (let i = 0; i < count * 2; i++) {
-      positions[i] = snapshot.positions[i]
-      velocities[i] = snapshot.velocities[i]
-    }
+    positions.set(snapshot.positions.subarray(0, count * 2))
+    velocities.set(snapshot.velocities.subarray(0, count * 2))
     this.positionAttribute.clearUpdateRanges()
     this.velocityAttribute.clearUpdateRanges()
     if (count > 0) {
@@ -416,12 +423,37 @@ export class FreeSurfaceRenderer {
       this.velocityAttribute.needsUpdate = true
     }
     this.particleGeometry.instanceCount = count
+    this.fieldDirty = true
     this.draw()
   }
 
   setSurfaceStyle(style: SurfaceStyle): void {
     if (this.disposed) return
     this.waterMaterial.uniforms.uStyle.value = style === 'calm' ? 0 : style === 'dynamic' ? 1 : 0.5
+    this.boardDirty = true
+    this.draw()
+  }
+
+  setAppearance(appearance: WaterAppearance): void {
+    if (this.disposed) return
+    const color = appearance.color && /^#[0-9a-f]{6}$/i.test(appearance.color) ? appearance.color.toLowerCase() : null
+    const absorption = this.waterMaterial.uniforms.uAbsorption.value as THREE.Vector3
+    const scatter = this.waterMaterial.uniforms.uScatter.value as THREE.Vector3
+    if (color) {
+      const tint = new THREE.Color(color)
+      // Channel-dependent absorption retains the etched backing and meniscus;
+      // changing dye never replaces the continuous surface with an opaque fill.
+      absorption.set(0.12 + (1 - tint.r) * 2.2, 0.12 + (1 - tint.g) * 2.2, 0.12 + (1 - tint.b) * 2.2)
+      scatter.set(tint.r * 0.24, tint.g * 0.24, tint.b * 0.24)
+    } else {
+      absorption.set(1.25, 0.34, 0.18)
+      scatter.set(0.035, 0.20, 0.24)
+    }
+    const opacity = Number.isFinite(appearance.opacity) ? THREE.MathUtils.clamp(appearance.opacity, 0.1, 0.9) : 0.58
+    this.waterMaterial.uniforms.uOpacity.value = opacity
+    this.canvas.dataset.waterColor = color ?? 'transparent'
+    this.canvas.dataset.waterOpacity = String(opacity)
+    this.boardDirty = true
     this.draw()
   }
 
@@ -438,6 +470,7 @@ export class FreeSurfaceRenderer {
   setViewMode(mode: 'free-surface' | 'surface-3d'): void {
     if (this.disposed || this.viewMode === mode) return
     this.viewMode = mode
+    this.fieldDirty = true
     this.canvas.dataset.viewMode = mode
     this.canvas.setAttribute('aria-label', mode === 'surface-3d'
       ? '같은 미로 물의 입체 보기. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
@@ -453,17 +486,23 @@ export class FreeSurfaceRenderer {
     if (this.disposed) return
     this.width = Math.max(1, this.mount.clientWidth)
     this.height = Math.max(1, this.mount.clientHeight)
+    // Bound GPU work on high-DPR and large displays without changing physics.
+    const maxPixels = this.quality === 'high' ? 1_600_000 : 900_000
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 1.5 : 1,
+      Math.sqrt(maxPixels / (this.width * this.height))))
     this.renderer.setSize(this.width, this.height, false)
     const ratio = this.renderer.getPixelRatio()
-    const maxSize = this.quality === 'high' ? 2048 : 1280
-    const scale = Math.min(ratio, maxSize / Math.max(this.width, this.height))
+    const maxSize = this.quality === 'high' ? 1280 : 960
+    const scale = Math.min(ratio * 0.75, maxSize / Math.max(this.width, this.height))
     const width = Math.max(1, Math.round(this.width * scale))
     const height = Math.max(1, Math.round(this.height * scale))
     this.densityTarget.setSize(width, height)
     this.filterTarget.setSize(width, height)
     this.surfaceTarget.setSize(width, height)
-    this.boardTarget.setSize(width, height)
+    this.boardTarget.setSize(Math.max(1, Math.round(this.width * ratio)), Math.max(1, Math.round(this.height * ratio)))
     this.waterMaterial.uniforms.uTexel.value.set(1 / width, 1 / height)
+    this.canvas.dataset.surfaceResolution = `${width}x${height}`
+    this.fieldDirty = true
     this.updateCamera()
     this.draw()
   }
@@ -514,30 +553,39 @@ export class FreeSurfaceRenderer {
     this.waterMaterial.uniforms.uCenter.value.set(x, y)
     this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
     this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
+    this.fieldDirty = true
   }
 
   private draw(): void {
     if (this.disposed) return
     this.renderer.info.reset()
-    this.renderer.setRenderTarget(this.densityTarget)
-    this.renderer.setClearColor(0x000000, 0)
-    this.renderer.render(this.densityScene, this.camera)
-    this.filterMaterial.uniforms.uInput.value = this.densityTarget.texture
-    this.filterMaterial.uniforms.uStep.value.set(0.035 / this.viewWidth, 0)
-    this.renderer.setRenderTarget(this.filterTarget)
-    this.renderer.render(this.filterScene, this.camera)
-    this.filterMaterial.uniforms.uInput.value = this.filterTarget.texture
-    this.filterMaterial.uniforms.uStep.value.set(0, 0.035 / this.viewHeight)
-    this.renderer.setRenderTarget(this.surfaceTarget)
-    this.renderer.render(this.filterScene, this.camera)
+    if (this.fieldDirty) {
+      this.renderer.setRenderTarget(this.densityTarget)
+      this.renderer.setClearColor(0x000000, 0)
+      this.renderer.render(this.densityScene, this.camera)
+      this.filterMaterial.uniforms.uInput.value = this.densityTarget.texture
+      this.filterMaterial.uniforms.uStep.value.set(0.035 / this.viewWidth, 0)
+      this.renderer.setRenderTarget(this.filterTarget)
+      this.renderer.render(this.filterScene, this.camera)
+      this.filterMaterial.uniforms.uInput.value = this.filterTarget.texture
+      this.filterMaterial.uniforms.uStep.value.set(0, 0.035 / this.viewHeight)
+      this.renderer.setRenderTarget(this.surfaceTarget)
+      this.renderer.render(this.filterScene, this.camera)
+      this.fieldDirty = false
+      this.boardDirty = true
+      this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
+    }
+    this.renderer.setClearColor(0xf4f3ed, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
-      this.flatWalls.visible = false
-      this.funnel.visible = false
-      this.renderer.setRenderTarget(this.boardTarget)
-      this.renderer.setClearColor(0xf4f3ed, 1)
-      this.renderer.render(this.scene, this.camera)
-      this.flatWalls.visible = true
-      this.funnel.visible = true
+      if (this.boardDirty) {
+        this.flatWalls.visible = false
+        this.funnel.visible = false
+        this.renderer.setRenderTarget(this.boardTarget)
+        this.renderer.render(this.scene, this.camera)
+        this.flatWalls.visible = true
+        this.funnel.visible = true
+        this.boardDirty = false
+      }
       this.renderer.setRenderTarget(null)
       this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
     } else {

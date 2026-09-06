@@ -1846,10 +1846,11 @@ svg {
 
 .water-simulation-status {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: start;
+  align-items: stretch;
+  gap: 11px;
   padding: 11px 12px;
   color: #f2f8f8;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -1886,7 +1887,7 @@ svg {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 7px;
   flex-wrap: wrap;
 }
@@ -1927,8 +1928,124 @@ svg {
   background: #20373d;
 }
 
-.water-surface-control select {
-  min-width: 78px;
+.water-appearance-controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(213, 238, 240, 0.12);
+}
+
+.water-palette {
+  flex: 1 1 480px;
+  min-width: 0;
+}
+
+.water-control-caption {
+  display: block;
+  margin-bottom: 6px;
+  color: #adc3c8;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.water-color-options {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.water-color-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 44px;
+  min-height: 62px;
+  padding: 7px 3px;
+  border: 1px solid rgba(213, 238, 240, 0.18);
+  border-radius: 8px;
+  color: #e0eeee;
+  background: rgba(255, 255, 255, 0.035);
+  font: inherit;
+  font-size: 0.69rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.water-color-option:hover,
+.water-style-buttons button:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.water-color-option[aria-pressed="true"],
+.water-custom-color[data-selected="true"],
+.water-style-buttons button[aria-pressed="true"] {
+  color: #fff;
+  border-color: #c8e9e8;
+  box-shadow: inset 0 0 0 1px #c8e9e8;
+  background: rgba(172, 224, 223, 0.12);
+  font-weight: 750;
+}
+
+.water-color-option:focus-visible,
+.water-custom-color:focus-within,
+.water-style-buttons button:focus-visible {
+  outline: 2px solid #f5dca2;
+  outline-offset: 2px;
+}
+
+.water-color-preview {
+  width: 23px;
+  height: 23px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  background: var(--water-swatch);
+}
+
+.water-color-preview.is-clear {
+  background:
+    linear-gradient(125deg, rgba(241, 253, 255, 0.25), rgba(165, 220, 226, 0.65)),
+    conic-gradient(#f2f7f5 25%, #91a9ac 0 50%, #f2f7f5 0 75%, #91a9ac 0);
+  background-size: auto, 12px 12px;
+}
+
+.water-custom-color input {
+  position: absolute;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.water-surface-options {
+  flex: 0 1 220px;
+}
+
+.water-style-buttons {
+  display: flex;
+  gap: 5px;
+}
+
+.water-style-buttons button {
+  flex: 1 1 0;
+  min-width: 54px;
+  min-height: 44px;
+  padding: 0 9px;
+  border: 1px solid rgba(213, 238, 240, 0.18);
+  border-radius: 8px;
+  color: #e0eeee;
+  background: rgba(255, 255, 255, 0.035);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
 }
 
 .water-physics-diagnostics {
@@ -2319,7 +2436,6 @@ svg {
 
   .water-simulation-status {
     align-items: stretch;
-    flex-direction: column;
     gap: 9px;
     padding: 9px;
   }
@@ -2348,18 +2464,10 @@ svg {
     padding: 0 4px;
   }
 
-  .water-speed-control > span,
-  .water-simulation-controls .button.secondary:nth-of-type(2) {
-    font-size: 0;
-  }
-
   .water-physics-diagnostics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .water-simulation-controls .button.secondary:nth-of-type(2) svg {
-    margin: 0;
-  }
 }
 
 @media (max-width: 420px) {
@@ -2451,19 +2559,11 @@ svg {
 
   .water-simulation-controls .button.secondary {
     gap: 4px;
-    font-size: 0;
-  }
-
-  .water-simulation-controls .button.secondary:first-child {
-    font-size: 0.62rem;
+    font-size: 0.68rem;
   }
 
   .water-simulation-controls {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .water-surface-control {
-    grid-column: span 2;
   }
 
   .water-simulation-legend {
@@ -3555,13 +3655,13 @@ svg {
 
 .grid-presets {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
 }
 
 .grid-presets button {
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   padding-inline: 4px;
   color: var(--muted);
   border: 1px solid var(--line);
@@ -4230,7 +4330,7 @@ svg {
   bottom: 0;
   min-height: 66px;
   display: grid;
-  grid-template-columns: minmax(78px, auto) 52px minmax(120px, 1fr);
+  grid-template-columns: minmax(78px, auto) 1fr;
   align-items: center;
   gap: 7px;
   margin-top: auto;
@@ -4238,6 +4338,10 @@ svg {
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(14px);
+}
+
+.inspector-footer.has-share-action {
+  grid-template-columns: minmax(78px, auto) 52px minmax(120px, 1fr);
 }
 
 .inspector-footer .button {
@@ -4381,8 +4485,12 @@ svg {
   }
 
   .inspector-footer {
-    grid-template-columns: 76px 44px minmax(116px, 1fr);
+    grid-template-columns: 76px 1fr;
     padding-bottom: calc(9px + var(--studio-safe-bottom));
+  }
+
+  .inspector-footer.has-share-action {
+    grid-template-columns: 76px 44px minmax(116px, 1fr);
   }
 }
 
@@ -4870,11 +4978,7 @@ svg {
   height: min(78dvh, 790px);
   grid-template-rows: minmax(130px, 1fr) 3px auto auto;
 }
-.water-simulation-status {
-  flex-wrap: wrap;
-}
 .water-status-copy { flex: 1 0 160px; }
-.water-simulation-controls { flex: 1 1 auto; }
 .water-mode-control { padding: 0 4px; }
 .water-mode-control select { min-width: 94px; }
 .water-inflow-control[aria-pressed="true"] {
@@ -4889,17 +4993,31 @@ svg {
 @media (max-width: 760px) {
   .water-simulation-shell { height: calc(100dvh - 118px); }
   .water-simulation-controls {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 5px;
   }
   .water-simulation-controls > * { flex: 1 0 auto; }
   .water-simulation-controls .button.secondary { min-width: 44px; min-height: 44px; }
   .water-simulation-controls .water-mode-control { flex: 1 0 104px; }
-  .water-simulation-controls .water-mode-control select { width: 100%; }
+  .water-simulation-controls .water-mode-control select { width: 100%; min-width: 0; padding: 0 3px; }
+  .water-simulation-controls .water-speed-control { gap: 3px; }
+  .water-simulation-controls .water-speed-control select { min-width: 44px; }
+  .water-simulation-controls .water-speed-control > svg { display: none; }
+  .water-appearance-controls { gap: 10px; padding-top: 9px; }
+  .water-palette { flex-basis: 100%; }
+  .water-color-options { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .water-color-option { min-height: 56px; }
+  .water-surface-options { flex: 1 1 100%; display: flex; align-items: center; gap: 9px; }
+  .water-surface-options .water-control-caption { flex-shrink: 0; margin: 0; }
+  .water-style-buttons { flex: 1; }
   .water-status-copy { flex: 0 0 auto; }
   .water-simulation-legend { padding: 6px 10px; font-size: 10px; }
+}
+@media (max-width: 520px) {
+  .water-color-options { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .water-color-option { min-height: 54px; gap: 4px; font-size: 0.67rem; }
+  .water-color-preview { width: 19px; height: 19px; }
 }
 @media (max-height: 540px) {
   .water-simulation-modal { max-height: calc(100dvh - 12px) !important; }
@@ -4908,4 +5026,7 @@ svg {
   .water-simulation-shell { height: calc(100dvh - 85px); }
   .water-simulation-status { padding: 5px 8px; gap: 4px; }
   .water-status-copy, .water-simulation-legend { display: none; }
+}
+@media (max-height: 540px) and (min-width: 761px) {
+  .water-simulation-controls { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }

@@ -5,6 +5,7 @@ import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
 import type { FluidDiagnostics, FluidSnapshot } from './types'
+import type { WaterAppearance } from './appearance'
 
 export interface FreeSurfaceStatus extends WaterPlaybackStatus {
   particleCount: number
@@ -193,8 +194,8 @@ export class FreeSurfaceRuntime {
   }
   setSurfaceStyle(style: WaterSurfaceStyle) {
     this.renderer.setSurfaceStyle(style)
-    if (this.snapshot) this.renderer.render(this.snapshot)
   }
+  setAppearance(appearance: WaterAppearance) { this.renderer.setAppearance(appearance) }
   resetCamera() { this.renderer.resetCamera() }
   restart() {
     this.generation++

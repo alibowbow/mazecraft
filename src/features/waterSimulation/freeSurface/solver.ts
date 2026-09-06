@@ -4,7 +4,7 @@ const FIXED_DT = 1 / 120
 const GRAVITY = 12
 const MAX_SPEED = 11
 
-/** Position-based, weakly compressible 2D liquid with conservative particle accounting.
+/** Position-based 2D liquid with area-normalized density projection and conservative accounting.
  * Each admitted particle keeps its area until it leaves the domain. This is a
  * visual free-surface solver, not a calibrated three-dimensional CFD model.
  */
@@ -19,7 +19,9 @@ export class FreeSurfaceSolver {
   private readonly next: Int32Array
   private readonly heads: Int32Array
   private readonly density: Float64Array
-  private readonly nearDensity: Float64Array
+  private readonly gradientSquared: Float64Array
+  private pairs = new Uint32Array(512)
+  private pairCount = 0
   private readonly deltaX: Float64Array
   private readonly deltaY: Float64Array
   private readonly wallBuckets: number[][]
@@ -46,7 +48,7 @@ export class FreeSurfaceSolver {
     this.oldX = new Float64Array(n); this.oldY = new Float64Array(n)
     this.vx = new Float64Array(n); this.vy = new Float64Array(n)
     this.crossed = new Uint8Array(n); this.next = new Int32Array(n)
-    this.density = new Float64Array(n); this.nearDensity = new Float64Array(n)
+    this.density = new Float64Array(n); this.gradientSquared = new Float64Array(n)
     this.deltaX = new Float64Array(n); this.deltaY = new Float64Array(n)
     this.kernel = layout.radius * 4.2
     this.hashCols = Math.ceil((layout.maxX - layout.minX) / this.kernel) + 2
@@ -192,25 +194,42 @@ export class FreeSurfaceSolver {
       this.vx[i] *= factor; this.vy[i] *= factor
       this.move(i, this.x[i] + this.vx[i] * FIXED_DT, this.y[i] + this.vy[i] * FIXED_DT)
     }
+    // The 2D poly6 kernel integrates to one. Multiplying by the SAME area used
+    // in accounting makes rho=1 the intended occupied liquid area, rather than
+    // an arbitrary neighbour count that allowed deep pools to compress by 30%.
+    const normalization = this.layout.particleArea * 4 / (Math.PI * h2)
+    const gradientScale = normalization * 6 / h2
     for (let iteration = 0; iteration < 3; iteration++) {
-      this.rebuildHash()
-      this.density.fill(0, 0, n); this.nearDensity.fill(0, 0, n)
+      this.rebuildNeighbors()
+      this.density.fill(normalization, 0, n); this.gradientSquared.fill(0, 0, n)
       this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
       this.forEachPair((i, j, dx, dy, d2) => {
         if (d2 >= h2) return
-        const q = 1 - Math.sqrt(d2) / h, q2 = q * q
-        this.density[i] += q2; this.density[j] += q2
-        this.nearDensity[i] += q2 * q; this.nearDensity[j] += q2 * q
+        const q = 1 - d2 / h2, q2 = q * q
+        const rho = normalization * q2 * q
+        this.density[i] += rho; this.density[j] += rho
+        const gx = gradientScale * q2 * dx, gy = gradientScale * q2 * dy
+        this.deltaX[i] += gx; this.deltaY[i] += gy
+        this.deltaX[j] -= gx; this.deltaY[j] -= gy
+        const gradient2 = gx * gx + gy * gy
+        this.gradientSquared[i] += gradient2; this.gradientSquared[j] += gradient2
       })
+      for (let i = 0; i < n; i++) {
+        const gradient2 = this.gradientSquared[i] + this.deltaX[i] ** 2 + this.deltaY[i] ** 2
+        // Unilateral density constraint: free surfaces never attract or support
+        // a suspended bridge. Under-relaxation below damps Jacobi overshoot.
+        this.density[i] = -Math.max(0, this.density[i] - 1) / (gradient2 + 1e-6)
+      }
+      this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
       this.forEachPair((i, j, dx, dy, d2) => {
         if (d2 >= h2) return
         let distance = Math.sqrt(d2)
         if (distance < 1e-7) { dx = 1e-6; dy = 0; distance = 1e-6 }
-        const q = 1 - distance / h
-        const pressure = Math.max(-0.001, (this.density[i] + this.density[j] - 5.2) * 0.016)
-        const nearPressure = (this.nearDensity[i] + this.nearDensity[j]) * 0.006
-        const separation = Math.max(0, this.layout.radius * 1.8 - distance) * 0.24
-        const correction = Math.min(0.018, (pressure * q + nearPressure * q * q) * 0.5 + separation)
+        const q = 1 - d2 / h2
+        const pressure = -(this.density[i] + this.density[j]) * gradientScale * q * q * distance
+        // Contact support also covers missing kernel neighbours at solid walls.
+        const separation = Math.max(0, this.layout.radius * 2 - distance) * 0.35
+        const correction = Math.min(0.018, pressure * 0.7 + separation)
         const cx = dx / distance * correction, cy = dy / distance * correction
         this.deltaX[i] -= cx; this.deltaY[i] -= cy
         this.deltaX[j] += cx; this.deltaY[j] += cy
@@ -226,7 +245,7 @@ export class FreeSurfaceSolver {
       this.vy[i] = (this.y[i] - this.oldY[i]) / FIXED_DT
     }
     // XSPH damping exchanges momentum symmetrically; falling jets retain acceleration.
-    this.rebuildHash()
+    this.rebuildNeighbors()
     this.deltaX.fill(0, 0, n); this.deltaY.fill(0, 0, n)
     this.forEachPair((i, j, dx, dy, d2) => {
       if (d2 >= h2) return
@@ -254,8 +273,34 @@ export class FreeSurfaceSolver {
     this.ticks++
   }
 
-  private forEachPair(visit: (i: number, j: number, dx: number, dy: number, distanceSquared: number) => void): void {
-    const h = this.kernel
+  /** A thin maze wall also blocks pressure and viscosity, not only movement. */
+  private visiblePair(i: number, j: number): boolean {
+    const x = this.x[i], y = this.y[i], endX = this.x[j], endY = this.y[j]
+    const minCol = Math.max(0, Math.floor(Math.min(x, endX) - this.layout.minX))
+    const maxCol = Math.min(this.wallCols - 1, Math.floor(Math.max(x, endX) - this.layout.minX))
+    const minRow = Math.max(0, Math.floor(Math.min(y, endY) - this.layout.minY))
+    const maxRow = Math.min(this.wallRows - 1, Math.floor(Math.max(y, endY) - this.layout.minY))
+    const cx = (x + endX) * 0.5, cy = (y + endY) * 0.5
+    const dx = (endX - x) * 0.5, dy = (endY - y) * 0.5
+    const ax = Math.abs(dx), ay = Math.abs(dy)
+    for (let row = minRow; row <= maxRow; row++) for (let col = minCol; col <= maxCol; col++) {
+      for (const index of this.wallBuckets[row * this.wallCols + col]) {
+        const wall = this.layout.walls[index]
+        const wx = (wall.x1 - wall.x0) * 0.5, wy = (wall.y1 - wall.y0) * 0.5
+        const rx = cx - (wall.x0 + wall.x1) * 0.5, ry = cy - (wall.y0 + wall.y1) * 0.5
+        // Separating-axis segment/AABB test. No temporary objects or divisions.
+        if (Math.abs(rx) > wx + ax || Math.abs(ry) > wy + ay) continue
+        if (Math.abs(dx * ry - dy * rx) <= wx * ay + wy * ax) return false
+      }
+    }
+    return true
+  }
+
+  /** Reuse accepted neighbour pairs for density and displacement in this iteration. */
+  private rebuildNeighbors(): void {
+    this.rebuildHash()
+    this.pairCount = 0
+    const h = this.kernel, h2 = h * h
     for (let i = 0; i < this.count; i++) {
       const col = Math.floor((this.x[i] - this.layout.minX) / h)
       const row = Math.floor((this.y[i] - this.layout.minY) / h)
@@ -264,10 +309,23 @@ export class FreeSurfaceSolver {
           for (let j = this.heads[cy * this.hashCols + cx]; j >= 0; j = this.next[j]) {
             if (j <= i) continue
             const dx = this.x[j] - this.x[i], dy = this.y[j] - this.y[i]
-            visit(i, j, dx, dy, dx * dx + dy * dy)
+            if (dx * dx + dy * dy >= h2 || !this.visiblePair(i, j)) continue
+            if (this.pairCount + 2 > this.pairs.length) {
+              const expanded = new Uint32Array(this.pairs.length * 2)
+              expanded.set(this.pairs); this.pairs = expanded
+            }
+            this.pairs[this.pairCount++] = i; this.pairs[this.pairCount++] = j
           }
         }
       }
+    }
+  }
+
+  private forEachPair(visit: (i: number, j: number, dx: number, dy: number, distanceSquared: number) => void): void {
+    for (let pair = 0; pair < this.pairCount; pair += 2) {
+      const i = this.pairs[pair], j = this.pairs[pair + 1]
+      const dx = this.x[j] - this.x[i], dy = this.y[j] - this.y[i]
+      visit(i, j, dx, dy, dx * dx + dy * dy)
     }
   }
 
