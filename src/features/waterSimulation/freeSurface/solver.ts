@@ -188,9 +188,23 @@ export class FreeSurfaceSolver {
   private emit(inflow: number): void {
     this.saturated = false
     if (inflow <= 0) { this.emission = 0; return }
+    // Meter the source against standing water in the bowl, not against the
+    // nozzle finally becoming submerged. Fast falling particles are the jet
+    // and must not throttle themselves. No stored water is removed or moved.
+    let standingInBowl = 0
+    const funnel = this.layout.funnel
+    for (let i = 0; i < this.count; i++) {
+      if (this.y[i] >= funnel.mouthY && this.y[i] < funnel.neckY - 0.18 &&
+          Math.abs(this.x[i] - this.layout.inletX) < funnel.halfWidth &&
+          this.vx[i] ** 2 + this.vy[i] ** 2 < 2.25) standingInBowl++
+    }
+    const supplyFraction = Math.max(0, Math.min(1, (12 - standingInBowl) / 6))
+    if (supplyFraction === 0) {
+      this.saturated = true; this.emission = 0; return
+    }
     // A visible pouring effect needs enough actual volume to raise a basin,
     // not merely a faster animation of the former thin stream.
-    const rate = Math.min(MAX_SOURCE_RATE, (80 + Math.sqrt(this.layout.activeCellCount) * 5) * DEFAULT_SUPPLY_GAIN * inflow)
+    const rate = Math.min(MAX_SOURCE_RATE, (80 + Math.sqrt(this.layout.activeCellCount) * 5) * DEFAULT_SUPPLY_GAIN * inflow) * supplyFraction
     const lanes = 6
     const laneSpacing = this.layout.radius * 2.12
     // A lane must clear at its earliest discrete revisit, including the .006
@@ -353,13 +367,13 @@ export class FreeSurfaceSolver {
         const correction = Math.min(0.018, pressure * 0.7 + separation)
         let cx = dx / distance * correction, cy = dy / distance * correction
         // A deficient free-surface neighbourhood must not behave like a stack
-        // of rigid discs. At a supporting floor, resolve an aligned contact in
+        // of rigid discs. At a supporting floor, resolve a steep contact in
         // the available tangent plane: dx² + dy² = diameter². The pair receives
         // equal/opposite offsets; genuine density pressure still acts normally.
         // This contact manifold only opens after gravity actually hits a wall,
         // so unsupported jets retain their original free-fall acceleration.
         if (hasFloorContact && this.density[i] === 0 && this.density[j] === 0 && separation > 1e-5 &&
-            Math.abs(dx) < this.layout.radius * 0.1 && (this.floorContact[i] || this.floorContact[j])) {
+            Math.abs(dx) < Math.abs(dy) && (this.floorContact[i] || this.floorContact[j])) {
           const contactWidth = Math.sqrt(Math.max(0, (this.layout.radius * 2) ** 2 - dy * dy))
           const direction = Math.abs(dx) > 1e-7 ? Math.sign(dx) : (dy > 0 ? 1 : -1)
           const shift = Math.min(0.018, Math.max(0, contactWidth - Math.abs(dx)) * 0.35) * direction
@@ -401,7 +415,9 @@ export class FreeSurfaceSolver {
       const i = this.pairs[pair], j = this.pairs[pair + 1]
       const d2 = this.pairGeometry[pair * 2 + 2]
       const q = 1 - Math.sqrt(d2) / h
-      const amount = q * 0.035
+      // Water needs light shear damping; stronger neighbour averaging made
+      // lateral drainage syrupy and let incoming water build a tall head.
+      const amount = q * 0.015
       const cx = (this.vx[j] - this.vx[i]) * amount, cy = (this.vy[j] - this.vy[i]) * amount
       this.deltaX[i] += cx; this.deltaY[i] += cy
       this.deltaX[j] -= cx; this.deltaY[j] -= cy

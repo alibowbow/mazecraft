@@ -42,6 +42,9 @@ describe('free surface maze geometry', () => {
     for (let lane = 0; lane < 6; lane++) {
       const x = layout.inletX + (lane - 2.5) * layout.radius * 2.12
       expect(inSolid(x, layout.inletY, layout.radius)).toBe(false)
+      for (let y = layout.inletY; y <= layout.topY + 0.08; y += 0.02) {
+        expect(inSolid(x, y, layout.radius)).toBe(false)
+      }
     }
     for (let y = layout.inletY; y <= layout.topY; y += 0.02) {
       expect(inSolid(layout.inletX, y, layout.radius)).toBe(false)

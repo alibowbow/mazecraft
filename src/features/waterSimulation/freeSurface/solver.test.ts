@@ -357,6 +357,37 @@ describe('free surface liquid', () => {
     expect(result.diagnostics.massError).toBe(0)
   }, 30_000)
 
+  it('drains an open horizontal run without retaining an upstream tower or submerging the supply jet', () => {
+    const graph = createEmptyGraph(4, 6)
+    for (let row = 0; row < 2; row++) openPassage(graph, { row, col: 0 }, { row: row + 1, col: 0 })
+    for (let col = 0; col < 5; col++) openPassage(graph, { row: 2, col }, { row: 2, col: col + 1 })
+    openPassage(graph, { row: 2, col: 5 }, { row: 3, col: 5 })
+    const layout = layoutFor(graph, 0, 5)
+    const solver = new FreeSurfaceSolver(layout)
+    solver.step(3)
+    const flowing = solver.snapshot()
+    let standingAboveBowl = 0
+    for (let i = 0; i < flowing.count; i++) {
+      const y = flowing.positions[i * 2 + 1]
+      const speed = Math.hypot(flowing.velocities[i * 2], flowing.velocities[i * 2 + 1])
+      if (y > layout.funnel.sourceY && y < layout.funnel.mouthY && speed < 1.5) standingAboveBowl++
+    }
+    expect(standingAboveBowl).toBeLessThanOrEqual(3)
+    expect(flowing.diagnostics.discharged).toBeGreaterThan(5)
+    solver.step(1, 0)
+    const draining = solver.snapshot()
+    let upstream = 0
+    for (let i = 0; i < draining.count; i++) {
+      const x = draining.positions[i * 2], y = draining.positions[i * 2 + 1]
+      if (x < 1 && y >= 0 && y < 2) upstream++
+    }
+    expect(upstream).toBeLessThanOrEqual(5)
+    expect(draining.diagnostics.injected).toBe(flowing.diagnostics.injected)
+    expect(draining.diagnostics.discharged).toBeGreaterThan(flowing.diagnostics.discharged)
+    expect(draining.diagnostics.escaped).toBe(0)
+    expect(draining.diagnostics.massError).toBe(0)
+  })
+
   it.each([[2, 8, 100], [2, 8, 300], [1, 10, 300]])(
     'preserves occupied area after supply stops in a %i-wide, %i-high tank with %i particles',
     (width, height, count) => {

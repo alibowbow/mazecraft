@@ -46,9 +46,9 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
       const cell = graph.cells[row * cols + col]
       // Interior boundaries are emitted once. Either side closing a passage wins.
       if (!active(row - 1, col)) {
-        if (row === topY && col === sourceCol) {
-          horizontal(col, col + 0.1, row); horizontal(col + 0.9, col + 1, row)
-        } else horizontal(col, col + 1, row)
+        // Side walls already frame the entrance. Extra horizontal lips
+        // narrowed the six-lane jet and backed water up into the funnel.
+        if (row !== topY || col !== sourceCol) horizontal(col, col + 1, row)
       }
       if (!active(row, col - 1)) vertical(col, row, row + 1)
       if (!active(row + 1, col) || cell.walls.bottom || graph.cells[(row + 1) * cols + col]?.walls.top) {
@@ -66,7 +66,7 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
   const reservoirRight = inletX + reservoirHalfWidth
   const funnel: FluidFunnel = {
     mouthY: topY - 0.95, neckY: topY - 0.16,
-    halfWidth: reservoirHalfWidth, neckHalfWidth: 0.4,
+    halfWidth: reservoirHalfWidth, neckHalfWidth: 0.5,
     sourceY: topY - 1.3, collarTopY: topY - 1.6,
   }
   const slices = 20
