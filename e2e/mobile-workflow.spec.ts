@@ -1,3 +1,4 @@
+import { visitProjectLibrary, openProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
 test.use({
@@ -7,7 +8,7 @@ test.use({
 })
 
 async function createBasic(page: Page) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.getByRole('button', { name: /기본 미로/ }).click()
   await expect(page.getByLabel('프로젝트 제목')).toBeVisible()
 }
@@ -16,9 +17,11 @@ test('15.2 모바일 프로젝트 메뉴는 하나의 화면 내 액션 시트�
   await createBasic(page)
   await page.getByLabel('프로젝트 제목').fill('첫 번째 미로')
   await page.getByRole('button', { name: '홈으로' }).click()
+  await openProjectLibrary(page)
   await page.getByRole('button', { name: /기본 미로/ }).click()
   await page.getByLabel('프로젝트 제목').fill('두 번째 미로')
   await page.getByRole('button', { name: '홈으로' }).click()
+  await openProjectLibrary(page)
 
   const menuButtons = page.getByRole('button', { name: /미로 메뉴$/ })
   await expect(menuButtons).toHaveCount(2)
@@ -29,7 +32,7 @@ test('15.2 모바일 프로젝트 메뉴는 하나의 화면 내 액션 시트�
   await expect(page.locator('.home-shell')).toHaveAttribute('inert', '')
   await expect(page.locator('.home-shell')).toHaveAttribute('aria-hidden', 'true')
   await expect(sheet.getByRole('button', { name: '프로젝트 메뉴 닫기' })).toBeVisible()
-  await expect(sheet.getByRole('button', { name: /계속 편집/ })).toBeVisible()
+  await expect(sheet.getByRole('button', { name: /물 미로 열기/ })).toBeVisible()
   await expect(sheet.getByRole('button', { name: /복제/ })).toBeVisible()
   await expect(sheet.getByRole('button', { name: /내보내기/ })).toBeVisible()
   await expect(sheet.getByRole('button', { name: /삭제/ })).toBeVisible()

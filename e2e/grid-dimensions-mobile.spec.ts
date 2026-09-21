@@ -1,3 +1,4 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
 test.use({
@@ -101,7 +102,7 @@ async function latestStoredGeneration(page: Page): Promise<StoredGeneration | nu
 }
 
 async function openGridSettings(page: Page) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.getByRole('button', { name: /기본 미로/ }).click()
   await expect(page.getByLabel('프로젝트 제목')).toBeVisible()
   await page.locator('.mobile-tabs').getByRole('button', { name: '미로', exact: true }).click()
@@ -254,3 +255,4 @@ test('15.seed-b Seed를 직접 입력한 경우에만 같은 미로를 재현한
   expect(second?.seed).toBe(first?.seed)
   expect(second?.mazeGraph).toBe(first?.mazeGraph)
 })
+

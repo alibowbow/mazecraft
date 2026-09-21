@@ -172,7 +172,7 @@ export function HomeScreen({
             <button className="button hero-primary" onClick={() => onCreate('basic')}>새 미로 만들기 <ArrowRight size={17} /></button>
             {latestProject ? (
               <button className="button secondary continue-project" onClick={() => onOpen(latestProject)}>
-                <ArrowRight size={17} /> 최근 작업 이어서
+                <ArrowRight size={17} /> 최근 물 미로 열기
               </button>
             ) : (
               <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}>
@@ -261,7 +261,7 @@ export function HomeScreen({
               <article className="project-card" key={project.id}>
                 <button className="project-preview" onClick={() => onOpen(project)}>
                   <ProjectMiniature project={project} />
-                  <span className="continue-label">계속 편집</span>
+                  <span className="continue-label">물 미로 열기</span>
                 </button>
                 <div className="project-meta">
                   <button className="project-title" onClick={() => onOpen(project)}>
@@ -308,7 +308,7 @@ export function HomeScreen({
         <div className="project-action-list">
           <button type="button" onClick={() => runProjectAction(onOpen)}>
             <ArrowRight size={19} />
-            <span><strong>계속 편집</strong><small>이 프로젝트를 제작기에서 엽니다</small></span>
+            <span><strong>물 미로 열기</strong><small>물 스튜디오에서 이 미로에 물을 흘립니다</small></span>
           </button>
           <button type="button" onClick={() => runProjectAction(onDuplicate)}>
             <Copy size={19} />

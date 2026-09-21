@@ -1,3 +1,4 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test } from '@playwright/test'
 import {
   WATER_ATLAS_COORDINATES,
@@ -5,7 +6,7 @@ import {
 } from '../src/features/waterSimulation/rendering/waterSurfaceMath'
 
 test('water GPU coordinates follow clockwise portals and camera-independent slopes', async ({ page }) => {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   const results = await page.evaluate(({ coordinates, slope }) => {
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = 1
@@ -99,3 +100,4 @@ test('water GPU coordinates follow clockwise portals and camera-independent slop
   near(results.degenerateSlope, [0, 0])
   expect(results.error).toBe(0)
 })
+

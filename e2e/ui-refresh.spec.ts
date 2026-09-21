@@ -1,7 +1,8 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
 
 async function createBasic(page: Page) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.getByRole('button', { name: /기본 미로/ }).click()
   await expect(page.getByLabel('프로젝트 제목')).toBeVisible()
 }
@@ -12,7 +13,7 @@ async function capture(page: Page, testInfo: TestInfo, name: string, fullPage = 
 }
 
 test('홈에서 간결한 브랜드와 하나의 프로젝트 가져오기 경로를 제공한다', async ({ page }, testInfo) => {
-  await page.goto('/')
+  await visitProjectLibrary(page)
 
   await expect(page.getByRole('heading', { name: 'MazeCraft', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /새 미로 만들기/ })).toBeVisible()
@@ -57,7 +58,7 @@ test('데스크톱 제작기에서 중복 탐색 없이 단계 흐름과 넓은 
 
 test('모바일 제작기에서 여섯 단계를 빠짐없이 바텀 시트로 연다', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await capture(page, testInfo, 'home-mobile.png', true)
   if (process.env.CAPTURE_UI) {
     await page.locator('#templates').scrollIntoViewIfNeeded()
@@ -96,7 +97,7 @@ test('모바일 제작기에서 여섯 단계를 빠짐없이 바텀 시트로 �
 test('소형 태블릿 홈에서 간결한 히어로와 템플릿 선반을 제공한다', async ({ page }) => {
   for (const width of [827, 980, 1024]) {
     await page.setViewportSize({ width, height: 900 })
-    await page.goto('/')
+    await visitProjectLibrary(page)
 
     await expect.poll(() => page.locator('.home-hero').evaluate((element) =>
       getComputedStyle(element).display,
@@ -133,3 +134,4 @@ test('태블릿과 compact 경계에서 여섯 단계가 한 줄 안에 유지�
     }
   }
 })
+

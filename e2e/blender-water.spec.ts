@@ -1,3 +1,4 @@
+import { visitProjectLibrary, enterProjectEditor } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 import { createDefaultProject } from '../src/core/maze'
 
@@ -8,7 +9,7 @@ const project = createDefaultProject({
 })
 
 async function openHighQualityWater(page: Page) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   const importer = page.locator('input[type="file"][accept*=".mazecraft"]')
   if (await importer.count()) {
     await importer.setInputFiles({
@@ -17,6 +18,7 @@ async function openHighQualityWater(page: Page) {
       buffer: Buffer.from(JSON.stringify(project)),
     })
   }
+  await enterProjectEditor(page)
   await page.locator('.studio-stage-rail button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('high')
   await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
@@ -68,3 +70,4 @@ test('Blender atlas가 실시간 수리 수면에 로드되고 셰이더 오류 
   expect(externalRequests).toEqual([])
   expect(consoleErrors).toEqual([])
 })
+

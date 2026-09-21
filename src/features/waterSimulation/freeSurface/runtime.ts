@@ -6,6 +6,7 @@ import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
 import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers } from './types'
 import type { WaterAppearance } from './appearance'
+import type { WaterLook } from './lookdev'
 
 export interface FreeSurfaceStatus extends WaterPlaybackStatus {
   particleCount: number
@@ -33,6 +34,8 @@ export class FreeSurfaceRuntime {
   private paused = false
   private speed = 1
   private inflow = 1
+  private inflowRate = 1
+  private inflowEnabled = true
   private debt = 0
   private lastAdvance: number | null = null
   private lastPublish = 0
@@ -242,10 +245,19 @@ export class FreeSurfaceRuntime {
     if (this.diagnostics) this.publish(this.diagnostics)
   }
   setInflow(value: boolean) {
-    this.inflow = value ? 1 : 0
+    this.inflowEnabled = value
+    this.inflow = value ? this.inflowRate : 0
     this.debt = 0
     this.lastAdvance = performance.now()
     this.renderer.setInflow(value)
+    if (this.diagnostics) this.publish(this.diagnostics)
+  }
+  setInflowRate(value: number) {
+    if (!Number.isFinite(value)) return
+    this.inflowRate = Math.max(0.1, Math.min(2.5, value))
+    this.inflow = this.inflowEnabled ? this.inflowRate : 0
+    this.debt = 0
+    this.lastAdvance = performance.now()
     if (this.diagnostics) this.publish(this.diagnostics)
   }
   setViewMode(mode: 'free-surface' | 'surface-3d') {
@@ -256,11 +268,14 @@ export class FreeSurfaceRuntime {
     this.renderer.setSurfaceStyle(style)
   }
   setAppearance(appearance: WaterAppearance) { this.renderer.setAppearance(appearance) }
+  setLook(look: Partial<WaterLook>) { this.renderer.setLook(look) }
   resetCamera() { this.renderer.resetCamera() }
+  zoomCamera(factor: number) { this.renderer.zoomCamera(factor) }
   restart() {
     this.generation++
     this.paused = false
-    this.inflow = 1
+    this.inflowEnabled = true
+    this.inflow = this.inflowRate
     this.renderer.setInflow(true)
     this.debt = 0
     this.lastAdvance = null

@@ -1,3 +1,4 @@
+import { visitProjectLibrary, enterProjectEditor } from './helpers/navigation'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createDefaultProject, type MazeProject } from '../src/core/maze'
 
@@ -14,12 +15,13 @@ const verticalChannel = createDefaultProject({
 })
 
 async function importProject(page: Page, project: MazeProject, mobile = false) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.locator('input[type="file"][accept*=".mazecraft"]').setInputFiles({
     name: 'free-surface-water.mazecraft',
     mimeType: 'application/vnd.mazecraft+json',
     buffer: Buffer.from(JSON.stringify(project)),
   })
+  await enterProjectEditor(page)
   const tabs = mobile ? '.mobile-tabs button' : '.studio-stage-rail button'
   await page.locator(tabs).filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption('low')
@@ -233,3 +235,4 @@ test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기
     })
   }
 })
+

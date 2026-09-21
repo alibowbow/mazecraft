@@ -7,6 +7,7 @@ import {
   decodeSharePayload,
   encodeSharePayload,
   readShareHash,
+  readShareRoute,
 } from './codec'
 import { createQrSvg } from './qr'
 import { createRemixProject } from './remix'
@@ -71,6 +72,20 @@ describe('공유 데이터', () => {
     expect(result.url).toContain('https://maze.test/editor#/play?data=')
     const hash = result.url.slice(result.url.indexOf('#'))
     expect(readShareHash(hash)?.project.id).toBe('test-maze')
+  })
+
+  it('물 공유는 동일한 미로를 물 스튜디오 경로로 열고 기존 플레이 링크를 보존한다', () => {
+    const project = createTestProject()
+    const payload = createSharePayload(project)
+    const water = createShareLink(payload, 'https://maze.test/editor#old', undefined, 'water')
+    expect(water.ok).toBe(true)
+    if (!water.ok) return
+    const hash = water.url.slice(water.url.indexOf('#'))
+    expect(readShareRoute(hash)).toBe('water')
+    expect(readShareHash(hash)?.project.mazeGraph).toEqual(project.mazeGraph)
+    expect(readShareRoute('#/play?data=valid')).toBe('play')
+    expect(readShareRoute('#/watermark?data=invalid')).toBeNull()
+    expect(readShareRoute('#/player?data=invalid')).toBeNull()
   })
 
   it('기본 24×24 미로를 안전 길이의 링크로 만든다', () => {

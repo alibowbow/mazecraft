@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 
-export const INITIAL_SURFACE_YAW = 0.24
-export const INITIAL_SURFACE_PITCH = 0.18
+export const INITIAL_SURFACE_YAW = 0.34
+export const INITIAL_SURFACE_PITCH = 0.48
 
 /** A direct-grab virtual trackball; no Euler limits or pole singularities. */
 export class SurfaceTrackball {

@@ -1,3 +1,4 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test } from '@playwright/test'
 import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +21,7 @@ test('water filter cropping preserves every wet texel above and below a canvas p
   await page.route('**/__water-renderer-fixture.js', route => route.fulfill({
     contentType: 'application/javascript', body: bundle.outputFiles[0].text,
   }))
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.addScriptTag({ url: '/__water-renderer-fixture.js' })
   const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(5, 5) }))
   const results = await page.evaluate((input) => {
@@ -103,3 +104,4 @@ test('water filter cropping preserves every wet texel above and below a canvas p
     expect(result.error).toBe(0)
   }
 })
+

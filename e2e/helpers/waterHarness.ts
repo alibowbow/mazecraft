@@ -1,3 +1,4 @@
+import { visitProjectLibrary, enterProjectEditor } from './navigation'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { createDefaultProject, type MazeProject } from '../../src/core/maze'
 
@@ -11,7 +12,7 @@ export const fallingWaterProject = createDefaultProject({
 })
 
 export async function importWaterProject(page: Page, project: MazeProject, quality: 'low' | 'high', mobile = false) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   const importer = page.locator('input[type="file"][accept*=".mazecraft"]')
   if (await importer.count()) {
     await importer.setInputFiles({
@@ -21,6 +22,16 @@ export async function importWaterProject(page: Page, project: MazeProject, quali
   } else {
     // A second quality run restores this fixture directly into the editor.
     await expect(page.getByLabel('프로젝트 제목')).toHaveValue(project.title)
+  }
+  await enterProjectEditor(page)
+  // The default home now runs its own simulation. Finish navigation and its
+  // disposal before measuring the modal fixture used by these regression tests.
+  const hasProbe = await page.evaluate(() => '__particleWaterProbe' in window)
+  if (hasProbe) {
+    await expect.poll(async () => (await readWorkerProbe(page)).active).toBe(0)
+    await page.evaluate(() => (window as unknown as {
+      __resetParticleWaterProbe: () => void
+    }).__resetParticleWaterProbe())
   }
   await page.locator(mobile ? '.mobile-tabs button' : '.studio-stage-rail button').filter({ hasText: '테스트' }).click()
   await page.getByLabel('효과 품질').selectOption(quality)
@@ -101,6 +112,10 @@ export async function installWorkerProbe(page: Page) {
       } as typeof prototype.getExtension
     }
     Object.defineProperty(window, '__particleWaterProbe', { get: () => ({ ...state }) })
+    Object.defineProperty(window, '__resetParticleWaterProbe', { value: () => {
+      state.created = 0; state.terminated = 0; state.contextsLost = 0
+      state.fluidLayouts.length = 0; state.fluidInitKeys.length = 0; state.urls.length = 0
+    } })
   })
 }
 export const readWorkerProbe = (page: Page) => page.evaluate(() => (window as unknown as Window & {

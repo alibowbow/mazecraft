@@ -1,3 +1,4 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
 const responsiveViewports = [
@@ -11,7 +12,7 @@ const responsiveViewports = [
 
 async function openBasicMaze(page: Page, viewport: { width: number; height: number }) {
   await page.setViewportSize(viewport)
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.getByRole('button', { name: /기본 미로/ }).click()
   await expect(page.getByLabel('프로젝트 제목')).toBeVisible()
   await expect(page.locator('.studio-layout')).toBeVisible()
@@ -136,3 +137,4 @@ for (const viewport of responsiveViewports) {
     ).toEqual([])
   })
 }
+

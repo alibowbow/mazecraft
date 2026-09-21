@@ -1,8 +1,9 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test } from '@playwright/test'
 import { WATER_WALL_VISIBILITY } from '../src/features/waterSimulation/freeSurface/surfaceField'
 
 test('free-surface GPU field rejects water across thin walls while keeping passages open', async ({ page }) => {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   const results = await page.evaluate((visibility) => {
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = 1
@@ -108,3 +109,4 @@ test('free-surface GPU field rejects water across thin walls while keeping passa
   }
   expect(results.error).toBe(0)
 })
+

@@ -1,3 +1,4 @@
+import { visitProjectLibrary, enterProjectEditor, openProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 import { createDefaultProject, solveMaze, type CellPosition, type MazeProject } from '../src/core/maze'
 import { createShareLink, createSharePayload } from '../src/features/share'
@@ -25,18 +26,19 @@ const pathDirections = (path: CellPosition[]) =>
   })
 
 async function importFixture(page: Page, project = createFixture()) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.locator('input[type="file"][accept*=".mazecraft"]').setInputFiles({
     name: 'fixture.mazecraft',
     mimeType: 'application/vnd.mazecraft+json',
     buffer: Buffer.from(JSON.stringify(project)),
   })
+  await enterProjectEditor(page)
   await expect(page.getByLabel('프로젝트 제목')).toHaveValue(project.title)
   return project
 }
 
 async function createBasic(page: Page) {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.getByRole('button', { name: /기본 미로/ }).click()
   await expect(page.getByLabel('프로젝트 제목')).toBeVisible()
 }
@@ -62,7 +64,7 @@ async function completeFixture(page: Page, project: MazeProject) {
 }
 
 test('1. 새 기본 미로를 생성한다', async ({ page }) => {
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await expect(page.getByText('LIVE MAZE', { exact: true })).toHaveCount(0)
   await createBasic(page)
   await expect(page.locator('canvas')).toBeVisible()
@@ -97,6 +99,7 @@ test('5. 자동 저장 후 새로고침해 프로젝트를 복구한다', async 
   await page.getByLabel('프로젝트 제목').fill(title)
   await expect(page.getByText('저장됨')).toBeVisible({ timeout: 5_000 })
   await page.reload()
+  await enterProjectEditor(page)
   await expect(page.getByLabel('프로젝트 제목')).toHaveValue(title)
 })
 
@@ -111,7 +114,9 @@ test('6. 프로젝트 파일을 내보내고 다시 불러온다', async ({ page
   expect(file.suggestedFilename()).toContain('.mazecraft')
   await page.getByRole('button', { name: '닫기', exact: true }).last().click()
   await page.getByLabel('홈으로').click()
+  await openProjectLibrary(page)
   await page.locator('input[type="file"][accept*=".mazecraft"]').setInputFiles(await file.path())
+  await enterProjectEditor(page)
   await expect(page.getByLabel('프로젝트 제목')).toHaveValue('브라우저 검증 미로')
 })
 
@@ -331,3 +336,4 @@ test('15. 3D 입자 물이 위쪽 깔때기에서 아래 출구로 흐른다', a
   await expect(stage).toHaveCount(0)
   expect(errors).toEqual([])
 })
+

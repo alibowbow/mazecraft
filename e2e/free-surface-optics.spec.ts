@@ -1,3 +1,4 @@
+import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test } from '@playwright/test'
 import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
@@ -17,7 +18,7 @@ test('water keeps its occupied shape at every speed and clear water remains visi
   await page.route('**/__water-optics-fixture.js', route => route.fulfill({
     contentType: 'application/javascript', body: bundle.outputFiles[0].text,
   }))
-  await page.goto('/')
+  await visitProjectLibrary(page)
   await page.addScriptTag({ url: '/__water-optics-fixture.js' })
   const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(5, 5) }))
   const results = await page.evaluate(input => {
@@ -148,3 +149,4 @@ test('water keeps its occupied shape at every speed and clear water remains visi
     expect(result.error).toBe(0)
   }
 })
+

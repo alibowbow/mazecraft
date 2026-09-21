@@ -5,6 +5,7 @@ import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation
 import { SurfaceTrackball } from './camera3d'
 import { buildFunnelVisual } from './funnelVisual'
 import { DEFAULT_WATER_APPEARANCE, type WaterAppearance } from './appearance'
+import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, WATER_LIGHTS, type WaterLook } from './lookdev'
 
 type SurfaceStyle = 'calm' | 'natural' | 'dynamic'
 
@@ -122,6 +123,7 @@ const filterFragment = /* glsl */ `
 `
 
 const waterFragment = /* glsl */ `
+  ${WATER_WALL_VISIBILITY}
   uniform sampler2D uDensity;
   uniform vec2 uTexel;
   uniform vec2 uCenter;
@@ -137,6 +139,11 @@ const waterFragment = /* glsl */ `
   uniform vec3 uViewDirection;
   uniform vec3 uAbsorption;
   uniform vec3 uScatter;
+  uniform vec3 uFloor;
+  uniform vec3 uBackdrop;
+  uniform vec3 uLightDirection;
+  uniform vec3 uLightColor;
+  uniform float uWallDepth;
   varying vec2 vUv;
 
   vec3 boardAt(vec2 maze) {
@@ -146,14 +153,18 @@ const waterFragment = /* glsl */ `
     vec2 line = 1.0 - smoothstep(vec2(0.007), vec2(0.017), cell);
     float inside = step(0.0, maze.x) * step(maze.x, uMazeSize.x)
       * step(0.0, maze.y) * step(maze.y, uMazeSize.y);
-    // Warm pastel peach keeps clear water readable without a gray backing.
-    // Its meniscus and refraction still supply the surface contrast.
     float pastelBlend = clamp(maze.y / max(uMazeSize.y, 1.0), 0.0, 1.0);
-    vec3 pastel = mix(vec3(1.0, 0.925, 0.865), vec3(1.0, 0.955, 0.895), pastelBlend);
-    vec3 color = mix(vec3(0.968, 0.971, 0.953), pastel, uClearOptics);
-    color -= max(line.x, line.y) * inside * mix(0.026, 0.065, uClearOptics);
+    vec3 color = mix(uFloor * 0.98, min(vec3(1.0), uFloor + vec3(0.012)), pastelBlend);
+    color *= mix(vec3(1.0), uLightColor, 0.16);
+    color -= max(line.x, line.y) * inside * mix(0.012, 0.021, uClearOptics);
     float dotMark = 1.0 - smoothstep(0.008, 0.020, length(fract(maze) - 0.5));
-    color -= dotMark * inside * mix(0.045, 0.08, uClearOptics);
+    color -= dotMark * inside * 0.024;
+    // A short directional contact shade makes the recess legible and follows
+    // the same light as the physical bevels. No full-scene shadow pass needed.
+    vec2 toLight = vec2(uLightDirection.x, -uLightDirection.y) * uWallDepth;
+    float shade = wallAt(maze + toLight * 0.18) * 0.060
+      + wallAt(maze + toLight * 0.43) * 0.035;
+    color *= 1.0 - shade * uPresentation3D;
     return color;
   }
   float wetAt(vec2 uv) {
@@ -190,8 +201,9 @@ const waterFragment = /* glsl */ `
     float environment = mix(0.62, 0.28, uClearOptics)
       + mix(0.30, 0.54, uClearOptics) * smoothstep(-0.65, 0.75, reflected.y);
     float fresnel = 0.02 + 0.98 * pow(1.0 - noV, 5.0);
-    water = mix(water, vec3(environment), fresnel);
-    vec3 light = normalize(vec3(-0.35, 0.45, 0.82));
+    vec3 environmentTint = mix(uBackdrop, uLightColor, 0.48) * environment;
+    water = mix(water, environmentTint, fresnel);
+    vec3 light = normalize(uLightDirection);
     vec3 halfway = normalize(view + light);
     float noL = max(0.0, dot(normal, light));
     float noH = max(0.0, dot(normal, halfway));
@@ -206,7 +218,7 @@ const waterFragment = /* glsl */ `
     float sunFresnel = 0.02 + 0.98 * pow(1.0 - voH, 5.0);
     // Bound the narrow GGX glint to retain the refracted backing even when a
     // wave aligns with the light. This is an optical approximation, not foam.
-    water += vec3(min(0.17, distribution * visibility * sunFresnel * noL * 0.32));
+    water += uLightColor * min(0.17, distribution * visibility * sunFresnel * noL * 0.32);
     return water;
   }
   void main() {
@@ -262,12 +274,12 @@ const waterFragment = /* glsl */ `
       vec3 transmittedBacking = boardAt(maze + normal.xy * vec2(refractionScale, -refractionScale));
       water = transmittedBacking * transmission;
       water += uScatter * (1.0 - transmission);
-      float reflection = pow(max(dot(normal, normalize(vec3(-0.42, 0.32, 1.0))), 0.0), 36.0);
+      float reflection = pow(max(dot(normal, normalize(uLightDirection)), 0.0), 36.0);
       float fresnel = 0.02 + 0.32 * pow(1.0 - normal.z, 3.0);
       // Colorless water transmits the warm backing and reflects neutral light.
       // Keep the original blue environment only for the named colored profiles.
       water = mix(water, mix(vec3(0.84, 0.95, 1.0), vec3(0.58), uClearOptics), fresnel);
-      water += mix(vec3(0.15, 0.19, 0.20), vec3(0.028), uClearOptics)
+      water += mix(vec3(0.15, 0.19, 0.20), vec3(0.028), uClearOptics) * uLightColor
         * reflection * (0.65 + uStyle * 0.20);
       // Only moving water receives a subtle travelling light band. Time is the
       // accepted physics snapshot's time, so pause and still pools stay still.
@@ -275,7 +287,7 @@ const waterFragment = /* glsl */ `
       water += mix(vec3(0.035, 0.045, 0.05), vec3(0.016), uClearOptics)
         * band * motion * (0.6 + uStyle * 0.4);
     }
-    float sky = pow(max(dot(outward, normalize(vec2(-0.3, 1.0))), 0.0), 4.0);
+    float sky = pow(max(dot(outward, normalize(uLightDirection.xy)), 0.0), 4.0);
     water += mix(vec3(0.40, 0.43, 0.40), vec3(0.34), uClearOptics) * rim * sky * 0.72;
     water -= mix(vec3(0.045, 0.055, 0.045), vec3(0.18), uClearOptics)
       * rim * max(-outward.y, 0.0);
@@ -284,7 +296,7 @@ const waterFragment = /* glsl */ `
     water -= vec3(0.14) * uClearOptics * (1.0 - normal.z);
     // The continuous silhouette reflects a dark surround opposite the light.
     // Include side-facing edges so vertical jets remain legible on the board.
-    float shade = 1.0 - smoothstep(-0.35, 0.85, dot(outward, normalize(vec2(-0.3, 1.0))));
+    float shade = 1.0 - smoothstep(-0.35, 0.85, dot(outward, normalize(uLightDirection.xy)));
     water -= vec3(0.12) * uClearOptics * rim * shade;
     // Composite translucency against the actual backing. The canvas itself
     // stays opaque so the maze and controls do not bleed through the stage.
@@ -304,6 +316,7 @@ export class FreeSurfaceRenderer {
   private presentation3d: FreeSurfacePresentation3D | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private readonly trackball = new SurfaceTrackball()
+  private look: WaterLook = { ...DEFAULT_WATER_LOOK }
   private readonly densityScene = new THREE.Scene()
   private readonly densityTarget: THREE.WebGLRenderTarget
   private readonly filterScene = new THREE.Scene()
@@ -439,6 +452,7 @@ export class FreeSurfaceRenderer {
       vertexShader: waterVertex,
       fragmentShader: waterFragment,
       uniforms: {
+        ...wallUniforms,
         uDensity: { value: this.surfaceTarget.texture },
         uTexel: { value: new THREE.Vector2(1, 1) },
         uCenter: { value: new THREE.Vector2() },
@@ -454,6 +468,11 @@ export class FreeSurfaceRenderer {
         uViewDirection: { value: new THREE.Vector3(0, 0, 1) },
         uAbsorption: { value: new THREE.Vector3(0.045, 0.045, 0.045) },
         uScatter: { value: new THREE.Vector3(0, 0, 0) },
+        uFloor: { value: new THREE.Color(getWaterTheme(DEFAULT_WATER_LOOK.theme).floor).convertLinearToSRGB() },
+        uBackdrop: { value: new THREE.Color(getWaterTheme(DEFAULT_WATER_LOOK.theme).background).convertLinearToSRGB() },
+        uLightDirection: { value: new THREE.Vector3(...WATER_LIGHTS.daylight.direction).normalize() },
+        uLightColor: { value: new THREE.Color(WATER_LIGHTS.daylight.color).convertLinearToSRGB() },
+        uWallDepth: { value: DEFAULT_WATER_LOOK.wallHeight },
       },
       depthTest: false,
       depthWrite: false,
@@ -529,10 +548,11 @@ export class FreeSurfaceRenderer {
         colors.push(c.r, c.g, c.b)
       }
     }
-    const top = new THREE.Color('#39444a')
-    const bottom = new THREE.Color('#26363d')
-    const rim = new THREE.Color('#6f7b7f')
-    const shadow = new THREE.Color('#4e636b')
+    const palette = getWaterTheme(this.look.theme)
+    const top = new THREE.Color(palette.wall)
+    const bottom = new THREE.Color(palette.wallSide)
+    const rim = new THREE.Color(palette.wall).lerp(new THREE.Color('#ffffff'), 0.45)
+    const shadow = new THREE.Color(palette.edge)
     for (const wall of this.layout.walls) {
       if (wall.kind === 'funnel') continue
       const { x0, y0, x1, y1 } = wall
@@ -645,6 +665,49 @@ export class FreeSurfaceRenderer {
     this.draw()
   }
 
+  setLook(next: Partial<WaterLook>): void {
+    if (this.disposed) return
+    const previousTheme = this.look.theme
+    this.look = normalizeWaterLook(next, this.look)
+    const palette = getWaterTheme(this.look.theme)
+    const lighting = WATER_LIGHTS[this.look.light]
+    this.waterMaterial.uniforms.uFloor.value.set(palette.floor).convertLinearToSRGB()
+    this.waterMaterial.uniforms.uBackdrop.value.set(palette.background).convertLinearToSRGB()
+    this.waterMaterial.uniforms.uLightDirection.value.set(...lighting.direction).normalize()
+    this.waterMaterial.uniforms.uLightColor.value.set(lighting.color).convertLinearToSRGB()
+    this.waterMaterial.uniforms.uWallDepth.value = this.look.wallHeight
+    this.presentation3d?.setLook(this.look)
+    if (previousTheme !== this.look.theme) {
+      // Only appearance edits rebuild the two flat meshes; simulation buffers
+      // and the filtered density/coverage targets remain untouched.
+      for (const child of this.flatWalls.children) {
+        const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.Material>
+        mesh.geometry.dispose()
+        mesh.material.dispose()
+        this.geometries.splice(this.geometries.indexOf(mesh.geometry), 1)
+        this.materials.splice(this.materials.indexOf(mesh.material), 1)
+      }
+      this.flatWalls.clear()
+      this.buildWalls()
+    }
+    this.funnel.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        if (!(material instanceof THREE.MeshBasicMaterial)) continue
+        const original = material.userData.originalColor ??= material.color.getHexString()
+        if (original === 'afc7ce' || original === 'a7bfc7') material.color.set(palette.edge)
+        else if (original === '78939e' || original === '71848b') material.color.set(palette.wallSide)
+        else if (original === '9fadb0') material.color.set(palette.slab)
+        else if (original === '77bed0') material.color.set(palette.accent)
+      }
+    })
+    this.canvas.dataset.theme = this.look.theme
+    this.canvas.dataset.lighting = this.look.light
+    this.canvas.dataset.wallHeight = String(this.look.wallHeight)
+    this.boardDirty = true
+    this.draw()
+  }
+
   setViewMode(mode: 'free-surface' | 'surface-3d'): void {
     if (this.disposed || this.viewMode === mode) return
     this.viewMode = mode
@@ -659,6 +722,7 @@ export class FreeSurfaceRenderer {
     if (mode === 'surface-3d' && !this.presentation3d) {
       this.presentation3d = new FreeSurfacePresentation3D(this.layout, this.boardTarget.texture)
       this.presentation3d.content.add(this.funnel.clone(true))
+      this.presentation3d.setLook(this.look)
     }
     this.resetCamera()
   }
@@ -702,6 +766,13 @@ export class FreeSurfaceRenderer {
     this.panX = 0
     this.panY = 0
     this.trackball.reset()
+    this.updateCamera()
+    this.draw()
+  }
+
+  zoomCamera(factor: number): void {
+    if (this.disposed || !Number.isFinite(factor) || factor <= 0) return
+    this.zoom = THREE.MathUtils.clamp(this.zoom * factor, this.viewMode === 'surface-3d' ? 0.25 : 0.75, 6)
     this.updateCamera()
     this.draw()
   }
@@ -822,7 +893,7 @@ export class FreeSurfaceRenderer {
       this.boardDirty = true
       this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
     }
-    this.renderer.setClearColor(this.waterMaterial.uniforms.uClearOptics.value > 0.5 ? 0xffefdf : 0xf4f3ed, 1)
+    this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
       if (this.boardDirty) {
         this.flatWalls.visible = false
@@ -838,7 +909,7 @@ export class FreeSurfaceRenderer {
       this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
     } else {
       this.renderer.setRenderTarget(null)
-      this.renderer.setClearColor(this.waterMaterial.uniforms.uClearOptics.value > 0.5 ? 0xffefdf : 0xf4f3ed, 1)
+      this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
       this.renderer.render(this.scene, this.camera)
     }
     this.drawCalls = this.renderer.info.render.calls

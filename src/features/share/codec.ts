@@ -292,6 +292,7 @@ export function createShareLink(
     ? 'https://localhost/'
     : location.href,
   maximumLength = MAX_SHARE_URL_LENGTH,
+  mode: 'play' | 'water' = 'play',
 ): ShareLinkResult {
   let encoded: string
   try {
@@ -309,7 +310,7 @@ export function createShareLink(
   }
 
   const cleanBase = baseUrl.split('#')[0]
-  const url = `${cleanBase}#/play?data=${encoded}`
+  const url = `${cleanBase}#/${mode}?data=${encoded}`
   if (url.length > maximumLength) {
     return {
       ok: false,
@@ -322,10 +323,17 @@ export function createShareLink(
   return { ok: true, url, encodedLength: encoded.length }
 }
 
+export function readShareRoute(
+  hash = typeof location === 'undefined' ? '' : location.hash,
+): 'play' | 'water' | null {
+  const match = /^#\/(play|water)(?:\?|$)/.exec(hash)
+  return match ? match[1] as 'play' | 'water' : null
+}
+
 export function readShareHash(
   hash = typeof location === 'undefined' ? '' : location.hash,
 ): MazeSharePayload | null {
-  if (!hash.startsWith('#/play')) return null
+  if (!readShareRoute(hash)) return null
   const queryStart = hash.indexOf('?')
   if (queryStart < 0) return null
   const encoded = new URLSearchParams(hash.slice(queryStart + 1)).get('data')

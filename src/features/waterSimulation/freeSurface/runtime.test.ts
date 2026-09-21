@@ -3,13 +3,14 @@ import { createDefaultProject } from '../../../core/maze'
 import type { FluidSnapshot, FluidSnapshotBuffers } from './types'
 import { FreeSurfaceRuntime } from './runtime'
 
-const rendering = vi.hoisted(() => ({ render: vi.fn(), dispose: vi.fn(), setViewMode: vi.fn() }))
+const rendering = vi.hoisted(() => ({ render: vi.fn(), dispose: vi.fn(), setViewMode: vi.fn(), setLook: vi.fn() }))
 vi.mock('./renderer', () => ({
   FreeSurfaceRenderer: class {
     canvas = { width: 640, height: 480 }
     render = rendering.render
     dispose = rendering.dispose
     setViewMode = rendering.setViewMode
+    setLook = rendering.setLook
     setSurfaceStyle() {}
     setInflow() {}
     resetCamera() {}
@@ -102,6 +103,35 @@ afterEach(() => {
 })
 
 describe('free-surface runtime clock and snapshot scheduling', () => {
+  it('preserves the chosen supply rate while toggling the faucet and restarting', () => {
+    const { runtime, worker } = setup()
+    runtime.setInflowRate(1.7)
+    renderFrame(100)
+    expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', inflow: 1.7 })
+    worker.complete()
+    runtime.setInflow(false)
+    runtime.setInflowRate(0.4)
+    renderFrame(200)
+    expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', inflow: 0 })
+    worker.complete()
+    runtime.setInflow(true)
+    renderFrame(300)
+    expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', inflow: 0.4 })
+    worker.complete()
+    runtime.restart()
+    worker.complete()
+    renderFrame(400)
+    expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', inflow: 0.4, generation: 1 })
+  })
+
+  it('changes the look without sending reset or simulation commands', () => {
+    const { runtime, worker } = setup()
+    const commands = worker.commands.length
+    runtime.setLook({ theme: 'glacier', light: 'golden', wallHeight: 1.4 })
+    expect(rendering.setLook).toHaveBeenCalledWith({ theme: 'glacier', light: 'golden', wallHeight: 1.4 })
+    expect(worker.commands).toHaveLength(commands)
+  })
+
   it('advances a full physical second when the renderer runs at 10 fps', () => {
     const { worker } = setup()
     for (let time = 100; time <= 1_000; time += 100) {

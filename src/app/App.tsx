@@ -26,6 +26,7 @@ import { ProjectService } from '../features/projects/projectService'
 import {
   createRemixProject,
   readShareHash,
+  readShareRoute,
 } from '../features/share'
 import {
   createAutosave,
@@ -47,7 +48,9 @@ import {
   type MachineSnapshot,
 } from './stateMachine'
 
-type Route = 'loading' | 'home' | 'studio' | 'play'
+type Route = 'loading' | 'water' | 'home' | 'studio' | 'play'
+
+const WaterStudio = lazy(() => import('../features/waterStudio/WaterStudio'))
 
 const StudioScreen = lazy(() =>
   import('../features/creator/StudioScreen').then((module) => ({
@@ -77,6 +80,15 @@ interface Toast {
 }
 
 const service = new ProjectService(localProjectRepository)
+const LAST_WATER_PROJECT_KEY = 'mazecraft.last-water-project-id'
+
+function rememberWaterSelection(id: string): void {
+  try { localStorage.setItem(LAST_WATER_PROJECT_KEY, id) } catch { /* Optional navigation preference. */ }
+}
+
+function isLastWaterSelection(id: string): boolean {
+  try { return localStorage.getItem(LAST_WATER_PROJECT_KEY) === id } catch { return false }
+}
 
 function RouteFallback({ label }: { label: string }) {
   return (
@@ -174,6 +186,7 @@ const candidateWithWorker = (
 export function App() {
   const [route, setRoute] = useState<Route>('loading')
   const [project, setProject] = useState<MazeProject | null>(null)
+  const [waterProject, setWaterProject] = useState<MazeProject | null>(null)
   const [projects, setProjects] = useState<MazeProject[]>([])
   const [machine, dispatch] = useReducer(
     (snapshot: MachineSnapshot, event: AppEvent) => transitionAppState(snapshot, event),
@@ -183,6 +196,7 @@ export function App() {
   const [generationProgress, setGenerationProgress] = useState<{ completed: number; total: number } | null>(null)
   const [generationTrace, setGenerationTrace] = useState<MazeGenerationTraceStep[]>([])
   const [shareOpen, setShareOpen] = useState(false)
+  const [shareMode, setShareMode] = useState<'play' | 'water'>('play')
   const [exportProject, setExportProject] = useState<MazeProject | null>(null)
   const [sharedPlay, setSharedPlay] = useState(false)
   const [sharedSolution, setSharedSolution] = useState<CellPosition[] | null>(null)
@@ -215,14 +229,19 @@ export function App() {
       try {
         const payload = readShareHash()
         if (payload) {
-          const shared = migrateProject(payload.project)
+          const isWaterShare = readShareRoute() === 'water'
+          // A water scene is editable immediately. Give an incoming shared
+          // project a fresh local identity so saving never overwrites an
+          // existing project that happened to carry the original share ID.
+          const shared = migrateProject(isWaterShare ? { ...payload.project, id: undefined } : payload.project)
           if (!active) return
           setProject(shared)
-          setSharedPlay(true)
+          if (isWaterShare) setWaterProject(shared)
+          setSharedPlay(!isWaterShare)
           setSharedSolution(payload.solutionPath ?? null)
           setRecordCreator(false)
           dispatch({ type: 'OPEN' })
-          setRoute('play')
+          setRoute(isWaterShare ? 'water' : 'play')
           return
         }
       } catch (error) {
@@ -234,10 +253,11 @@ export function App() {
       setProjects(recent)
       if (recovered) {
         setProject(recovered)
+        if (isLastWaterSelection(recovered.id)) setWaterProject(recovered)
         dispatch({ type: 'OPEN' })
-        setRoute('studio')
+        setRoute('water')
       } else {
-        setRoute('home')
+        setRoute('water')
       }
     })()
     return () => {
@@ -284,6 +304,31 @@ export function App() {
     updateSettings({ lastProjectId: next.id })
     dispatch({ type: 'OPEN' })
     setRoute('studio')
+  }
+
+  const openWaterProject = (next: MazeProject) => {
+    setProject(next)
+    setWaterProject(next)
+    setGenerationTrace([])
+    updateSettings({ lastProjectId: next.id })
+    rememberWaterSelection(next.id)
+    dispatch({ type: 'OPEN' })
+    setRoute('water')
+  }
+
+  const rememberWaterProject = useCallback((next: MazeProject) => {
+    setProject(next)
+  }, [])
+
+  const editWaterProject = async (next: MazeProject) => {
+    try {
+      await service.save(next, false)
+      rememberWaterSelection(next.id)
+      history.replaceState(null, '', location.pathname + location.search)
+      openProject(next)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '미로를 저장하지 못했습니다.', true)
+    }
   }
 
   const generateProject = useCallback(
@@ -364,9 +409,15 @@ export function App() {
       setSharedPlay(false)
       setSharedSolution(null)
       setProject(null)
+      setWaterProject(null)
+    } else if (route === 'studio' && project) {
+      // The editor owns the current graph; returning to the water workspace
+      // must simulate these edited walls rather than recreate a preset.
+      setWaterProject(project)
+      rememberWaterSelection(project.id)
     }
     setGenerationTrace([])
-    setRoute('home')
+    setRoute('water')
   }
 
   const play = (record = false) => {
@@ -427,11 +478,25 @@ export function App() {
 
   return (
     <>
+      {route === 'water' && (
+        <Suspense fallback={<RouteFallback label="물 스튜디오를 여는 중…" />}>
+          <WaterStudio
+            initialProject={waterProject}
+            onProjectChange={rememberWaterProject}
+            onLibrary={() => { setWaterProject(project); history.replaceState(null, '', location.pathname + location.search); void refreshProjects(); setRoute('home') }}
+            onEdit={(next) => { void editWaterProject(next) }}
+            onSave={async (next) => { await service.save(next, false); rememberWaterSelection(next.id); await refreshProjects(); toast('미로를 저장했습니다.') }}
+            onShare={(next) => { setProject(next); setShareMode('water'); setShareOpen(true) }}
+          />
+        </Suspense>
+      )}
       {route === 'home' && (
+        <>
+        <div className="water-collection-back"><button onClick={() => setRoute('water')}>← 물 스튜디오</button></div>
         <HomeScreen
           projects={projects}
           onCreate={(template) => void createProject(template)}
-          onOpen={openProject}
+          onOpen={openWaterProject}
           onDuplicate={(source) => void duplicate(source)}
           onDelete={(source) => void remove(source)}
           onExport={(source) => setExportProject(source)}
@@ -439,6 +504,7 @@ export function App() {
           onThemeToggle={toggleTheme}
           dark={dark}
         />
+        </>
       )}
       {route === 'studio' && project && (
         <Suspense fallback={<RouteFallback label="제작실을 여는 중…" />}>
@@ -453,7 +519,7 @@ export function App() {
             onCancelGeneration={cancelGeneration}
             onPlay={play}
             onHome={() => void home()}
-            onShare={() => setShareOpen(true)}
+            onShare={() => { setShareMode('play'); setShareOpen(true) }}
             onExport={() => setExportProject(project)}
             onThemeToggle={toggleTheme}
             dark={dark}
@@ -476,7 +542,7 @@ export function App() {
       )}
       {shareOpen && project && (
         <Suspense fallback={null}>
-          <ShareDialog project={project} valid={valid} onClose={() => setShareOpen(false)} />
+          <ShareDialog project={project} valid={valid} mode={shareMode} onClose={() => setShareOpen(false)} />
         </Suspense>
       )}
       {exportProject && (
