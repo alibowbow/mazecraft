@@ -1,4 +1,5 @@
 import {
+  closePassage,
   createDefaultProject,
   createEmptyGraph,
   createSeededRandom,
@@ -9,7 +10,7 @@ import {
   type MazeProject,
 } from '../../core/maze'
 
-export type WaterStudioPresetId = 'cascade' | 'split' | 'serpentine' | 'garden'
+export type WaterStudioPresetId = 'atelier' | 'cascade' | 'split' | 'serpentine' | 'garden'
 
 export interface WaterStudioSize {
   rows: number
@@ -23,6 +24,7 @@ export interface WaterStudioPreset extends WaterStudioSize {
 }
 
 export const WATER_STUDIO_PRESETS: readonly WaterStudioPreset[] = [
+  { id: 'atelier', name: '포슬린 가든', caption: '도자기 곡선을 돌아 흐르는 청록빛 수로', rows: 10, cols: 8 },
   { id: 'cascade', name: '캐스케이드', caption: '넓은 수조 사이로 이어지는 낙수', rows: 8, cols: 6 },
   { id: 'split', name: '트윈 플로우', caption: '둘로 갈라져 다시 만나는 흐름', rows: 8, cols: 8 },
   { id: 'serpentine', name: '리본', caption: '좌우를 가로지르는 긴 물길', rows: 8, cols: 6 },
@@ -89,6 +91,40 @@ export function createWaterStudioProject(
   const middle = Math.floor((cols - 1) / 2)
   const mirror = random.boolean()
   const mirrored = (col: number) => mirror ? cols - 1 - col : col
+
+  if (id === 'atelier') {
+    // Begin with one open basin, then sculpt continuous ceramic peninsulas.
+    // Their alternating stepped outlines make wide, offset chambers rather
+    // than repeating a narrow passage on every row.
+    for (let row = 0; row < rows; row++) {
+      horizontalLane(graph, row)
+      if (row < rows - 1) for (let col = 0; col < cols; col++) fall(graph, row, col)
+    }
+    const shelves = Math.min(6, Math.max(1, Math.floor((rows - 1) / 3)))
+    const gateWidth = Math.max(1, Math.round(cols / 4))
+    const reach = cols - gateWidth
+    for (let shelf = 0; shelf < shelves; shelf++) {
+      const nearLeft = (shelf % 2 === 0) !== mirror
+      const column = (offset: number) => nearLeft ? offset : cols - 1 - offset
+      const base = 1 + Math.floor(shelf * rows / shelves)
+      const bend = Math.max(1, Math.min(reach - 1, Math.floor(reach / 2) + random.integer(-1, 2)))
+      for (let offset = 0; offset < reach; offset++) {
+        const row = base + (offset >= bend ? 1 : 0)
+        const col = column(offset)
+        closePassage(graph, { row, col }, { row: row + 1, col })
+      }
+      // The tip must step DOWN toward its gate. Reversing this bend would
+      // create a basin sealed below and at the side, trapping simulated water.
+      closePassage(graph,
+        { row: base + 1, col: column(bend - 1) },
+        { row: base + 1, col: column(bend) },
+      )
+    }
+    const lastNearLeft = ((shelves - 1) % 2 === 0) !== mirror
+    const startCol = mirrored(1)
+    const endCol = lastNearLeft ? cols - 1 - Math.floor(gateWidth / 2) : Math.floor(gateWidth / 2)
+    return projectFor(graph, preset.name, startCol, endCol)
+  }
 
   if (id === 'garden') {
     // Solid islands are part of the physical mask, so water cannot pass through

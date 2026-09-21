@@ -6,35 +6,33 @@ import { buildFluidLayout } from './layout'
 import { FreeSurfacePresentation3D } from './presentation3d'
 
 describe('visual maze look controls', () => {
-  it('preserves wall footprints and field texture across theme and height changes', () => {
+  it('preserves the sculpted network, terrace profile and field texture across look edits', () => {
     const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(6, 6) }))
     const texture = new THREE.Texture()
     const board = new FreeSurfacePresentation3D(layout, texture)
-    const walls = board.content.getObjectByName('extruded-maze-walls') as THREE.InstancedMesh
+    const walls = board.content.getObjectByName('extruded-maze-walls') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial[]>
     const field = board.content.getObjectByName('physical-displaced-water') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>
-    const before = new THREE.Matrix4()
-    walls.getMatrixAt(0, before)
-    const physicalWalls = layout.walls.filter(wall => wall.kind !== 'funnel')
-    expect(walls.count).toBeLessThan(physicalWalls.length)
-    const visibleWalls = Array.from({ length: walls.count }, (_, index) => {
-      const transform = new THREE.Matrix4()
-      walls.getMatrixAt(index, transform)
-      const m = transform.elements
-      return { x0: m[12] - m[0] / 2, x1: m[12] + m[0] / 2, y0: -m[13] - m[5] / 2, y1: -m[13] + m[5] / 2 }
-    })
-    const covered = (rectangles: typeof visibleWalls, x: number, y: number) => rectangles.some(rect => x > rect.x0 && x < rect.x1 && y > rect.y0 && y < rect.y1)
-    for (let row = 0; row <= 12; row++) for (let col = 0; col <= 12; col++) {
-      expect(covered(visibleWalls, col / 2 + 0.013, row / 2 + 0.017))
-        .toBe(covered(physicalWalls, col / 2 + 0.013, row / 2 + 0.017))
-    }
+    const geometry = walls.geometry
+    const positions = geometry.getAttribute('position').array.slice()
+    const solverWalls = JSON.stringify(layout.walls)
+    const wallShader = { uniforms: {} as Record<string, THREE.IUniform>, vertexShader: '#include <common>\n#include <beginnormal_vertex>\n#include <begin_vertex>', fragmentShader: '' }
+    walls.material[0].onBeforeCompile(wallShader as never, {} as THREE.WebGLRenderer)
+    const terraceKnots = wallShader.uniforms.uTerraceKnots.value
+    expect(wallShader.uniforms.uCeramicHeight.value).toBe(1)
+    expect(wallShader.vertexShader).toContain('position.z * uCeramicHeight + terraceElevation(position.y)')
+    expect(geometry.groups).toHaveLength(2)
+    expect(geometry.getAttribute('aCeramicSlope').count).toBe(geometry.getAttribute('position').count)
     board.setLook({ theme: 'glacier', light: 'golden', wallHeight: 1.6 })
-    const after = new THREE.Matrix4()
-    walls.getMatrixAt(0, after)
-    expect(after.elements[0]).toBe(before.elements[0])
-    expect(after.elements[5]).toBe(before.elements[5])
-    expect(after.elements[12]).toBe(before.elements[12])
-    expect(after.elements[13]).toBe(before.elements[13])
-    expect(after.elements[10] / before.elements[10]).toBeCloseTo(1.6, 5)
+    expect(walls.geometry).toBe(geometry)
+    expect(geometry.getAttribute('position').array).toEqual(positions)
+    expect(JSON.stringify(layout.walls)).toBe(solverWalls)
+    expect(wallShader.uniforms.uCeramicHeight.value).toBeCloseTo(1.6)
+    expect(wallShader.uniforms.uTerraceKnots.value).toBe(terraceKnots)
+    expect(walls.scale.z).toBe(1)
+    const depthShader = { uniforms: {} as Record<string, THREE.IUniform>, vertexShader: '#include <common>\n#include <begin_vertex>', fragmentShader: '' }
+    walls.customDepthMaterial!.onBeforeCompile(depthShader as never, {} as THREE.WebGLRenderer)
+    expect(depthShader.uniforms.uCeramicHeight).toBe(wallShader.uniforms.uCeramicHeight)
+    expect(depthShader.vertexShader).toContain('position.z * uCeramicHeight + terraceElevation(position.y)')
     const shader = { uniforms: {} as Record<string, THREE.IUniform>, vertexShader: '', fragmentShader: '' }
     field.material.onBeforeCompile(shader as never, {} as THREE.WebGLRenderer)
     expect(shader.uniforms.uLiquid.value).toBe(texture)

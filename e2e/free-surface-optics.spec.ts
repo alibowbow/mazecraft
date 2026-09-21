@@ -6,6 +6,7 @@ import type * as THREE from 'three'
 import { createEmptyGraph } from '../src/core/maze'
 import { createTestProject } from '../src/test/projectFixture'
 import { buildFluidLayout } from '../src/features/waterSimulation/freeSurface/layout'
+import { createTerraceElevation, terraceElevationAt } from '../src/features/waterSimulation/freeSurface/terraceElevation'
 import type { FluidSnapshot } from '../src/features/waterSimulation/freeSurface/types'
 import type { FreeSurfaceRenderer } from '../src/features/waterSimulation/freeSurface/renderer'
 
@@ -22,7 +23,14 @@ test('water keeps its occupied shape at every speed and clear water remains visi
   await visitProjectLibrary(page)
   await page.addScriptTag({ url: '/__water-optics-fixture.js' })
   const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(5, 5) }))
-  const results = await page.evaluate(input => {
+  const poolFixture = { minX: 1.7, minY: 3.25, cols: 9, rows: 8, spacing: 0.15, inset: 0.20, settledWaterZ: 0.118 }
+  const terraces = createTerraceElevation(layout)
+  // The complete pool, including particle support, sits on the lower plateau.
+  // Its core is farther from the shoreline than the height-field mip radius,
+  // so still water there has the shader's exact full-coverage height .018+.10.
+  expect(terraceElevationAt(terraces, -(poolFixture.minY - 0.42))).toBe(0)
+  expect(terraceElevationAt(terraces, -(poolFixture.minY + (poolFixture.rows - 1) * poolFixture.spacing + 0.42))).toBe(0)
+  const results = await page.evaluate(({ layout: input, poolFixture }) => {
     type Internals = {
       renderer: THREE.WebGLRenderer
       surfaceTarget: THREE.WebGLRenderTarget
@@ -93,9 +101,13 @@ test('water keeps its occupied shape at every speed and clear water remains visi
         const jetField = readField()
         const bridgeCoverage = Array.from({ length: 6 }, (_, i) => jetField[fieldPixel(2.5, 1.875 + i * 0.15) + 2])
 
-        // Compare the same board coordinates with and without clear water.
-        // A broad patch includes the body as well as the reflective boundary.
-        const pool = Array.from({ length: 72 }, (_, i) => [1.7 + (i % 9) * 0.15, 1.75 + Math.floor(i / 9) * 0.15]).flat()
+        // Sample settled water wholly inside the lowest terrace. Intersect
+        // pixels with the actual liquid plane, not z=0: elevated water projects
+        // to different screen coordinates from the ceramic underneath it.
+        const pool = Array.from({ length: poolFixture.cols * poolFixture.rows }, (_, i) => [
+          poolFixture.minX + (i % poolFixture.cols) * poolFixture.spacing,
+          poolFixture.minY + Math.floor(i / poolFixture.cols) * poolFixture.spacing,
+        ]).flat()
         view.render(snapshot([], 0))
         const dry = readColor()
         view.render(snapshot(pool, 0))
@@ -110,11 +122,17 @@ test('water keeps its occupied shape at every speed and clear water remains visi
           let u = (col + 0.5) / wet.width, v = (row + 0.5) / wet.height
           if (eye && ray) {
             const point = eye.position.clone().set(u * 2 - 1, v * 2 - 1, 0).unproject(eye)
-            point.addScaledVector(ray, -point.z / ray.z)
+            point.addScaledVector(ray, (poolFixture.settledWaterZ - point.z) / ray.z)
             u = (point.x - fieldCenter.x) / fieldSize.x + 0.5
             v = (point.y - fieldCenter.y) / fieldSize.y + 0.5
           }
           if (u < 0 || u >= 1 || v < 0 || v >= 1) continue
+          const mazeX = fieldCenter.x + (u - 0.5) * fieldSize.x
+          const mazeY = -(fieldCenter.y + (v - 0.5) * fieldSize.y)
+          if (mazeX < poolFixture.minX + poolFixture.inset
+            || mazeX > poolFixture.minX + (poolFixture.cols - 1) * poolFixture.spacing - poolFixture.inset
+            || mazeY < poolFixture.minY + poolFixture.inset
+            || mazeY > poolFixture.minY + (poolFixture.rows - 1) * poolFixture.spacing - poolFixture.inset) continue
           const fieldCol = Math.floor(u * target.width), fieldRow = Math.floor(v * target.height)
           if (poolField[(fieldRow * target.width + fieldCol) * 4 + 2] < 235) continue
           const index = (row * wet.width + col) * 4
@@ -128,7 +146,8 @@ test('water keeps its occupied shape at every speed and clear water remains visi
         const scatter = (internals.waterMaterial.uniforms.uScatter.value as THREE.Vector3).toArray()
         return {
           mode, differingShapeChannels, movingVelocityPixels, wetPixels, gapCoverage, bridgeCoverage,
-          samples, meanContrast: difference / samples, visibleFraction: contrasted / samples,
+          samples, sampledWaterZ: eye ? poolFixture.settledWaterZ : null,
+          meanContrast: difference / samples, visibleFraction: contrasted / samples,
           meanChromaShift: chromaShift / samples, absorption, scatter,
           error: internals.renderer.getContext().getError(),
         }
@@ -137,7 +156,7 @@ test('water keeps its occupied shape at every speed and clear water remains visi
       view.dispose()
       mount.remove()
     }
-  }, { ...layout, activeCells: Array.from(layout.activeCells) })
+  }, { layout: { ...layout, activeCells: Array.from(layout.activeCells) }, poolFixture })
   await test.info().attach('water-optics-measurements', { body: JSON.stringify(results, null, 2), contentType: 'application/json' })
   for (const result of results) {
     expect(result.wetPixels, `${result.mode}: visible fixture`).toBeGreaterThan(10)
@@ -155,4 +174,3 @@ test('water keeps its occupied shape at every speed and clear water remains visi
     expect(result.error).toBe(0)
   }
 })
-

@@ -79,7 +79,8 @@ test('water studio presets remain editable and can be saved to the project colle
 })
 
 test('15.6 mobile water studio keeps the scene visible and tuning controls reachable', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  // Software WebGL needs time to read back both full-resolution material views.
+  test.setTimeout(120_000)
   const canvas = await openStudio(page)
   const layout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, height: innerHeight, scrollHeight: document.documentElement.scrollHeight }))
   expect(layout.scrollWidth).toBe(layout.width)

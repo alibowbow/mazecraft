@@ -78,6 +78,36 @@ describe('water studio projects', () => {
     expect(layouts.size).toBeGreaterThan(3)
   })
 
+  it('keeps atelier variations reproducible with wide open chambers', () => {
+    const first = createWaterStudioProject('atelier', 'atelier-01')
+    const second = createWaterStudioProject('atelier', 'atelier-01')
+    expect(first.grid.rows).toBe(10)
+    expect(first.grid.cols).toBe(8)
+    expect(first.mazeGraph).toEqual(second.mazeGraph)
+    expect(first.mazeGraph.cells[0]).not.toBe(second.mazeGraph.cells[0])
+    for (let seed = 0; seed < 24; seed++) {
+      const project = createWaterStudioProject('atelier', `atelier-variant-${seed}`)
+      const graph = project.mazeGraph
+      // Broad chambers have fully open interior cells, rather than a dense
+      // grid of single-cell corridors that happens to have a valid route.
+      const openCells = graph.cells.filter(cell => getPassageNeighbors(graph, cell).length === 4)
+      expect(openCells.length).toBeGreaterThanOrEqual(graph.cells.length / 4)
+      expectGravityDrainage(project)
+    }
+  })
+
+  it('leaves the last stepped peninsula above the outlet at every supported height', () => {
+    // Heights divisible by three are the tight case: an extra shelf could
+    // accidentally put its stepped tip on the outside boundary.
+    for (let rows = 4; rows <= 24; rows++) {
+      for (const cols of [4, 8, 24]) {
+        const project = createWaterStudioProject('atelier', `height-${rows}-${cols}`, { rows, cols })
+        expect(validateMaze(project.mazeGraph, project.startCell, project.endCell).valid).toBe(true)
+        expectGravityDrainage(project)
+      }
+    }
+  })
+
   it('creates varied random layouts that all drain by gravity', () => {
     const layouts = new Set<string>()
     for (let seed = 0; seed < 10; seed++) {

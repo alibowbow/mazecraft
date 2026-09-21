@@ -5,6 +5,28 @@ import { buildFluidLayout } from './layout'
 import { FreeSurfaceSolver } from './solver'
 
 describe('studio default physical flow', () => {
+  it('fills the atelier chambers and discharges through their offset gates without losing water', () => {
+    const layout = buildFluidLayout(createWaterStudioProject('atelier', 'atelier-01'))
+    const solver = new FreeSurfaceSolver(layout)
+    for (let second = 0; second < 12; second++) {
+      solver.step(1, 0.65)
+      const state = solver.snapshot().diagnostics
+      expect(state.massError).toBe(0)
+      expect(state.escaped).toBe(0)
+    }
+    const flowing = solver.snapshot().diagnostics
+    expect(flowing.reachedExit).toBe(true)
+    expect(flowing.discharged).toBeGreaterThan(0)
+    expect(flowing.wetCells).toBeGreaterThan(40)
+    solver.step(2, 0)
+    const draining = solver.snapshot().diagnostics
+    expect(draining.injected).toBe(flowing.injected)
+    expect(draining.discharged).toBeGreaterThan(flowing.discharged)
+    expect(draining.stored).toBeLessThan(flowing.stored)
+    expect(draining.massError).toBe(0)
+    expect(draining.escaped).toBe(0)
+  }, 15_000)
+
   it('spreads through the generated labyrinth and reaches the outlet without losing mass', () => {
     const layout = buildFluidLayout(createGeneratedWaterMaze(DEFAULT_WATER_MAZE))
     const solver = new FreeSurfaceSolver(layout)
