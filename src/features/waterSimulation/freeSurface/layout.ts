@@ -19,10 +19,41 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
     topY = Math.min(topY, row); bottomY = Math.max(bottomY, row + 1)
   }
   if (!activeCellCount) throw new RangeError('The fluid maze needs an active cell.')
+  // Select ports on the same active-mask island. Walls remain independent:
+  // an intentionally closed basin must still be rendered and simulated.
+  const globalTopY = topY, globalBottomY = bottomY
+  const active = (row: number, col: number) => row >= 0 && row < rows && col >= 0 && col < cols && activeCells[row * cols + col] === 1
+  const islands: number[][] = []
+  const islandAt = new Int32Array(activeCells.length).fill(-1)
+  for (let index = 0; index < activeCells.length; index++) {
+    if (!activeCells[index] || islandAt[index] !== -1) continue
+    const island = [index], id = islands.length
+    islandAt[index] = id
+    for (let cursor = 0; cursor < island.length; cursor++) {
+      const current = island[cursor], row = Math.floor(current / cols), col = current % cols
+      for (const [nextRow, nextCol] of [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]]) {
+        if (!active(nextRow, nextCol)) continue
+        const next = nextRow * cols + nextCol
+        if (islandAt[next] !== -1) continue
+        islandAt[next] = id; island.push(next)
+      }
+    }
+    islands.push(island)
+  }
+  const start = project.startCell
+  const preferredIsland = active(start.row, start.col) ? islandAt[start.row * cols + start.col] : -1
+  const selectedIsland = preferredIsland >= 0 ? preferredIsland : islands.reduce(
+    (best, island, index) => island.length > islands[best].length ? index : best, 0,
+  )
+  topY = rows; bottomY = 0
+  for (const index of islands[selectedIsland]) {
+    const row = Math.floor(index / cols)
+    topY = Math.min(topY, row); bottomY = Math.max(bottomY, row + 1)
+  }
   const endpointCol = (row: number, preferred: number): number => {
     let selected = -1, distance = Infinity
     for (let col = 0; col < cols; col++) {
-      if (activeCells[row * cols + col] && Math.abs(col - preferred) < distance) {
+      if (islandAt[row * cols + col] === selectedIsland && Math.abs(col - preferred) < distance) {
         selected = col; distance = Math.abs(col - preferred)
       }
     }
@@ -33,13 +64,17 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
   const inletX = sourceCol + 0.5, outletX = exitCol + 0.5
   const walls: FluidWall[] = []
   const halfWall = 0.05
+  const mazeHalfWall = 0.075
   const horizontal = (x0: number, x1: number, y: number, kind?: 'funnel') => {
-    if (x1 > x0) walls.push({ x0: x0 - halfWall, x1: x1 + halfWall, y0: y - halfWall, y1: y + halfWall, ...(kind ? { kind } : {}) })
+    const atEntrance = y === topY && x1 >= sourceCol && x0 <= sourceCol + 1
+    const half = kind === 'funnel' || atEntrance ? halfWall : mazeHalfWall
+    if (x1 > x0) walls.push({ x0: x0 - half, x1: x1 + half, y0: y - half, y1: y + half, ...(kind ? { kind } : {}) })
   }
   const vertical = (x: number, y0: number, y1: number, kind?: 'funnel') => {
-    if (y1 > y0) walls.push({ x0: x - halfWall, x1: x + halfWall, y0: y0 - halfWall, y1: y1 + halfWall, ...(kind ? { kind } : {}) })
+    const atEntrance = y0 <= topY && y1 > topY && (x === sourceCol || x === sourceCol + 1)
+    const half = kind === 'funnel' || atEntrance ? halfWall : mazeHalfWall
+    if (y1 > y0) walls.push({ x0: x - half, x1: x + half, y0: y0 - half, y1: y1 + half, ...(kind ? { kind } : {}) })
   }
-  const active = (row: number, col: number) => row >= 0 && row < rows && col >= 0 && col < cols && activeCells[row * cols + col] === 1
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       if (!active(row, col)) continue
@@ -53,7 +88,7 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
       if (!active(row, col - 1)) vertical(col, row, row + 1)
       if (!active(row + 1, col) || cell.walls.bottom || graph.cells[(row + 1) * cols + col]?.walls.top) {
         if (row === bottomY - 1 && col === exitCol) {
-          horizontal(col, col + 0.1, row + 1); horizontal(col + 0.9, col + 1, row + 1)
+          horizontal(col, col + 0.075, row + 1); horizontal(col + 0.925, col + 1, row + 1)
         } else horizontal(col, col + 1, row + 1)
       }
       if (!active(row, col + 1) || cell.walls.right || graph.cells[row * cols + col + 1]?.walls.left) vertical(col + 1, row, row + 1)
@@ -96,7 +131,8 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
     inletX, inletY: funnel.sourceY, outletX, outletY: bottomY, topY, bottomY,
     minX: Math.min(left - 0.4, reservoirLeft - 0.3),
     maxX: Math.max(right + 0.4, reservoirRight + 0.3),
-    minY: sourceTop - 0.2, maxY: bottomY + 2.2,
+    minY: Math.min(globalTopY - 0.4, sourceTop - 0.2),
+    maxY: Math.max(globalBottomY + 0.4, bottomY + 2.2),
     radius, particleArea: (radius * 2) ** 2,
     capacity: Math.min(18_000, Math.max(320, Math.ceil(activeCellCount * 48 + reservoirHalfWidth * 150))),
   }

@@ -312,11 +312,11 @@ export class FreeSurfaceRenderer {
   private readonly scene = new THREE.Scene()
   private readonly flatWalls = new THREE.Group()
   private readonly funnel: THREE.Group
-  private readonly boardTarget: THREE.WebGLRenderTarget
   private presentation3d: FreeSurfacePresentation3D | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private readonly trackball = new SurfaceTrackball()
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
+  private appearance: WaterAppearance = { ...DEFAULT_WATER_APPEARANCE }
   private readonly densityScene = new THREE.Scene()
   private readonly densityTarget: THREE.WebGLRenderTarget
   private readonly filterScene = new THREE.Scene()
@@ -353,9 +353,7 @@ export class FreeSurfaceRenderer {
   private drawCalls = 0
   private triangles = 0
   private fieldDirty = true
-  private boardDirty = true
   private surfaceBuilds = 0
-  private opticalBuilds = 0
   private weightsDirty = true
   private weightBuilds = 0
   private cameraFrame: number | undefined
@@ -371,6 +369,8 @@ export class FreeSurfaceRenderer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.setClearColor(0xffefdf, 1)
     this.renderer.info.autoReset = false
+    this.renderer.shadowMap.type = THREE.VSMShadowMap
+    this.renderer.shadowMap.autoUpdate = false
     this.canvas = this.renderer.domElement
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'
     this.canvas.dataset.viewMode = 'free-surface'
@@ -394,7 +394,6 @@ export class FreeSurfaceRenderer {
     })
     this.filterTarget = this.densityTarget.clone()
     this.surfaceTarget = this.densityTarget.clone()
-    this.boardTarget = this.densityTarget.clone()
     this.weightsX = this.densityTarget.clone()
     this.weightsY = this.densityTarget.clone()
     this.weightsX.texture.minFilter = this.weightsX.texture.magFilter = THREE.NearestFilter
@@ -616,11 +615,12 @@ export class FreeSurfaceRenderer {
   setSurfaceStyle(style: SurfaceStyle): void {
     if (this.disposed) return
     this.waterMaterial.uniforms.uStyle.value = style === 'calm' ? 0 : style === 'dynamic' ? 1 : 0.5
-    this.boardDirty = true
     this.draw()
   }
 
   setAppearance(appearance: WaterAppearance): void {
+    this.appearance = { ...appearance }
+    this.presentation3d?.setAppearance(appearance)
     if (this.disposed) return
     const color = appearance.color && /^#[0-9a-f]{6}$/i.test(appearance.color) ? appearance.color.toLowerCase() : null
     const profile = appearance.profile === 'aqua' ? 'aqua' : color ? 'tinted' : 'clear'
@@ -651,7 +651,6 @@ export class FreeSurfaceRenderer {
     this.canvas.dataset.waterColor = color ?? 'transparent'
     this.canvas.dataset.waterOpacity = String(opacity)
     this.canvas.dataset.waterOptics = profile
-    this.boardDirty = true
     this.draw()
   }
 
@@ -704,7 +703,6 @@ export class FreeSurfaceRenderer {
     this.canvas.dataset.theme = this.look.theme
     this.canvas.dataset.lighting = this.look.light
     this.canvas.dataset.wallHeight = String(this.look.wallHeight)
-    this.boardDirty = true
     this.draw()
   }
 
@@ -720,8 +718,9 @@ export class FreeSurfaceRenderer {
       ? '같은 미로 물의 입체 보기. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     if (mode === 'surface-3d' && !this.presentation3d) {
-      this.presentation3d = new FreeSurfacePresentation3D(this.layout, this.boardTarget.texture)
-      this.presentation3d.content.add(this.funnel.clone(true))
+      this.presentation3d = new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer)
+      this.presentation3d.addFunnel(this.funnel)
+      this.presentation3d.setAppearance(this.appearance)
       this.presentation3d.setLook(this.look)
     }
     this.resetCamera()
@@ -751,7 +750,6 @@ export class FreeSurfaceRenderer {
     this.surfaceTarget.setSize(width, height)
     this.weightsX.setSize(width, height)
     this.weightsY.setSize(width, height)
-    this.boardTarget.setSize(Math.max(1, Math.round(this.width * ratio)), Math.max(1, Math.round(this.height * ratio)))
     this.waterMaterial.uniforms.uTexel.value.set(1 / width, 1 / height)
     this.canvas.dataset.surfaceResolution = `${width}x${height}`
     this.canvas.dataset.renderScale = '1'
@@ -803,7 +801,6 @@ export class FreeSurfaceRenderer {
       }
       // View-dependent optics must follow orbiting, but the particle density
       // and its filtered surface remain in the same fixed maze coordinates.
-      this.boardDirty = true
       return
     }
     const contentWidth = this.layout.maxX - this.layout.minX + 0.65
@@ -890,23 +887,18 @@ export class FreeSurfaceRenderer {
       this.filterMaterial.uniforms.uStep.value.set(0, 0.035 / this.viewHeight)
       this.filterSurface(this.surfaceTarget)
       this.fieldDirty = false
-      this.boardDirty = true
       this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
     }
     this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
-      if (this.boardDirty) {
-        this.flatWalls.visible = false
-        this.funnel.visible = false
-        this.renderer.setRenderTarget(this.boardTarget)
-        this.renderer.render(this.scene, this.camera)
-        this.canvas.dataset.opticalBuilds = String(++this.opticalBuilds)
-        this.flatWalls.visible = true
-        this.funnel.visible = true
-        this.boardDirty = false
-      }
+      this.presentation3d.updateWater(this.waterMaterial.uniforms.uTime.value, 0.5 + this.waterMaterial.uniforms.uStyle.value)
       this.renderer.setRenderTarget(null)
+      this.renderer.shadowMap.enabled = true
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+      this.renderer.toneMappingExposure = 1.05
       this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
+      this.renderer.toneMapping = THREE.NoToneMapping
+      this.renderer.shadowMap.enabled = false
     } else {
       this.renderer.setRenderTarget(null)
       this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
@@ -1041,7 +1033,6 @@ export class FreeSurfaceRenderer {
     this.densityTarget.dispose()
     this.filterTarget.dispose()
     this.surfaceTarget.dispose()
-    this.boardTarget.dispose()
     this.presentation3d?.dispose()
     const accessoryGeometries = new Set<THREE.BufferGeometry>()
     const accessoryMaterials = new Set<THREE.Material>()

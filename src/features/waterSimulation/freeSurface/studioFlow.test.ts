@@ -1,9 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import { createWaterStudioProject } from '../../waterStudio/presets'
+import { createGeneratedWaterMaze, DEFAULT_WATER_MAZE } from '../../waterStudio/createMaze'
 import { buildFluidLayout } from './layout'
 import { FreeSurfaceSolver } from './solver'
 
 describe('studio default physical flow', () => {
+  it('spreads through the generated labyrinth and reaches the outlet without losing mass', () => {
+    const layout = buildFluidLayout(createGeneratedWaterMaze(DEFAULT_WATER_MAZE))
+    const solver = new FreeSurfaceSolver(layout)
+    for (let second = 0; second < 20; second++) {
+      solver.step(1, 0.65)
+      const state = solver.snapshot()
+      expect(state.diagnostics.massError).toBe(0)
+      expect(state.diagnostics.escaped).toBe(0)
+      let stationaryAboveBowl = 0
+      for (let i = 0; i < state.count; i++) {
+        const y = state.positions[i * 2 + 1]
+        if (y > layout.funnel.sourceY && y < layout.funnel.mouthY
+          && Math.hypot(state.velocities[i * 2], state.velocities[i * 2 + 1]) < 1.5) stationaryAboveBowl++
+      }
+      expect(stationaryAboveBowl).toBeLessThanOrEqual(3)
+    }
+    const final = solver.snapshot().diagnostics
+    expect(final.wetCells).toBeGreaterThan(50)
+    expect(final.reachedExit).toBe(true)
+    expect(final.discharged).toBeGreaterThan(0)
+  }, 15_000)
+
   it.each([0.65, 2.5])('keeps the funnel jet visible and drains the cascade at %s× supply', supply => {
     const layout = buildFluidLayout(createWaterStudioProject('cascade', 'atelier-01'))
     const solver = new FreeSurfaceSolver(layout)

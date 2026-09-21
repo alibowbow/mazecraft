@@ -26,8 +26,8 @@ export interface WaterThemePalette {
 
 export const WATER_THEMES: readonly WaterThemePalette[] = [
   {
-    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#f3eee5',
-    floor: '#f8f1e7', wall: '#fffaf0', wallSide: '#d8cdbb', slab: '#e8ddcb',
+    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#e5eff5',
+    floor: '#f8f1e7', wall: '#fffaf0', wallSide: '#e0daca', slab: '#e8ddcb',
     edge: '#c7b99f', accent: '#72bfb2', roughness: 0.24, metalness: 0.02,
   },
   {

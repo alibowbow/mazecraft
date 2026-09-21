@@ -11,7 +11,7 @@ describe('visual maze look controls', () => {
     const texture = new THREE.Texture()
     const board = new FreeSurfacePresentation3D(layout, texture)
     const walls = board.content.getObjectByName('extruded-maze-walls') as THREE.InstancedMesh
-    const field = board.content.getObjectByName('continuous-free-surface') as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>
+    const field = board.content.getObjectByName('physical-displaced-water') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>
     const before = new THREE.Matrix4()
     walls.getMatrixAt(0, before)
     const physicalWalls = layout.walls.filter(wall => wall.kind !== 'funnel')
@@ -35,7 +35,10 @@ describe('visual maze look controls', () => {
     expect(after.elements[12]).toBe(before.elements[12])
     expect(after.elements[13]).toBe(before.elements[13])
     expect(after.elements[10] / before.elements[10]).toBeCloseTo(1.6, 5)
-    expect(field.material.uniforms.uField.value).toBe(texture)
+    const shader = { uniforms: {} as Record<string, THREE.IUniform>, vertexShader: '', fragmentShader: '' }
+    field.material.onBeforeCompile(shader as never, {} as THREE.WebGLRenderer)
+    expect(shader.uniforms.uLiquid.value).toBe(texture)
+    expect(field.material.transmission).toBeGreaterThan(0.9)
     expect(board.content.getObjectByName('extruded-maze-walls')).toBe(walls)
     board.dispose()
   })

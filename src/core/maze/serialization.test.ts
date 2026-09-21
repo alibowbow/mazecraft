@@ -24,6 +24,13 @@ describe('project serialization and migration', () => {
     expect(restored.endCell).toEqual(project.endCell)
   })
 
+  it('preserves a root seed independently of the selected candidate graph seed', () => {
+    const project = { ...createDefaultProject({ seed: 'root:prim:10' }), seed: 'root' }
+    const restored = deserializeProject(serializeProject(project))
+    expect(restored.seed).toBe('root')
+    expect(restored.mazeGraph).toEqual(project.mazeGraph)
+  })
+
   it('migrates a schema-less legacy project', () => {
     const source = createDefaultProject({
       title: '예전 미로',

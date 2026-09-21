@@ -21,6 +21,62 @@ describe('free surface maze geometry', () => {
     expect(layout.maxY).toBeGreaterThan(layout.outletY + 2)
   })
 
+  it('keeps ports on the selected mask island without dropping detached shapes or opening interior walls', () => {
+    const graph = createEmptyGraph(7, 7)
+    graph.cells.forEach(cell => {
+      cell.active = (cell.row >= 2 && cell.row <= 4 && cell.col >= 2 && cell.col <= 4)
+        || (cell.row === 0 && cell.col === 0) || (cell.row === 6 && cell.col === 6)
+    })
+    const before = JSON.stringify(graph)
+    const layout = buildFluidLayout(createTestProject({
+      mazeGraph: graph, startCell: { row: 2, col: 3 }, endCell: { row: 4, col: 3 },
+    }))
+    expect(layout.topY).toBe(2)
+    expect(layout.bottomY).toBe(5)
+    expect(layout.inletX).toBe(3.5)
+    expect(layout.outletX).toBe(3.5)
+    expect(layout.outletY).toBe(5)
+    expect(layout.activeCellCount).toBe(11)
+    expect(layout.activeCells[0]).toBe(1)
+    expect(layout.activeCells[48]).toBe(1)
+    expect(layout.minY).toBeLessThanOrEqual(-0.4)
+    expect(layout.maxY).toBeGreaterThanOrEqual(7.4)
+    expect(layout.walls.some(wall => wall.kind !== 'funnel'
+      && wall.x0 < 3.5 && wall.x1 > 3.5 && wall.y0 < 3 && wall.y1 > 3)).toBe(true)
+    expect(JSON.stringify(graph)).toBe(before)
+  })
+
+  it('keeps the outlet on the source island when an edited exit points to another island', () => {
+    const graph = createEmptyGraph(7, 7)
+    graph.cells.forEach(cell => {
+      cell.active = (cell.col === 0 && cell.row <= 1)
+        || (cell.row >= 3 && cell.row <= 5 && cell.col >= 3 && cell.col <= 5)
+    })
+    const layout = buildFluidLayout(createTestProject({
+      mazeGraph: graph, startCell: { row: 0, col: 0 }, endCell: { row: 5, col: 4 },
+    }))
+    expect(layout.topY).toBe(0)
+    expect(layout.bottomY).toBe(2)
+    expect(layout.inletX).toBe(0.5)
+    expect(layout.outletX).toBe(0.5)
+    expect(layout.activeCellCount).toBe(11)
+  })
+
+  it('uses the largest active-mask island when the saved start is inactive', () => {
+    const graph = createEmptyGraph(7, 7)
+    graph.cells.forEach(cell => {
+      cell.active = (cell.col === 0 && cell.row <= 1)
+        || (cell.row >= 3 && cell.row <= 5 && cell.col >= 3 && cell.col <= 5)
+    })
+    const layout = buildFluidLayout(createTestProject({
+      mazeGraph: graph, startCell: { row: 2, col: 2 }, endCell: { row: 1, col: 0 },
+    }))
+    expect(layout.topY).toBe(3)
+    expect(layout.bottomY).toBe(6)
+    expect(layout.inletX).toBe(3.5)
+    expect(layout.outletX).toBe(3.5)
+  })
+
   it('caps particle memory for very large mazes while retaining sub-cell sampling', () => {
     const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(150, 150) }))
     expect(layout.capacity).toBe(18_000)

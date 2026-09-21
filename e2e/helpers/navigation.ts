@@ -22,6 +22,6 @@ export async function enterProjectEditor(page: Page): Promise<void> {
     await page.getByRole('button', { name: '튜닝 열기', exact: true }).click()
   }
   await mazeTab.click()
-  await page.getByRole('button', { name: '편집기에서 직접 만들기', exact: true }).click()
+  await page.getByRole('button', { name: '전체 제작기 · 글자 / 이미지 / 벽 편집', exact: true }).click()
   await expect(editor).toBeVisible()
 }

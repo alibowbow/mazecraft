@@ -1,8 +1,5 @@
 import * as THREE from 'three'
 
-export const INITIAL_SURFACE_YAW = 0.34
-export const INITIAL_SURFACE_PITCH = 0.48
-
 /** A direct-grab virtual trackball; no Euler limits or pole singularities. */
 export class SurfaceTrackball {
   readonly orientation = new THREE.Quaternion()
@@ -15,7 +12,8 @@ export class SurfaceTrackball {
   }
 
   reset(): void {
-    this.orientation.setFromEuler(new THREE.Euler(-INITIAL_SURFACE_PITCH, INITIAL_SURFACE_YAW, 0, 'YXZ'))
+    const view = new THREE.Matrix4().lookAt(new THREE.Vector3(0.85, -1.05, 1.35), new THREE.Vector3(), new THREE.Vector3(0, 0, 1))
+    this.orientation.setFromRotationMatrix(view)
   }
 
   rotate(fromX: number, fromY: number, toX: number, toY: number, width: number, height: number): void {

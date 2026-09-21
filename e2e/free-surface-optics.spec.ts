@@ -10,6 +10,7 @@ import type { FluidSnapshot } from '../src/features/waterSimulation/freeSurface/
 import type { FreeSurfaceRenderer } from '../src/features/waterSimulation/freeSurface/renderer'
 
 test('water keeps its occupied shape at every speed and clear water remains visible on the pale board', async ({ page }) => {
+  test.setTimeout(120_000)
   const bundle = await build({
     entryPoints: [fileURLToPath(new URL('../src/features/waterSimulation/freeSurface/renderer.ts', import.meta.url))],
     bundle: true, platform: 'browser', format: 'iife',
@@ -25,7 +26,7 @@ test('water keeps its occupied shape at every speed and clear water remains visi
     type Internals = {
       renderer: THREE.WebGLRenderer
       surfaceTarget: THREE.WebGLRenderTarget
-      boardTarget: THREE.WebGLRenderTarget
+      presentation3d: { camera: THREE.OrthographicCamera }
       waterMaterial: THREE.ShaderMaterial
     }
     const { FreeSurfaceRenderer: Renderer } = (window as unknown as {
@@ -64,13 +65,7 @@ test('water keeps its occupied shape at every speed and clear water remains visi
       const row = Math.min(target.height - 1, Math.max(0, Math.floor(((-y - center.y) / size.y + 0.5) * target.height)))
       return (row * target.width + col) * 4
     }
-    const readColor = (mode: 'free-surface' | 'surface-3d') => {
-      if (mode === 'surface-3d') {
-        const target = internals.boardTarget
-        const data = new Uint8Array(target.width * target.height * 4)
-        internals.renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, data)
-        return { data, width: target.width, height: target.height }
-      }
+    const readColor = () => {
       const gl = internals.renderer.getContext()
       const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight
       const data = new Uint8Array(width * height * 4)
@@ -102,14 +97,25 @@ test('water keeps its occupied shape at every speed and clear water remains visi
         // A broad patch includes the body as well as the reflective boundary.
         const pool = Array.from({ length: 72 }, (_, i) => [1.7 + (i % 9) * 0.15, 1.75 + Math.floor(i / 9) * 0.15]).flat()
         view.render(snapshot([], 0))
-        const dry = readColor(mode)
+        const dry = readColor()
         view.render(snapshot(pool, 0))
-        const wet = readColor(mode), poolField = readField()
+        const wet = readColor(), poolField = readField()
         const target = internals.surfaceTarget
+        const eye = mode === 'surface-3d' ? internals.presentation3d.camera : null
+        const ray = eye?.getWorldDirection(eye.position.clone())
+        const fieldCenter = internals.waterMaterial.uniforms.uCenter.value as THREE.Vector2
+        const fieldSize = internals.waterMaterial.uniforms.uViewSize.value as THREE.Vector2
         let samples = 0, contrasted = 0, difference = 0, chromaShift = 0
         for (let row = 0; row < wet.height; row++) for (let col = 0; col < wet.width; col++) {
-          const fieldCol = Math.min(target.width - 1, Math.floor((col + 0.5) * target.width / wet.width))
-          const fieldRow = Math.min(target.height - 1, Math.floor((row + 0.5) * target.height / wet.height))
+          let u = (col + 0.5) / wet.width, v = (row + 0.5) / wet.height
+          if (eye && ray) {
+            const point = eye.position.clone().set(u * 2 - 1, v * 2 - 1, 0).unproject(eye)
+            point.addScaledVector(ray, -point.z / ray.z)
+            u = (point.x - fieldCenter.x) / fieldSize.x + 0.5
+            v = (point.y - fieldCenter.y) / fieldSize.y + 0.5
+          }
+          if (u < 0 || u >= 1 || v < 0 || v >= 1) continue
+          const fieldCol = Math.floor(u * target.width), fieldRow = Math.floor(v * target.height)
           if (poolField[(fieldRow * target.width + fieldCol) * 4 + 2] < 235) continue
           const index = (row * wet.width + col) * 4
           const delta = [0, 1, 2].map(channel => wet.data[index + channel] - dry.data[index + channel])

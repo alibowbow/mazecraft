@@ -912,7 +912,8 @@ export function migrateProject(input: unknown): MazeProject {
     creatorDisplayName: safeString(input.creatorDisplayName, '', 120),
     createdAt: safeIsoDate(input.createdAt, now),
     updatedAt: safeIsoDate(input.updatedAt, now),
-    seed: graph.seed,
+    // A generator's root seed can differ from the optimized candidate seed.
+    seed: safeString(input.seed, graph.seed, 256),
     canvas,
     grid: {
       rows: graph.rows,

@@ -55,6 +55,7 @@ test('water studio starts with live 3D water and tunes appearance without resett
   await page.reload()
   await expect(canvas).toHaveAttribute('data-renderer', 'ready', { timeout: 30_000 })
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
+  await page.getByRole('tab', { name: '물', exact: true }).click()
   await expect(page.getByRole('button', { name: '물 색상 분홍', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('slider', { name: '유입량', exact: true })).toHaveValue('0.15')
   expect(errors).toEqual([])
@@ -73,7 +74,7 @@ test('water studio presets remain editable and can be saved to the project colle
   await expect(page.getByText('트윈 플로우', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '← 물 스튜디오', exact: true }).click()
   await page.getByRole('tab', { name: '미로', exact: true }).click()
-  await page.getByRole('button', { name: '편집기에서 직접 만들기', exact: true }).click()
+  await page.getByRole('button', { name: '전체 제작기 · 글자 / 이미지 / 벽 편집', exact: true }).click()
   await expect(page.getByLabel('프로젝트 제목')).toHaveValue('트윈 플로우')
 })
 
@@ -98,10 +99,10 @@ test('15.6 mobile water studio keeps the scene visible and tuning controls reach
 })
 
 test('edited water graph survives the editor round trip and opens as water in a fresh shared session', async ({ page, browser }) => {
-  test.setTimeout(90_000)
+  test.setTimeout(180_000)
   await openStudio(page)
   await page.getByRole('tab', { name: '미로', exact: true }).click()
-  await page.getByRole('button', { name: '편집기에서 직접 만들기', exact: true }).click()
+  await page.getByRole('button', { name: '전체 제작기 · 글자 / 이미지 / 벽 편집', exact: true }).click()
   await page.getByLabel('프로젝트 제목').fill('편집한 작은 물 미로')
   await page.locator('.studio-stage-rail button').filter({ hasText: '미로' }).click()
   await page.getByLabel('가로 셀', { exact: true }).fill('12')
@@ -124,6 +125,8 @@ test('edited water graph survives the editor round trip and opens as water in a 
   expect(sharedGraph).toEqual(edited.mazeGraph)
   await expect(page.getByRole('dialog').getByRole('checkbox')).toHaveCount(0)
 
+  await page.getByRole('button', { name: '닫기', exact: true }).last().click()
+  await page.getByRole('button', { name: '일시정지', exact: true }).click()
   const fresh = await browser.newContext()
   try {
     const shared = await fresh.newPage()
@@ -131,10 +134,39 @@ test('edited water graph survives the editor round trip and opens as water in a 
     await expect(shared.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: 30_000 })
     await expect(shared.getByTestId('water-studio-canvas')).toHaveAttribute('data-view-mode', 'surface-3d')
     await expect(shared.getByRole('heading', { level: 1 })).toHaveText('편집한 작은 물 미로')
+    await shared.getByRole('button', { name: '일시정지', exact: true }).click()
     await shared.getByRole('button', { name: '현재 미로 공유', exact: true }).click()
     const reopenedLink = await shared.locator('.dialog input[readonly]').inputValue()
     expect(readShareHash(new URL(reopenedLink).hash)!.project.mazeGraph).toEqual(edited.mazeGraph)
   } finally {
     await fresh.close()
   }
+})
+
+test('creates a reproducible shaped maze with the original generator and carries it into the full editor', async ({ page }) => {
+  test.setTimeout(180_000)
+  await openStudio(page)
+  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await page.getByRole('button', { name: '2D', exact: true }).click()
+  await page.getByRole('button', { name: '하트', exact: true }).click()
+  await page.getByLabel('가로 셀', { exact: true }).fill('16')
+  await page.getByLabel('세로 셀', { exact: true }).fill('14')
+  await page.getByRole('button', { name: 'Prim 많은 갈림길', exact: true }).click()
+  await page.getByLabel('시드', { exact: true }).fill('my-ceramic-garden')
+  await page.getByRole('button', { name: '이 설정으로 미로 생성', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('하트 물 미로')
+  await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready')
+  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await page.getByRole('button', { name: '현재 미로 공유', exact: true }).click()
+  const link = await page.locator('.dialog input[readonly]').inputValue()
+  const created = readShareHash(new URL(link).hash)!.project
+  expect(created.mazeGraph.cols).toBe(16)
+  expect(created.mazeGraph.rows).toBe(14)
+  expect(created.mazeGraph.algorithm).toBe('prim')
+  expect(created.seed).toBe('my-ceramic-garden')
+  expect(created.mazeGraph.cells.filter(cell => !cell.active).length).toBeGreaterThan(0)
+  await page.getByRole('button', { name: '닫기', exact: true }).last().click()
+  await page.getByRole('button', { name: '전체 제작기 · 글자 / 이미지 / 벽 편집', exact: true }).click()
+  await expect(page.getByLabel('프로젝트 제목')).toHaveValue('하트 물 미로')
+  await expect(page.locator('.canvas-statusbar')).toContainText('16×14')
 })

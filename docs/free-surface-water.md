@@ -1,5 +1,16 @@
 # Vertical free-surface water
 
+## Sculpted Water Atelier (current 3D presentation)
+
+The default workspace now creates an actual 12×12 Kruskal maze. Users can choose six masks, independent 8–32 row/column counts, DFS/Prim/Kruskal, complexity and a reproducible seed. The existing full editor remains available for text, images, custom masks and individual wall editing. Generated graphs are passed unchanged to simulation, saving and sharing.
+
+The 3D view no longer maps the completed 2D water composite onto a plane. It reconstructs a displaced water mesh from the accepted particle field, with physical transmission/refraction, environment reflection, shallow attenuation, speed-gated ripples and procedural light patterns on the actual ceramic floor. Mask-traced beveled bodies preserve holes and disconnected islands; instanced rounded walls, a stepped foundation, static local contact shading and soft cached directional shadows give the small object depth. Clear-water controls also affect optical thickness. Pastel studio backgrounds keep colorless water legible. Every moving visual uses accepted simulation time, so pause freezes the water and caustics.
+
+The liquid dynamics are still the existing 2D gravity solver, presented as a sculpted 3D object—not full volumetric 3D CFD. Optical displacement does not change accounted volume or open closed walls. The main maze walls are 0.15 cells wide; entrance side clearances and the 0.70-cell outlet opening retain the previous jet capacity. The actual nozzle, visible falling stream and inflow backpressure remain in place. Ports are chosen on one active-mask island without dropping detached pieces of imported designs.
+
+The material/lighting direction references the user's Summer Tide aquarium source (revision `e75818d8`) and the generated MazeCraft concept. Shader/environment/shadow work adds GPU cost over the earlier unlit board; historical performance measurements below describe their original revisions, not this renderer. No hardware frame-rate claim is made.
+
+
 The default **물 흐름** view simulates a vertical maze cross-section. Each water particle carries a fixed area. Gravity, area-normalized density constraints, viscosity and swept wall sliding produce falling jets, branches and pools within a maze cell. No solution path, arrival schedule or cell-fill animation drives the water boundary.
 
 - `freeSurface/layout.ts` builds symmetric solid AABBs from the actual maze, a tapered top funnel and a bottom outlet. The funnel's collision walls and visible bowl share the same dimensions; water enters above its mouth and falls through its neck. Inactive cells remain inaccessible. The two visual endpoints use the topmost/bottommost active row.

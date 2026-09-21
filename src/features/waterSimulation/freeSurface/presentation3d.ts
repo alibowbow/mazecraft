@@ -1,7 +1,11 @@
 import * as THREE from 'three'
 import type { FluidLayout, FluidWall } from './types'
-import { INITIAL_SURFACE_PITCH, INITIAL_SURFACE_YAW, SurfaceTrackball } from './camera3d'
+import { SurfaceTrackball } from './camera3d'
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
+import { SculptedSurface } from './sculptedSurface'
+import type { WaterAppearance } from './appearance'
 import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, WATER_LIGHTS, type WaterLook } from './lookdev'
 
 // Particle centers stop at the solver bounds, but their optical footprints can
@@ -35,7 +39,7 @@ function continuousWalls(input: readonly FluidWall[]): FluidWall[] {
 }
 
 /** Keep bevel width in world units even on long instanced wall runs. */
-function fixedWidthBevel(material: THREE.MeshPhysicalMaterial): void {
+function fixedWidthBevel(material: THREE.Material): void {
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>', `
       #include <beginnormal_vertex>
@@ -46,7 +50,7 @@ function fixedWidthBevel(material: THREE.MeshPhysicalMaterial): void {
     `).replace('#include <begin_vertex>', `
       #include <begin_vertex>
       #ifdef USE_INSTANCING
-        transformed.xy = sign(position.xy) * (vec2(0.5) - (vec2(0.5) - abs(position.xy)) / wallBevelScale);
+        transformed.xy = sign(position.xy) * (vec2(0.5) - (vec2(0.5) - abs(position.xy)) / max(vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz)), vec2(0.001)));
       #endif
     `)
   }
@@ -79,7 +83,10 @@ export class FreeSurfacePresentation3D {
   private readonly screenOffset = new THREE.Vector3()
   private readonly wallTop = new THREE.MeshPhysicalMaterial({ clearcoat: 0.38, clearcoatRoughness: 0.28 })
   private readonly wallSide = new THREE.MeshPhysicalMaterial({ clearcoat: 0.22, clearcoatRoughness: 0.32 })
-  private readonly slabMaterial = new THREE.MeshPhysicalMaterial({ clearcoat: 0.18, clearcoatRoughness: 0.38 })
+  private readonly groundMaterial = new THREE.MeshBasicMaterial({ toneMapped: false })
+  private readonly sculpted: SculptedSurface
+  private readonly environment: THREE.WebGLRenderTarget | null
+  private readonly renderer?: THREE.WebGLRenderer
   private readonly ambient = new THREE.HemisphereLight()
   private readonly key = new THREE.DirectionalLight()
   private readonly fill = new THREE.DirectionalLight()
@@ -88,7 +95,17 @@ export class FreeSurfacePresentation3D {
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
   private disposed = false
 
-  constructor(layout: FluidLayout, texture: THREE.Texture) {
+  constructor(layout: FluidLayout, texture: THREE.Texture, renderer?: THREE.WebGLRenderer) {
+    this.renderer = renderer
+    this.environment = null
+    if (renderer) {
+      const room = new RoomEnvironment()
+      const pmrem = new THREE.PMREMGenerator(renderer)
+      this.environment = pmrem.fromScene(room, 0.04)
+      this.scene.environment = this.environment.texture
+      this.scene.environmentIntensity = 0.48
+      room.dispose(); pmrem.dispose()
+    }
     this.boardWidth = layout.maxX - layout.minX + 2 * SURFACE_FIELD_PADDING
     this.boardHeight = layout.maxY - layout.minY + 2 * SURFACE_FIELD_PADDING
     this.centerX = (layout.minX + layout.maxX) * 0.5
@@ -97,95 +114,58 @@ export class FreeSurfacePresentation3D {
     this.content.name = 'free-surface-3d-board'
     this.scene.add(this.content)
 
-    // Bottom-left UV is (minX - padding, -maxY - padding). Keeping exactly the
-    // compositor's extents avoids shifting water relative to collision walls.
-    const fieldGeometry = new THREE.PlaneGeometry(this.boardWidth, this.boardHeight)
-    const fieldMaterial = new THREE.ShaderMaterial({
-      uniforms: { uField: { value: texture } },
-      vertexShader: /* glsl */ `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform sampler2D uField;
-        varying vec2 vUv;
-        void main() {
-          // The compositor already supplies display RGB, including transmission
-          // through the water. Do not apply lighting or sRGB conversion twice.
-          gl_FragColor = texture2D(uField, vUv);
-        }
-      `,
-      depthTest: true,
-      depthWrite: true,
-      toneMapped: false,
-    })
-    const field = new THREE.Mesh(fieldGeometry, fieldMaterial)
-    field.name = 'continuous-free-surface'
-    field.position.set(this.centerX, this.centerY, 0)
-    this.content.add(field)
-    this.geometries.push(fieldGeometry)
-    this.materials.push(fieldMaterial)
+    this.sculpted = new SculptedSurface(layout, texture, new THREE.Vector4(
+      layout.minX - SURFACE_FIELD_PADDING, -layout.maxY - SURFACE_FIELD_PADDING,
+      this.boardWidth, this.boardHeight,
+    ))
+    this.content.add(this.sculpted.body, this.sculpted.foundation, this.sculpted.water)
 
     // One reusable beveled unit box, with exact [-.5, .5] x/y and [0, 1] z
     // bounds. Instancing keeps even the largest maze at a constant draw count.
-    const section = new THREE.Shape()
-    section.moveTo(-0.5, -0.5)
-    section.lineTo(0.5, -0.5)
-    section.lineTo(0.5, 0.5)
-    section.lineTo(-0.5, 0.5)
-    section.closePath()
-    const wallGeometry = new THREE.ExtrudeGeometry(section, {
-      depth: 0.84,
-      steps: 1,
-      bevelEnabled: true,
-      bevelSegments: 3,
-      bevelSize: 0.018,
-      bevelThickness: 0.08,
-      curveSegments: 1,
-    })
-    wallGeometry.scale(1 / 1.036, 1 / 1.036, 1)
-    wallGeometry.translate(0, 0, 0.08)
+    const roundedWall = new RoundedBoxGeometry(1, 1, 1, 3, 0.042)
+    const faceVertices = roundedWall.attributes.position.count / 6
+    roundedWall.clearGroups()
+    roundedWall.addGroup(0, faceVertices * 4, 1)
+    roundedWall.addGroup(faceVertices * 4, faceVertices * 2, 0)
+    roundedWall.translate(0, 0, 0.5)
+    const wallGeometry = mergeVertices(roundedWall)
+    roundedWall.dispose()
     fixedWidthBevel(this.wallTop)
     fixedWidthBevel(this.wallSide)
     const walls = continuousWalls(layout.walls)
     this.walls = walls
     const wallMesh = this.wallMesh = new THREE.InstancedMesh(wallGeometry, [this.wallTop, this.wallSide], walls.length)
     wallMesh.name = 'extruded-maze-walls'
+    wallMesh.castShadow = true; wallMesh.receiveShadow = true
+    const depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+    fixedWidthBevel(depthMaterial)
+    wallMesh.customDepthMaterial = depthMaterial
+    this.materials.push(depthMaterial)
     this.content.add(wallMesh)
     this.instances.push(wallMesh)
     this.geometries.push(wallGeometry)
     this.materials.push(this.wallTop, this.wallSide)
 
-    const slabGeometry = new RoundedBoxGeometry(this.boardWidth + 0.26, this.boardHeight + 0.26, 0.32, 3, 0.11)
-    const slab = new THREE.Mesh(slabGeometry, this.slabMaterial)
-    slab.name = 'maze-board-thickness'
-    slab.position.set(this.centerX, this.centerY, -0.166)
-    this.content.add(slab)
-    this.geometries.push(slabGeometry)
-    this.materials.push(this.slabMaterial)
-
-    // Static analytic contact shade costs one tiny plane and no shadow map or
-    // reflection pass. It stays attached to the board through free orbiting.
-    const shadeGeometry = new THREE.PlaneGeometry(this.boardWidth + 3.4, this.boardHeight + 3.4)
-    const shadeMaterial = new THREE.ShaderMaterial({
-      uniforms: { uSize: { value: new THREE.Vector2(this.boardWidth, this.boardHeight) } },
-      vertexShader: `varying vec2 vPoint; void main() { vPoint = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: `uniform vec2 uSize; varying vec2 vPoint; void main() {
-        vec2 delta = max(abs(vPoint - vec2(0.13, -0.16)) - uSize * 0.5 + 0.08, 0.0);
-        float shade = exp(-dot(delta, delta) * 4.0) * 0.17;
-        gl_FragColor = vec4(0.34, 0.37, 0.34, shade);
-      }`,
-      transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
-    })
-    const shade = new THREE.Mesh(shadeGeometry, shadeMaterial)
-    shade.position.set(this.centerX, this.centerY, -0.36)
-    shade.name = 'board-contact-shade'
-    this.content.add(shade)
-    this.geometries.push(shadeGeometry)
-    this.materials.push(shadeMaterial)
+    const groundGeometry = new THREE.PlaneGeometry(this.boardWidth * 12, this.boardHeight * 12)
+    const ground = new THREE.Mesh(groundGeometry, this.groundMaterial)
+    ground.position.set(this.centerX, this.centerY, -0.70)
+    const groundShadowMaterial = new THREE.ShadowMaterial({ opacity: 0.18 })
+    const groundShadow = new THREE.Mesh(groundGeometry, groundShadowMaterial)
+    groundShadow.position.copy(ground.position); groundShadow.position.z += 0.002
+    groundShadow.receiveShadow = true
+    this.scene.add(groundShadow); this.materials.push(groundShadowMaterial)
+    ground.name = 'matte-studio-ground'
+    this.scene.add(ground)
+    this.geometries.push(groundGeometry); this.materials.push(this.groundMaterial)
+    this.key.castShadow = true
+    this.key.shadow.mapSize.set(1024, 1024)
+    const extent = Math.max(this.boardWidth, this.boardHeight) * 0.7
+    Object.assign(this.key.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 0.1, far: 100 })
+    this.key.shadow.camera.updateProjectionMatrix()
+    this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.025
+    this.key.shadow.radius = 4
+    this.key.shadow.blurSamples = 8
+    this.key.shadow.autoUpdate = false
 
     this.key.target.position.set(this.centerX, this.centerY, 0)
     this.fill.position.set(this.centerX + 6, this.centerY - 2, 5)
@@ -209,30 +189,49 @@ export class FreeSurfacePresentation3D {
     this.wallSide.roughness = Math.min(0.85, palette.roughness + 0.14)
     this.wallSide.metalness = palette.metalness * 0.5
     this.wallTop.clearcoat = this.look.theme === 'glacier' ? 0.7 : this.look.theme === 'terrace' ? 0.05 : 0.38
-    this.slabMaterial.color.set(palette.slab)
-    this.slabMaterial.roughness = Math.min(0.8, palette.roughness + 0.16)
-    this.slabMaterial.metalness = palette.metalness * 0.5
+    this.sculpted.setLook(this.look)
+    this.groundMaterial.color.set(palette.background)
+    this.key.shadow.needsUpdate = true
+    if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     this.ambient.color.set(lighting.sky)
     this.ambient.groundColor.set(lighting.ground)
-    this.ambient.intensity = lighting.ambient
+    this.ambient.intensity = lighting.ambient * 0.20
     this.key.color.set(lighting.color)
-    this.key.intensity = lighting.intensity
-    this.key.position.set(this.centerX + lighting.direction[0] * 12, this.centerY + lighting.direction[1] * 12, lighting.direction[2] * 12)
+    this.key.intensity = lighting.intensity * 1.15
+    this.key.position.set(this.centerX + lighting.direction[0] * 12, this.centerY + lighting.direction[1] * 12, lighting.direction[2] * Math.max(18, this.boardHeight))
     this.fill.color.set(lighting.fill)
-    this.fill.intensity = 0.55
+    this.fill.intensity = 0.22
     // Matrix writes happen on explicit edits only. No allocations or wall
     // geometry rebuilding are added to the animation/simulation frame.
     if (previousHeight !== this.look.wallHeight || !this.wallMesh.boundingSphere) {
       const matrix = new THREE.Matrix4()
       for (let i = 0; i < this.walls.length; i++) {
         const wall = this.walls[i]
-        matrix.makeScale(wall.x1 - wall.x0, wall.y1 - wall.y0, 0.42 * this.look.wallHeight)
+        matrix.makeScale(wall.x1 - wall.x0, wall.y1 - wall.y0, 0.48 * this.look.wallHeight)
         matrix.setPosition((wall.x0 + wall.x1) * 0.5, -(wall.y0 + wall.y1) * 0.5, 0.014)
         this.wallMesh.setMatrixAt(i, matrix)
       }
       this.wallMesh.instanceMatrix.needsUpdate = true
       this.wallMesh.computeBoundingSphere()
     }
+  }
+
+  setAppearance(appearance: WaterAppearance): void { this.sculpted.setAppearance(appearance) }
+  updateWater(time: number, style: number): void { this.sculpted.update(time, style) }
+  addFunnel(source: THREE.Group): void {
+    const funnel = source.clone(true)
+    funnel.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return
+      const convert = (original: THREE.Material) => {
+        const basic = original as THREE.MeshBasicMaterial
+        const material = new THREE.MeshPhysicalMaterial({ color: basic.color, roughness: 0.24, metalness: basic.transparent ? 0 : 0.45,
+          transparent: basic.transparent, opacity: basic.opacity, depthWrite: basic.depthWrite, side: basic.side, clearcoat: 0.6, envMapIntensity: 1.0 })
+        this.materials.push(material); return material
+      }
+      object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material)
+      object.castShadow = !Array.isArray(object.material) && !object.material.transparent
+    })
+    this.content.add(funnel)
   }
 
   updateView(widthPx: number, heightPx: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
@@ -244,10 +243,9 @@ export class FreeSurfacePresentation3D {
     const width = this.boardWidth + 0.60
     const height = this.boardHeight + 0.60
     const depth = 0.75
-    const sy = Math.sin(INITIAL_SURFACE_YAW), cy = Math.cos(INITIAL_SURFACE_YAW)
-    const sp = Math.sin(INITIAL_SURFACE_PITCH), cp = Math.cos(INITIAL_SURFACE_PITCH)
-    const frontWidth = cy * width + sy * depth
-    const frontHeight = sp * sy * width + cp * height + sp * cy * depth
+    const basis = new THREE.Matrix4().makeRotationFromQuaternion(new SurfaceTrackball().orientation.invert()).elements
+    const frontWidth = Math.abs(basis[0]) * width + Math.abs(basis[4]) * height + Math.abs(basis[8]) * depth
+    const frontHeight = Math.abs(basis[1]) * width + Math.abs(basis[5]) * height + Math.abs(basis[9]) * depth
     const viewHeight = Math.max(frontHeight, frontWidth / aspect) / Math.max(0.1, zoom)
     const viewWidth = viewHeight * aspect
     this.viewSize.set(viewWidth, viewHeight)
@@ -260,6 +258,13 @@ export class FreeSurfacePresentation3D {
     this.screenOffset.set(panX, panY, 0).applyQuaternion(orientation)
     this.target.set(this.centerX, this.centerY, 0.04).add(this.screenOffset)
     this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
+    // A single sheet has no volume back face. DoubleSide makes Three rebuild
+    // the transmission buffer twice; select the visible side for free orbit.
+    const waterSide = this.viewDirection.z >= 0 ? THREE.FrontSide : THREE.BackSide
+    if (this.sculpted.waterMaterial.side !== waterSide) {
+      this.sculpted.waterMaterial.side = waterSide
+      this.sculpted.waterMaterial.needsUpdate = true
+    }
     this.camera.position.copy(this.target).addScaledVector(this.viewDirection, this.distance)
     this.camera.quaternion.copy(orientation)
     this.camera.up.set(0, 1, 0).applyQuaternion(orientation)
@@ -270,6 +275,7 @@ export class FreeSurfacePresentation3D {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.sculpted.dispose(); this.environment?.dispose(); this.key.shadow.dispose()
     for (const mesh of this.instances) mesh.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
