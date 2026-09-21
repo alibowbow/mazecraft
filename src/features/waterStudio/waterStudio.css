@@ -381,3 +381,5 @@
   .ws-presets { display:flex; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; scroll-snap-type:x mandatory; }
   .water-studio .ws-preset { min-width:82px; flex:1 0 82px; scroll-snap-align:start; }
 }
+/* Keep the lit tabletop continuous behind overlays on every screen size. */
+.water-studio .ws-canvas { inset:0; }
