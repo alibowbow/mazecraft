@@ -17,8 +17,8 @@ interface StudioPreferences {
   surface: WaterSurfaceStyle; speed: number
 }
 const defaults: StudioPreferences = {
-  source: 'generated', generator: DEFAULT_WATER_MAZE,
-  preset: 'cascade', seed: 'atelier-01', size: 0,
+  source: 'flow', generator: DEFAULT_WATER_MAZE,
+  preset: 'atelier', seed: 'atelier-01', size: 0,
   look: DEFAULT_WATER_LOOK, color: '#16aeb7', opacity: 0.72,
   flow: 0.65, surface: 'natural', speed: 1,
 }
@@ -36,7 +36,7 @@ function readPreferences(): StudioPreferences {
       seed: typeof g.seed === 'string' ? g.seed.slice(0, 120) : DEFAULT_WATER_MAZE.seed,
     }
     return {
-      source: p.source === 'flow' ? 'flow' : 'generated', generator,
+      source: p.source === 'generated' ? 'generated' : p.source === 'flow' ? 'flow' : defaults.source, generator,
       preset: WATER_STUDIO_PRESETS.some(item => item.id === p.preset) ? p.preset : defaults.preset,
       seed: typeof p.seed === 'string' && p.seed.length < 120 ? p.seed : defaults.seed,
       size: [0, 6, 8, 10].includes(p.size) ? p.size : 0,
@@ -229,6 +229,6 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
         <div className="ws-panel-footer"><span>{selectedTheme.label}</span><button onClick={() => { update({ look: DEFAULT_WATER_LOOK, color: defaults.color, opacity: defaults.opacity, flow: defaults.flow, surface: defaults.surface, speed: defaults.speed }) }}>튜닝 초기화</button></div>
       </aside>
     </div>
-    <footer className="ws-collection"><div className="ws-collection-title"><span className="ws-eyebrow">FLOW COLLECTION</span><strong>열린 수로 연습</strong></div><div className="ws-presets" role="group" aria-label="미로 프리셋">{WATER_STUDIO_PRESETS.map((preset, index) => <button key={preset.id} className="ws-preset" aria-pressed={!customProject && preferences.source === 'flow' && preferences.preset === preset.id} onClick={() => { setCustomProject(null); update({ source: 'flow', preset: preset.id, size: 0 }) }}><span className="ws-miniature"><MazeMiniature project={miniatureProjects[index]} /></span><span><small>0{index + 1}</small><strong>{preset.name}</strong></span>{!customProject && preferences.source === 'flow' && preferences.preset === preset.id && <i />}</button>)}</div><button className="ws-share" onClick={() => onShare(project)} aria-label="현재 미로 공유"><ArrowUpRight size={21} /><span>공유</span></button></footer>
+    <footer className="ws-collection"><div className="ws-collection-title"><span className="ws-eyebrow">FLOW COLLECTION</span><strong>수로 컬렉션</strong></div><div className="ws-presets" role="group" aria-label="미로 프리셋">{WATER_STUDIO_PRESETS.map((preset, index) => <button key={preset.id} className="ws-preset" aria-pressed={!customProject && preferences.source === 'flow' && preferences.preset === preset.id} onClick={() => { setCustomProject(null); update({ source: 'flow', preset: preset.id, size: 0 }) }}><span className="ws-miniature"><MazeMiniature project={miniatureProjects[index]} /></span><span><small>0{index + 1}</small><strong>{preset.name}</strong></span>{!customProject && preferences.source === 'flow' && preferences.preset === preset.id && <i />}</button>)}</div><button className="ws-share" onClick={() => onShare(project)} aria-label="현재 미로 공유"><ArrowUpRight size={21} /><span>공유</span></button></footer>
   </main>
 }

@@ -26,17 +26,17 @@ export interface WaterThemePalette {
 
 export const WATER_THEMES: readonly WaterThemePalette[] = [
   {
-    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#e5eff5',
-    floor: '#f8f1e7', wall: '#fffaf0', wallSide: '#e0daca', slab: '#e8ddcb',
-    edge: '#c7b99f', accent: '#72bfb2', roughness: 0.24, metalness: 0.02,
+    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#e9c9b1',
+    floor: '#f8f1e7', wall: '#fffaf0', wallSide: '#f1e6d3', slab: '#e8ddcb',
+    edge: '#c7b99f', accent: '#72bfb2', roughness: 0.20, metalness: 0.0,
   },
   {
-    id: 'glacier', label: '글레이셔', color: '#bce5ed', background: '#e8f3f7',
+    id: 'glacier', label: '글레이셔', color: '#bce5ed', background: '#dfe6ef',
     floor: '#e0f2f4', wall: '#c9eaf0', wallSide: '#8cc7d3', slab: '#b8d9e2',
     edge: '#7ba8b8', accent: '#4bafcb', roughness: 0.13, metalness: 0.10,
   },
   {
-    id: 'terrace', label: '테라스', color: '#deb79c', background: '#f8ece0',
+    id: 'terrace', label: '테라스', color: '#deb79c', background: '#e8d4b6',
     floor: '#f0dccc', wall: '#ebc3a5', wallSide: '#c68f70', slab: '#d6a585',
     edge: '#bb8768', accent: '#41aaaf', roughness: 0.68, metalness: 0,
   },

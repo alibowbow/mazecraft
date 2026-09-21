@@ -355,3 +355,31 @@
 .ws-shape-grid button { min-height:56px; gap:4px; }
 .ws-panel-heading { flex-shrink:0; }
 .ws-tabs, .ws-generator-cta, .ws-panel-footer { flex-shrink:0; }
+
+/* A quiet warm studio frame lets the ceramic and turquoise water carry color. */
+.water-studio { --ws-ink:#343c3b; --ws-muted:#817d73; --ws-line:#e6e0d6; background:#faf8f3; }
+.ws-header, .ws-tuning, .ws-collection, .ws-generator-cta { background:#fcfaf6; }
+.ws-header { border-bottom-color:#e9e2d8; }
+.ws-canvas { inset:0; }
+.ws-scene-heading h1 { color:#3d4844; font-weight:450; letter-spacing:-.055em; }
+.ws-scene-heading p, .ws-camera-hint { color:#726e62; }
+.ws-scene-heading .ws-eyebrow { color:#8b7d6d; }
+.ws-status { color:#776e60; }
+.ws-shape-grid button, .ws-dimensions input, .ws-algorithms button, .ws-generator-field select, .ws-seed-input { border-color:#e2dfd5; }
+.ws-panel-heading h2 { font-weight:500; }
+.ws-miniature { border-radius:5px; }
+.ws-collection-title { min-width:112px; }
+.water-studio .ws-preset { border-color:#e5e0d6; }
+.ws-transport, .ws-view-controls { background:#fffdf7e8; backdrop-filter:blur(16px); box-shadow:0 8px 30px #57361c0b; }
+@media(max-width:800px) { .ws-canvas { inset:26px 0 40px; } }
+@media(max-width:540px) { .ws-canvas { inset:35px 0 90px; } .ws-presets { gap:5px; } }
+@media(max-height:600px) and (min-width:541px) { .ws-canvas { inset:0 0 15px; } }
+.is-focused .ws-canvas { inset:0; }
+
+.ws-presets { grid-template-columns:repeat(5,minmax(0,1fr)); }
+@media(max-width:540px) {
+  .ws-presets { display:flex; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; scroll-snap-type:x mandatory; }
+  .water-studio .ws-preset { min-width:82px; flex:1 0 82px; scroll-snap-align:start; }
+}
+/* Keep the lit tabletop continuous behind overlays on every screen size. */
+.water-studio .ws-canvas { inset:0; }
