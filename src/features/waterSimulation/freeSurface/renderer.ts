@@ -8,7 +8,7 @@ import type { CascadeSnapshot } from './cascadeTypes'
 import { SurfaceTrackball } from './camera3d'
 import { buildFunnelVisual } from './funnelVisual'
 import { DEFAULT_WATER_APPEARANCE, type WaterAppearance } from './appearance'
-import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, WATER_LIGHTS, type WaterLook } from './lookdev'
+import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_BACKGROUND, STUDIO_IVORY_BACKGROUND, WATER_LIGHTS, type WaterLook } from './lookdev'
 
 type SurfaceStyle = 'calm' | 'natural' | 'dynamic'
 
@@ -148,6 +148,7 @@ const waterFragment = /* glsl */ `
   uniform vec3 uLightColor;
   uniform float uWallDepth;
   uniform float uWhiteBackground;
+  uniform float uGridVisible;
   uniform vec3 uGridColor;
   varying vec2 vUv;
 
@@ -160,11 +161,10 @@ const waterFragment = /* glsl */ `
       * step(0.0, maze.y) * step(maze.y, uMazeSize.y);
     float pastelBlend = clamp(maze.y / max(uMazeSize.y, 1.0), 0.0, 1.0);
     vec3 color = mix(uFloor * 0.98, min(vec3(1.0), uFloor + vec3(0.012)), pastelBlend);
-    color *= mix(vec3(1.0), uLightColor, 0.16);
     color = mix(color, vec3(1.0), uWhiteBackground);
-    color = mix(color, uGridColor, max(line.x, line.y) * inside);
+    color = mix(color, uGridColor, max(line.x, line.y) * inside * uGridVisible);
     float dotMark = 1.0 - smoothstep(0.008, 0.020, length(fract(maze) - 0.5));
-    color -= dotMark * inside * 0.024;
+    color -= dotMark * inside * 0.024 * uGridVisible;
     // A short directional contact shade makes the recess legible and follows
     // the same light as the physical bevels. No full-scene shadow pass needed.
     vec2 toLight = vec2(uLightDirection.x, -uLightDirection.y) * uWallDepth;
@@ -236,8 +236,6 @@ const waterFragment = /* glsl */ `
       * (1.0 - smoothstep(uMazeSize.y - 0.02, uMazeSize.y + 0.04, maze.y));
     float chamber = insideX * insideY;
     vec3 background = boardAt(maze);
-    background += chamber * vec3(0.005, 0.008, 0.010) * (1.0 - uWhiteBackground);
-    background -= dot(vUv - vec2(0.5, 0.55), vUv - vec2(0.5, 0.55)) * 0.025 * (1.0 - uWhiteBackground);
 
     vec2 field = texture2D(uDensity, vUv).rg;
     float density = field.r;
@@ -475,10 +473,11 @@ export class FreeSurfaceRenderer {
         uViewDirection: { value: new THREE.Vector3(0, 0, 1) },
         uAbsorption: { value: new THREE.Vector3(0.045, 0.045, 0.045) },
         uScatter: { value: new THREE.Vector3(0, 0, 0) },
-        uFloor: { value: new THREE.Color(getWaterTheme(DEFAULT_WATER_LOOK.theme).floor).convertLinearToSRGB() },
-        uWhiteBackground: { value: 0 },
+        uFloor: { value: new THREE.Color(STUDIO_IVORY_BACKGROUND).convertLinearToSRGB() },
+        uWhiteBackground: { value: 1 },
+        uGridVisible: { value: 1 },
         uGridColor: { value: new THREE.Color('#dce3e8').convertLinearToSRGB() },
-        uBackdrop: { value: new THREE.Color(getWaterTheme(DEFAULT_WATER_LOOK.theme).background).convertLinearToSRGB() },
+        uBackdrop: { value: new THREE.Color(STUDIO_BACKGROUND).convertLinearToSRGB() },
         uLightDirection: { value: new THREE.Vector3(...WATER_LIGHTS.daylight.direction).normalize() },
         uLightColor: { value: new THREE.Color(WATER_LIGHTS.daylight.color).convertLinearToSRGB() },
         uWallDepth: { value: DEFAULT_WATER_LOOK.wallHeight },
@@ -558,7 +557,7 @@ export class FreeSurfaceRenderer {
       }
     }
     const palette = getWaterTheme(this.look.theme)
-    const top = new THREE.Color(this.look.wallColor2d ?? '#526b7a')
+    const top = new THREE.Color(this.look.wallColor ?? this.look.wallColor2d ?? '#526b7a')
     const bottom = top.clone().multiplyScalar(0.82)
     const rim = top.clone().lerp(new THREE.Color('#ffffff'), 0.45)
     const shadow = new THREE.Color(palette.edge)
@@ -716,22 +715,23 @@ export class FreeSurfaceRenderer {
   setLook(next: Partial<WaterLook>): void {
     if (this.disposed) return
     const previousTheme = this.look.theme
-    const previousWallColor = this.look.wallColor2d
+    const previousWallColor = this.look.wallColor ?? this.look.wallColor2d
     this.look = normalizeWaterLook(next, this.look)
     const palette = getWaterTheme(this.look.theme)
     const lighting = WATER_LIGHTS[this.look.light]
-    this.waterMaterial.uniforms.uFloor.value.set(palette.floor).convertLinearToSRGB()
-    this.waterMaterial.uniforms.uBackdrop.value.set(palette.background).convertLinearToSRGB()
+    this.waterMaterial.uniforms.uFloor.value.set(STUDIO_IVORY_BACKGROUND).convertLinearToSRGB()
+    this.waterMaterial.uniforms.uBackdrop.value.set(STUDIO_BACKGROUND).convertLinearToSRGB()
     this.waterMaterial.uniforms.uLightDirection.value.set(...lighting.direction).normalize()
     this.waterMaterial.uniforms.uLightColor.value.set(lighting.color).convertLinearToSRGB()
     this.waterMaterial.uniforms.uWallDepth.value = this.look.wallHeight
     this.waterMaterial.uniforms.uWhiteBackground.value = this.look.background2d === 'white' ? 1 : 0
     this.waterMaterial.uniforms.uGridColor.value.set(this.look.gridColor2d ?? '#dce3e8').convertLinearToSRGB()
-    this.canvas.dataset.wallColor2d = this.look.wallColor2d ?? '#526b7a'
+    this.canvas.dataset.wallColor2d = this.look.wallColor ?? this.look.wallColor2d ?? '#526b7a'
+    this.canvas.dataset.wallColor3d = this.look.wallColor ?? palette.wall
     this.canvas.dataset.gridColor2d = this.look.gridColor2d ?? '#dce3e8'
     this.canvas.dataset.background2d = this.look.background2d ?? 'material'
     this.presentation3d?.setLook(this.look)
-    if (previousTheme !== this.look.theme || previousWallColor !== this.look.wallColor2d) {
+    if (previousTheme !== this.look.theme || previousWallColor !== (this.look.wallColor ?? this.look.wallColor2d)) {
       // Only appearance edits rebuild the two flat meshes; simulation buffers
       // and the filtered density/coverage targets remain untouched.
       for (const child of this.flatWalls.children) {
@@ -782,7 +782,7 @@ export class FreeSurfaceRenderer {
           vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
           fragmentShader: waterFragment.replace('gl_FragColor = vec4(background, 1.0); return;', 'discard;')
             .replace('vec4(mix(background, water, coverage * uOpacity), 1.0)', 'vec4(water, coverage * uOpacity)'),
-          uniforms: { ...this.waterMaterial.uniforms, uPresentation3D: { value: 0 } },
+          uniforms: { ...this.waterMaterial.uniforms, uPresentation3D: { value: 0 }, uGridVisible: { value: 0 } },
           transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, toneMapped: false,
         })
         this.materials.push(material)
@@ -966,7 +966,7 @@ export class FreeSurfaceRenderer {
       this.fieldDirty = false
       this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
     }
-    this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
+    this.renderer.setClearColor(STUDIO_BACKGROUND, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
       this.presentation3d.updateWater(this.sculpture === 'extruded-flow' ? this.waterMaterial.uniforms.uTime.value : this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
       this.renderer.setRenderTarget(null)
@@ -978,7 +978,7 @@ export class FreeSurfaceRenderer {
       this.renderer.shadowMap.enabled = false
     } else {
       this.renderer.setRenderTarget(null)
-      this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
+      this.renderer.setClearColor(STUDIO_BACKGROUND, 1)
       this.renderer.render(this.scene, this.camera)
     }
     this.drawCalls = this.renderer.info.render.calls

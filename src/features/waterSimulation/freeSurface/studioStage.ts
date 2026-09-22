@@ -1,11 +1,12 @@
 import * as THREE from 'three'
 import { StudioBotanicals } from './studioBotanicals'
 import { studioHdri } from './cascadeMaterials'
+import { STUDIO_BACKGROUND } from './lookdev'
 
 /** Static studio assets are generated once; no image/network dependency. */
 export class StudioStage {
   readonly group = new THREE.Group()
-  readonly material: THREE.MeshStandardMaterial
+  readonly material: THREE.MeshBasicMaterial
   private readonly textures: THREE.Texture[] = []
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
@@ -14,7 +15,6 @@ export class StudioStage {
   constructor(centerX: number, centerY: number, width: number, height: number) {
     const textureSize = 512
     const color = new Uint8Array(textureSize * textureSize * 4)
-    const relief = new Uint8Array(textureSize * textureSize)
     const hash = (x: number, y: number) => {
       const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
       return value - Math.floor(value)
@@ -29,26 +29,29 @@ export class StudioStage {
       const cloud = noise(x / 92, y / 92), aggregate = noise(x / 19, y / 19)
       const grain = hash(x, y)
       const pore = Math.max(0, (hash(Math.floor(x / 3), Math.floor(y / 3)) - 0.96) / 0.04)
-      const stone = 234 + cloud * 9 + aggregate * 6 + grain * 5 - pore * 15
+      const stone = 252 + cloud + aggregate + grain - pore * 2
       color[i] = color[i + 1] = color[i + 2] = Math.round(stone)
       color[i + 3] = 255
-      relief[y * textureSize + x] = Math.round(105 + aggregate * 18 + grain * 26 - pore * 34)
     }
     const grain = new THREE.DataTexture(color, textureSize, textureSize)
     grain.wrapS = grain.wrapT = THREE.RepeatWrapping
     grain.minFilter = THREE.LinearMipmapLinearFilter; grain.magFilter = THREE.LinearFilter
     grain.generateMipmaps = true; grain.repeat.set(width * 8 / 5.5, height * 8 / 5.5); grain.needsUpdate = true
     grain.colorSpace = THREE.SRGBColorSpace
-    const bump = new THREE.DataTexture(relief, textureSize, textureSize, THREE.RedFormat)
-    bump.wrapS = bump.wrapT = THREE.RepeatWrapping
-    bump.minFilter = THREE.LinearMipmapLinearFilter; bump.magFilter = THREE.LinearFilter
-    bump.generateMipmaps = true; bump.repeat.copy(grain.repeat); bump.needsUpdate = true
-    this.textures.push(grain, bump)
-    this.material = new THREE.MeshStandardMaterial({color:'#edd0b8',map:grain,roughness:0.94,metalness:0,bumpMap:bump,bumpScale:0.009,envMapIntensity:0.32})
+    this.textures.push(grain)
+    // Keep the backdrop near display white regardless of object lighting,
+    // exposure or material. A separate receiver preserves real cast shadows.
+    this.material = new THREE.MeshBasicMaterial({color:STUDIO_BACKGROUND,map:grain,toneMapped:false})
     const geometry = new THREE.PlaneGeometry(width * 8, height * 8)
     const floor = new THREE.Mesh(geometry, this.material)
-    floor.name = 'limestone-studio-ground'; floor.position.set(centerX,centerY,-0.71); floor.receiveShadow = true
+    floor.name = 'limestone-studio-ground'; floor.position.set(centerX,centerY,-0.71)
     this.group.add(floor); this.geometries.push(geometry); this.materials.push(this.material)
+    const shadowMaterial = new THREE.ShadowMaterial({color:'#6b6255',opacity:0.50,depthWrite:false,toneMapped:false,shadowSide:THREE.BackSide})
+    const receiver = new THREE.Mesh(geometry, shadowMaterial)
+    receiver.name = 'studio-ground-shadow-receiver'
+    receiver.position.set(centerX,centerY,-0.709)
+    receiver.receiveShadow = true
+    this.group.add(receiver); this.materials.push(shadowMaterial)
     this.botanicals = new StudioBotanicals(centerX, centerY, width, height)
     this.group.add(this.botanicals.group)
 

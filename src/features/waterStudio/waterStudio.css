@@ -443,3 +443,9 @@
 .ws-resolution-bar output { min-width:60px; font-variant-numeric:tabular-nums; }
 .is-focused.is-2d .ws-view { grid-template-rows:0 minmax(0,1fr) 34px 52px; }
 @media(max-width:800px) { .is-2d .ws-view { grid-template-rows:38px minmax(0,1fr) 34px 48px; } }
+
+/* Keep all color choices together without pushing wall controls off screen. */
+.ws-material-grid { grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; margin-bottom:20px; }
+.ws-material-grid button { min-height:68px; padding:8px 2px; font-size:10px; gap:8px; }
+.ws-material-grid i { width:25px; height:25px; border-radius:8px; }
+.ws-material-grid button > svg { width:11px; height:11px; right:3px; top:3px; }

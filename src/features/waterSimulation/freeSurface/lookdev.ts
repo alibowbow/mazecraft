@@ -2,11 +2,17 @@
 export type WaterTheme = 'porcelain' | 'glacier' | 'terrace' | 'sage' | 'basalt';
 export type WaterLight = 'daylight' | 'golden' | 'studio';
 
+/** The workspace belongs to the studio, not to the selected maze material. */
+export const STUDIO_BACKGROUND = '#ffffff';
+export const STUDIO_IVORY_BACKGROUND = '#fffdf9';
+
 export interface WaterLook {
   theme: WaterTheme;
   light: WaterLight;
   /** Visual depth multiplier; the fluid solver retains its original solid cells. */
   wallHeight: number;
+  /** Explicit wall tint shared by flat and raised-wall views; null uses the material. */
+  wallColor?: string | null;
   background2d?: 'white' | 'material';
   wallColor2d?: string;
   gridColor2d?: string;
@@ -55,7 +61,7 @@ export const WATER_THEMES: readonly WaterThemePalette[] = [
   },
 ];
 
-export const DEFAULT_WATER_LOOK: WaterLook = { theme: 'porcelain', light: 'daylight', wallHeight: 1 };
+export const DEFAULT_WATER_LOOK: WaterLook = { theme: 'porcelain', light: 'daylight', wallHeight: 1, background2d: 'white' };
 
 /** Shared direction keeps the fluid highlights, wall bevels and contact shade coherent. */
 export const WATER_LIGHTS = {
@@ -72,6 +78,7 @@ export function getWaterTheme(theme: WaterTheme): WaterThemePalette {
 
 export function normalizeWaterLook(next: Partial<WaterLook>, current: WaterLook = DEFAULT_WATER_LOOK): WaterLook {
   return {
+    ...(next.wallColor === null || /^#[0-9a-f]{6}$/i.test(next.wallColor ?? '') ? { wallColor: next.wallColor } : current.wallColor !== undefined ? { wallColor: current.wallColor } : {}),
     wallColor2d: /^#[0-9a-f]{6}$/i.test(next.wallColor2d ?? '') ? next.wallColor2d : current.wallColor2d ?? '#526b7a',
     gridColor2d: /^#[0-9a-f]{6}$/i.test(next.gridColor2d ?? '') ? next.gridColor2d : current.gridColor2d ?? '#dce3e8',
     ...(next.background2d || current.background2d ? { background2d: next.background2d === 'white' || next.background2d === 'material' ? next.background2d : current.background2d } : {}),

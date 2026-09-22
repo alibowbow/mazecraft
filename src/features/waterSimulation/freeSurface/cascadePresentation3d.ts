@@ -6,7 +6,7 @@ import { CascadeGeometry } from './cascadeGeometry'
 import { createCascadeMaterials } from './cascadeMaterials'
 import { CascadeFalls } from './cascadeFalls'
 import { StudioStage } from './studioStage'
-import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, type WaterLook } from './lookdev'
+import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_BACKGROUND, type WaterLook } from './lookdev'
 import type { WaterAppearance } from './appearance'
 
 /** An authored, three-level porcelain fountain, separate from the grid editor. */
@@ -36,7 +36,7 @@ export class CascadePresentation3D {
     this.materials = createCascadeMaterials(renderer)
     this.scene.environment = this.materials.environment.texture
     this.scene.environmentIntensity = 1.0
-    this.scene.background = new THREE.Color('#fafcfb')
+    this.scene.background = new THREE.Color(STUDIO_BACKGROUND)
     this.sculpture = new CascadeGeometry(this.materials.porcelain, this.materials.floors)
     this.content.add(this.sculpture.group)
     this.sculpture.surfaces.forEach((surface, index) => {
@@ -55,9 +55,6 @@ export class CascadePresentation3D {
     this.content.add(this.falls.group)
     this.scene.add(this.content)
     this.stage = new StudioStage(0, -0.3, 9.7, 10)
-    this.stage.material.color.set('#ffe5c9')
-    this.stage.material.roughness = 0.88
-    this.stage.material.shadowSide = THREE.BackSide
     this.scene.add(this.stage.group)
 
     this.sun.castShadow = true
@@ -84,7 +81,7 @@ export class CascadePresentation3D {
     this.look = normalizeWaterLook(next, this.look)
     const palette = getWaterTheme(this.look.theme)
     const porcelain = this.look.theme === 'porcelain'
-    this.materials.porcelain.color.set(porcelain ? 0xf7f5f0 : palette.wall)
+    this.materials.porcelain.color.set(this.look.wallColor ?? (porcelain ? 0xf7f5f0 : palette.wall))
     this.materials.porcelain.roughness = porcelain ? 0.15 : palette.roughness
     this.materials.porcelain.clearcoat = 1
     this.materials.porcelain.clearcoatRoughness = 0.1
