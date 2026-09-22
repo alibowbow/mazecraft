@@ -22,9 +22,9 @@ export class CascadePresentation3D {
   private readonly falls: CascadeFalls
   private readonly stage: StudioStage
   private readonly water: THREE.Mesh[] = []
-  private readonly ambient = new THREE.AmbientLight('#fff8ed', 0.48)
-  private readonly sun = new THREE.DirectionalLight('#fff1d8', 3.0)
-  private readonly bounce = new THREE.DirectionalLight('#e7f5ff', 0.48)
+  private readonly ambient = new THREE.AmbientLight('#fff8ed', 0.30)
+  private readonly sun = new THREE.DirectionalLight('#fff1d8', 2.1)
+  private readonly bounce = new THREE.DirectionalLight('#f1e7d7', 0.40)
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
   private state: CascadeState | null = null
   private style = 1
@@ -57,6 +57,7 @@ export class CascadePresentation3D {
     this.stage = new StudioStage(0, -0.3, 9.7, 10)
     this.stage.material.color.set('#f0dfc9')
     this.stage.material.roughness = 0.88
+    this.stage.material.shadowSide = THREE.BackSide
     this.scene.add(this.stage.group)
 
     this.sun.castShadow = true
@@ -65,8 +66,8 @@ export class CascadePresentation3D {
     this.sun.shadow.mapSize.set(2048, 2048)
     Object.assign(this.sun.shadow.camera, { left: -8.5, right: 8.5, top: 8.5, bottom: -8.5, near: 0.5, far: 35 })
     this.sun.shadow.camera.updateProjectionMatrix()
-    this.sun.shadow.bias = -0.00015
-    this.sun.shadow.normalBias = 0.015
+    this.sun.shadow.bias = -0.0003
+    this.sun.shadow.normalBias = 0.035
     this.sun.shadow.radius = 4
     this.sun.shadow.blurSamples = 8
     this.sun.shadow.autoUpdate = false
@@ -91,13 +92,13 @@ export class CascadePresentation3D {
     this.sculpture.setWallHeight(this.look.wallHeight)
     this.falls.setWallHeight(this.look.wallHeight)
     if (this.look.light === 'golden') {
-      this.sun.color.set('#ffdfb5'); this.sun.position.set(-8, -4, 7); this.sun.intensity = 3.1
+      this.sun.color.set('#ffdfb5'); this.sun.position.set(-8, -4, 7); this.sun.intensity = 2.25
       this.ambient.color.set('#fff1df')
     } else if (this.look.light === 'studio') {
-      this.sun.color.set('#fffaff'); this.sun.position.set(-4, -5, 12); this.sun.intensity = 2.7
+      this.sun.color.set('#fffaff'); this.sun.position.set(-4, -5, 12); this.sun.intensity = 2.0
       this.ambient.color.set('#eef6ff')
     } else {
-      this.sun.color.set('#fff1d8'); this.sun.position.set(-7, -4, 11); this.sun.intensity = 3
+      this.sun.color.set('#fff1d8'); this.sun.position.set(-7, -4, 11); this.sun.intensity = 2.1
       this.ambient.color.set('#fff8ed')
     }
     this.sun.shadow.needsUpdate = true

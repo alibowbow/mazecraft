@@ -79,7 +79,10 @@ function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
     { direction: [-0.58, -0.24, 0.88], width: 0.58, height: 0.38, radiance: [3.5, 3.2, 2.8] },
     // Border, rather than cover, the default flat-water mirror direction.
     // The two moving normals then catch a narrow highlight instead of whiteout.
-    { direction: [-0.475, 0.53, 0.84], width: 0.023, height: 0.35, radiance: [18, 17, 15] },
+    { direction: [-0.475, 0.53, 0.84], width: 0.08, height: 0.35, radiance: [5, 4.7, 4.2] },
+    // A small front softbox supplies true HDR peaks to curved ceramic faces,
+    // away from the flat water's mirror direction.
+    { direction: [-0.70, -0.60, 0.45], width: 0.07, height: 0.28, radiance: [14, 12.5, 10.5] },
     { direction: [0.75, -0.3, 0.55], width: 0.12, height: 0.50, radiance: [1.9, 2.3, 2.7] },
     { direction: [0.1, 0.8, 0.62], width: 0.36, height: 0.035, radiance: [5.2, 5.2, 5.0] },
   ].map(panel => {
@@ -122,8 +125,8 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
   const normalA = waveTexture(17), normalB = waveTexture(63), caustic = causticTexture(normalA)
   const environment = studioHdri(renderer)
   const time = { value: 0 }, strength = { value: 1 }
-  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMapIntensity: 0.85 })
-  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xb9ebef, attenuationDistance: 2.8, normalMap: normalA, normalScale: new THREE.Vector2(0.30, 0.30), envMapIntensity: 0.95, depthWrite: false })
+  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMapIntensity: 1.2, shadowSide: THREE.BackSide })
+  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xb9ebef, attenuationDistance: 2.8, normalMap: normalA, normalScale: new THREE.Vector2(0.20, 0.20), envMapIntensity: 0.60, depthWrite: false })
   water.userData.cascadeNormalMaps = [normalA, normalB]
   const vertexPoint = `varying vec3 vCascadePoint;`
   const worldPoint = `vCascadePoint = (modelMatrix * vec4(transformed, 1.0)).xyz;`
@@ -159,7 +162,7 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
           float b = texture2D(uCascadeCaustic, mat2(0.71, 0.71, -0.71, 0.71) * p * 1.31 - causticWarp - vec2(0.016, 0.024) * uCascadeTime).r;
           float wet = smoothstep(0.005, 0.08, uCascadeDepth);
           float focus = pow(a, 1.35) * 0.85 + pow(b, 1.8) * 0.32;
-          reflectedLight.directDiffuse *= mix(1.0, 0.93 + focus * 2.5, wet);
+          reflectedLight.directDiffuse *= mix(1.0, 0.96 + focus * 1.1, wet);
         `)
     }
     material.customProgramCacheKey = () => 'cascade-refracted-caustic-floor-v1'

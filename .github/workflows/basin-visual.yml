@@ -6,6 +6,7 @@ on:
       - 'src/features/waterSimulation/**'
       - 'src/features/waterStudio/**'
       - 'e2e/deep-basin.spec.ts'
+      - 'e2e/cascade-optics.spec.ts'
       - '.github/workflows/basin-visual.yml'
 
 permissions:
@@ -14,7 +15,7 @@ permissions:
 jobs:
   render:
     runs-on: ubuntu-latest
-    # Five GPU scenarios now include three moving cascade frames and reversible
+    # GPU scenarios include three moving cascade frames and reversible
     # material changes, rendered serially on the runner's software WebGL.
     timeout-minutes: 15
     steps:
@@ -26,7 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test e2e/deep-basin.spec.ts e2e/free-surface-optics.spec.ts --workers=1
+      - run: npx playwright test e2e/deep-basin.spec.ts e2e/free-surface-optics.spec.ts e2e/cascade-optics.spec.ts --workers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:

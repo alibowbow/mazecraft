@@ -23,6 +23,10 @@ const WALL_CORE = 0.26
 const WALL_BEVEL = 0.10
 const PARTITION_CORE = 0.23
 const PARTITION_BEVEL = 0.10
+// At the lowest rim setting the solver can still hold 0.499 cells of water.
+// Fixed water-footprint holes require every interior divider to remain above
+// that level; preserve a small visible crest without changing its default art.
+const MIN_PARTITION_HEIGHT = CASCADE_WALL_HEIGHT * 0.55 - 0.04 + 0.025
 const TAU = Math.PI * 2
 
 /** A gently bowed vessel silhouette, with long uninterrupted curved sides. */
@@ -186,7 +190,7 @@ export class CascadeGeometry {
   readonly group = new THREE.Group()
   readonly surfaces: CascadeSurface[]
   private readonly geometries: THREE.BufferGeometry[] = []
-  private readonly adjustableWalls: THREE.Mesh[] = []
+  private readonly adjustableWalls: { mesh: THREE.Mesh; minimumScale: number }[] = []
 
   constructor(porcelain: THREE.MeshPhysicalMaterial, floorMaterials: THREE.Material[]) {
     this.group.name = 'mediterranean-cascade-sculpture'
@@ -201,11 +205,11 @@ export class CascadeGeometry {
       this.mesh(foot, porcelain, `cascade-basin-${i}-rounded-foot`, -0.70)
       for (const [part, shape] of perimeterRibbons(level, i).entries()) {
         const wall = this.mesh(this.extrusion(shape, CASCADE_WALL_HEIGHT, WALL_BEVEL), porcelain, `cascade-basin-${i}-rim-${part}`, level.floor)
-        this.adjustableWalls.push(wall)
+        this.adjustableWalls.push({ mesh: wall, minimumScale: 0 })
       }
       for (const [part, partition] of level.partitions.entries()) {
         const wall = this.mesh(this.extrusion(ribbon(partition.path, partition.width), partition.height, PARTITION_BEVEL), porcelain, `cascade-basin-${i}-curved-partition-${part}`, level.floor)
-        this.adjustableWalls.push(wall)
+        this.adjustableWalls.push({ mesh: wall, minimumScale: MIN_PARTITION_HEIGHT / partition.height })
       }
       for (const circle of level.circles) {
         this.mesh(this.extrusion(ellipse(circle.x, circle.y, circle.radius - 0.10), CASCADE_WALL_HEIGHT, 0.10), porcelain, 'cascade-circular-fountain-island', level.floor)
@@ -274,7 +278,7 @@ export class CascadeGeometry {
 
   setWallHeight(multiplier: number): void {
     const height = Number.isFinite(multiplier) ? THREE.MathUtils.clamp(multiplier, 0.55, 1.75) : 1
-    for (const wall of this.adjustableWalls) wall.scale.z = height
+    for (const wall of this.adjustableWalls) wall.mesh.scale.z = Math.max(height, wall.minimumScale)
   }
 
   dispose(): void {

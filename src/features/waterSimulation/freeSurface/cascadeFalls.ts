@@ -14,9 +14,11 @@ export class CascadeFalls {
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
   private readonly rings: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[][] = []
+  private readonly foamPatches: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = []
   private readonly particles: THREE.InstancedMesh
   private readonly particleState = new Float32Array(120 * 4)
   private readonly foamTexture: THREE.DataTexture
+  private readonly foamPatchTexture: THREE.DataTexture
   private readonly sourceWater: THREE.Mesh
   private readonly fountainWater: THREE.Mesh
   private readonly receiverWater: THREE.Mesh
@@ -46,15 +48,22 @@ export class CascadeFalls {
           uniform sampler2D uFallNormalB;
           uniform float uFallTravel;
           uniform float uFallStrength;
+        `).replace('#include <color_fragment>', `
+          #include <color_fragment>
+          float frothNoise = texture2D(normalMap, vec2(vFallUv.x * 2.7 + 0.17, vFallUv.y * 1.6 + uFallTravel * 0.72)).r;
+          float fallFroth = (1.0 - smoothstep(0.035, 0.27, vFallUv.y)) * smoothstep(0.49, 0.67, frothNoise) * uFallStrength;
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), fallFroth * 0.72);
         `).replace('#include <normal_fragment_maps>', `
-          vec2 fallingUv = vec2(vFallUv.x * 0.68, vFallUv.y * 0.56 + uFallTravel);
+          vec2 fallingUv = vec2(vFallUv.x * 3.6, vFallUv.y * 0.32 + uFallTravel);
           vec3 a = texture2D(normalMap, fallingUv).xyz * 2.0 - 1.0;
           vec3 b = texture2D(uFallNormalB, fallingUv * vec2(-1.17, 0.81) + vec2(0.31, uFallTravel * 0.17)).xyz * 2.0 - 1.0;
           vec3 fallNormal = normalize(vec3((a.xy * 0.68 + b.xy * 0.32) * (0.19 + uFallStrength * 0.12), 1.0));
           normal = normalize(tbn * fallNormal);
-        `)
+        `).replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment.replace(
+          'material.transmission = transmission;', 'material.transmission = transmission * (1.0 - fallFroth * 0.76);',
+        ))
       }
-      material.customProgramCacheKey = () => 'cascade-downward-water-curtain-v1'
+      material.customProgramCacheKey = () => 'cascade-downward-water-curtain-v2'
       this.materials.push(material)
       return { material, uniforms }
     }
@@ -101,6 +110,16 @@ export class CascadeFalls {
     }
     this.foamTexture = new THREE.DataTexture(alpha, size, size, THREE.RGBAFormat)
     this.foamTexture.needsUpdate = true
+    const patchSize = 64, patchAlpha = new Uint8Array(patchSize * patchSize * 4)
+    for (let y = 0; y < patchSize; y++) for (let x = 0; x < patchSize; x++) {
+      const u = (x + 0.5) / patchSize * 2 - 1, v = (y + 0.5) / patchSize * 2 - 1
+      const noise = 0.5 + (Math.sin(x * 0.39 + Math.sin(y * 0.24) * 1.3) + Math.cos(y * 0.49 - x * 0.17)) * 0.25
+      const edge = 1 - THREE.MathUtils.smoothstep(Math.hypot(u, v), 0.28, 1)
+      const value = Math.round(edge * THREE.MathUtils.smoothstep(noise, 0.24, 0.77) * 255), index = (y * patchSize + x) * 4
+      patchAlpha[index] = patchAlpha[index + 1] = patchAlpha[index + 2] = value; patchAlpha[index + 3] = 255
+    }
+    this.foamPatchTexture = new THREE.DataTexture(patchAlpha, patchSize, patchSize, THREE.RGBAFormat)
+    this.foamPatchTexture.needsUpdate = true
     const foam = new THREE.MeshBasicMaterial({ color: 0xffffff, alphaMap: this.foamTexture, transparent: true, opacity: 0.86, depthWrite: false, toneMapped: false, side: THREE.DoubleSide })
     const sprayGeometry = new THREE.PlaneGeometry(1, 1)
     this.particles = new THREE.InstancedMesh(sprayGeometry, foam, 120)
@@ -112,6 +131,11 @@ export class CascadeFalls {
     }
     this.group.add(this.particles); this.geometries.push(sprayGeometry); this.materials.push(foam)
     for (let impact = 0; impact < 6; impact++) {
+      const patchGeometry = new THREE.PlaneGeometry(1, 1)
+      const patchMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, alphaMap: this.foamPatchTexture, transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false })
+      const patch = new THREE.Mesh(patchGeometry, patchMaterial)
+      patch.name = `cascade-white-impact-foam-${impact}`; patch.renderOrder = 4; patch.visible = false
+      this.foamPatches.push(patch); this.group.add(patch); this.geometries.push(patchGeometry); this.materials.push(patchMaterial)
       const rings: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[] = []
       for (let i = 0; i < 2; i++) {
         const geometry = new THREE.RingGeometry(0.94, 1, 48)
@@ -138,6 +162,10 @@ export class CascadeFalls {
 
   private impact(index: number, x: number, y: number, z: number, rate: number, width: number, time: number): void {
     const strength = THREE.MathUtils.clamp(rate / 0.13, 0, 1), enabled = rate > 0.00001
+    const patch = this.foamPatches[index]
+    patch.visible = enabled; patch.position.set(x, y, z + 0.018)
+    patch.scale.set(Math.max(0.18, width * 1.10), index === 5 ? 0.18 : 0.22 + strength * 0.12, 1)
+    patch.material.opacity = strength * (0.47 + Math.sin(time * 1.1 + index) * 0.06)
     this.rings[index].forEach((ring, i) => {
       const phase = (time * 0.78 + i * 0.5) % 1
       ring.visible = enabled
@@ -147,12 +175,12 @@ export class CascadeFalls {
     })
     for (let i = 0; i < 20; i++) {
       const phase = (time * (0.82 + (i % 4) * 0.09) + i * 0.618) % 1
-      const angle = i * 2.39996, spread = 0.06 + phase * (0.08 + width * 0.16)
+      const angle = i * 2.39996, spread = 0.065 + phase * (0.10 + width * 0.18)
       const offset = (index * 20 + i) * 4
       this.particleState[offset] = x + Math.cos(angle) * spread * (0.7 + width * 0.55)
       this.particleState[offset + 1] = y + Math.sin(angle) * spread * 0.7
       this.particleState[offset + 2] = z + 0.016 + Math.sin(phase * Math.PI) * (0.035 + strength * 0.16) * (0.4 + i % 5 * 0.12)
-      this.particleState[offset + 3] = enabled ? (0.018 + (i % 3) * 0.008) * strength * Math.sin(phase * Math.PI) : 0
+      this.particleState[offset + 3] = enabled ? (0.04 + (i % 3) * 0.015) * strength * Math.sin(phase * Math.PI) : 0
     }
   }
 
@@ -206,11 +234,12 @@ export class CascadeFalls {
     this.fountainWater.visible = state.depths[1] > 0.005
     this.receiverWater.visible = state.depths[2] > 0.005
     for (const curtain of this.curtains) {
-      curtain.mesh.material.color.copy(this.water.color)
+      // A thin film has a shorter dye path than the deep reservoirs.
+      curtain.mesh.material.color.copy(this.water.color).lerp(new THREE.Color(0xffffff), 0.58)
       curtain.mesh.material.attenuationColor.copy(this.water.attenuationColor)
       curtain.mesh.material.attenuationDistance = this.water.attenuationDistance
     }
-    this.fountainJet.material.color.copy(this.water.color)
+    this.fountainJet.material.color.copy(this.water.color).lerp(new THREE.Color(0xffffff), 0.58)
     this.fountainJet.material.attenuationColor.copy(this.water.attenuationColor)
     this.fountainJet.material.attenuationDistance = this.water.attenuationDistance
     this.writeParticles()
@@ -221,7 +250,7 @@ export class CascadeFalls {
   setWallHeight(_multiplier: number): void {}
 
   dispose(): void {
-    this.foamTexture.dispose(); this.particles.dispose()
+    this.foamTexture.dispose(); this.foamPatchTexture.dispose(); this.particles.dispose()
     this.geometries.forEach(geometry => geometry.dispose())
     this.materials.forEach(material => material.dispose())
     this.group.clear()
