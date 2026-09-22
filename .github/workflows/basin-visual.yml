@@ -6,6 +6,7 @@ on:
       - 'src/features/waterSimulation/**'
       - 'src/features/waterStudio/**'
       - 'e2e/deep-basin.spec.ts'
+      - 'e2e/cascade-optics.spec.ts'
       - '.github/workflows/basin-visual.yml'
 
 permissions:
@@ -13,8 +14,18 @@ permissions:
 
 jobs:
   render:
+    name: render-${{ matrix.scene }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Optical A/B captures publish independently of the longer app interactions.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scene: optics
+            specs: e2e/cascade-optics.spec.ts e2e/free-surface-optics.spec.ts
+          - scene: app
+            specs: e2e/deep-basin.spec.ts
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,10 +35,10 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test e2e/deep-basin.spec.ts e2e/free-surface-optics.spec.ts --workers=1
+      - run: npx playwright test ${{ matrix.specs }} --workers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: basin-visual-review
+          name: basin-visual-review-${{ matrix.scene }}
           path: test-results/
           retention-days: 7

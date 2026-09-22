@@ -3,6 +3,8 @@ import type { FluidLayout, FluidSnapshot } from './types'
 import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
+import { CascadePresentation3D } from './cascadePresentation3d'
+import type { CascadeSnapshot } from './cascadeTypes'
 import { SurfaceTrackball } from './camera3d'
 import { buildFunnelVisual } from './funnelVisual'
 import { DEFAULT_WATER_APPEARANCE, type WaterAppearance } from './appearance'
@@ -313,7 +315,7 @@ export class FreeSurfaceRenderer {
   private readonly scene = new THREE.Scene()
   private readonly flatWalls = new THREE.Group()
   private readonly funnel: THREE.Group
-  private presentation3d: FreeSurfacePresentation3D | null = null
+  private presentation3d: FreeSurfacePresentation3D | CascadePresentation3D | null = null
   private basinSnapshot: BasinSnapshot | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private readonly trackball = new SurfaceTrackball()
@@ -365,6 +367,7 @@ export class FreeSurfaceRenderer {
     private readonly mount: HTMLElement,
     private readonly layout: FluidLayout,
     private readonly quality: 'low' | 'high',
+    private readonly sculpture?: 'terraced-fountain',
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 1.5 : 1))
@@ -622,6 +625,17 @@ export class FreeSurfaceRenderer {
     this.canvas.dataset.basinStoredVolume = String(snapshot.diagnostics.stored)
     this.canvas.dataset.basinInitialVolume = String(snapshot.initialStoredVolume)
     this.canvas.dataset.basinWetCells = String(snapshot.diagnostics.wetCells)
+    this.canvas.dataset.basinInletRate = String(snapshot.sourceRate)
+    this.canvas.dataset.basinOutletRate = String(snapshot.diagnostics.outletRate)
+    this.canvas.dataset.basinInjectedVolume = String(snapshot.diagnostics.injected)
+    this.canvas.dataset.basinOutletVolume = String(snapshot.diagnostics.discharged)
+    if ('cascade' in snapshot) {
+      const state = (snapshot as CascadeSnapshot).cascade
+      this.canvas.dataset.sculpture = 'terraced-fountain'
+      this.canvas.dataset.terraceCount = '3'
+      this.canvas.dataset.terraceDepths = JSON.stringify(state.depths)
+      this.canvas.dataset.terraceOutletRates = JSON.stringify(state.discharge)
+    }
     if (this.viewMode === 'surface-3d') this.draw()
   }
 
@@ -733,7 +747,9 @@ export class FreeSurfaceRenderer {
       ? '벽 안에 담긴 미로의 물. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     if (mode === 'surface-3d' && !this.presentation3d) {
-      this.presentation3d = new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer)
+      this.presentation3d = this.sculpture
+        ? new CascadePresentation3D(this.layout, this.renderer)
+        : new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer)
       this.presentation3d.addFunnel(this.funnel)
       this.presentation3d.setAppearance(this.appearance)
       this.presentation3d.setLook(this.look)

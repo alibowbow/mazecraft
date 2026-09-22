@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { createEmptyGraph } from '../../../core/maze'
 import { createTestProject } from '../../../test/projectFixture'
+import { createWaterStudioProject } from '../../waterStudio/presets'
 import { BASIN_FLOOR_Z, BASIN_INITIAL_DEPTH, BASIN_OUTLET_SILL_DEPTH, BasinSimulation } from './basinSimulation'
 import { BasinField } from './basinField'
 import { BasinFixtures } from './basinFixtures'
@@ -21,6 +22,40 @@ describe('physical horizontal basin', () => {
     expect(snapshot.diagnostics.stored).toBeCloseTo(snapshot.initialStoredVolume)
     expect(snapshot.diagnostics.injected).toBe(0)
     expect(snapshot.diagnostics.massError).toBeLessThan(1e-12)
+  })
+
+  it('sustains conserved flow through the middle of the default atelier at its default inflow', () => {
+    const project = createWaterStudioProject('atelier', 'atelier-01')
+    const basin = new BasinSimulation(project, buildFluidLayout(project))
+    const { network, state } = basin.solver
+    const middleRow = Math.floor(network.rows / 2)
+    const crossingEdges: { edge: number; direction: number }[] = []
+    for (let edge = 0; edge < network.edgeCount; edge++) {
+      const from = network.nodeRow[network.edgeFrom[edge]], to = network.nodeRow[network.edgeTo[edge]]
+      if (from < middleRow && to >= middleRow) crossingEdges.push({ edge, direction: 1 })
+      else if (to < middleRow && from >= middleRow) crossingEdges.push({ edge, direction: -1 })
+    }
+    expect(crossingEdges.length).toBeGreaterThan(0)
+    let previous = { injected: 0, discharged: 0, transit: 0 }
+    for (const seconds of [5, 10]) {
+      for (let step = 0; step < 20; step++) basin.advance(0.25, 0.65)
+      const snapshot = basin.snapshot(), d = snapshot.diagnostics
+      // Initial water at the outlet can drain without traversing the maze.
+      // Signed transfer through this interior cut must also keep increasing.
+      const transit = crossingEdges.reduce((sum, { edge, direction }) => sum + state.cumulativeSignedVolume[edge] * direction, 0)
+      const flow = crossingEdges.reduce((sum, { edge, direction }) => sum + state.discharge[edge] * direction, 0)
+      expect(d.time).toBeCloseTo(seconds, 8)
+      expect(d.injected - previous.injected).toBeGreaterThan(0.1)
+      expect(d.discharged - previous.discharged).toBeGreaterThan(0.1)
+      expect(transit - previous.transit).toBeGreaterThan(0.05)
+      expect(flow).toBeGreaterThan(0.02)
+      expect(snapshot.sourceRate).toBeGreaterThan(0.02)
+      expect(d.outletRate).toBeGreaterThan(0.02)
+      expect(d.escaped).toBe(0)
+      expect(d.stored).toBeCloseTo(snapshot.initialStoredVolume + d.injected - d.discharged, 9)
+      expect(d.massError).toBeLessThan(1e-9)
+      previous = { injected: d.injected, discharged: d.discharged, transit }
+    }
   })
 
   it('drains through the actual raised outlet while preserving retained water and total mass', () => {
