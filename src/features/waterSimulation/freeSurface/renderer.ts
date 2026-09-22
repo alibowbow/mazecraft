@@ -931,7 +931,7 @@ export class FreeSurfaceRenderer {
       this.renderer.setRenderTarget(null)
       this.renderer.shadowMap.enabled = true
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-      this.renderer.toneMappingExposure = 1.05
+      this.renderer.toneMappingExposure = 1.10
       this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
       this.renderer.toneMapping = THREE.NoToneMapping
       this.renderer.shadowMap.enabled = false

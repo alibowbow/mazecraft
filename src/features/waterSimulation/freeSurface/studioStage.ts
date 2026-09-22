@@ -91,10 +91,10 @@ export class StudioStage {
   }
 }
 
-/** Dark surroundings and narrow window strips give glaze a readable reflection edge. */
+/** Bright courtyard fill and window strips keep glaze luminous from every angle. */
 export function createAtelierEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
   const environment = new THREE.Scene()
-  environment.background = new THREE.Color('#737a79')
+  environment.background = new THREE.Color('#b9cbd4')
   const panels: THREE.Mesh[]=[]
   const panel=(w:number,h:number,position:THREE.Vector3,color:string,intensity:number)=>{
     const material=new THREE.MeshBasicMaterial({color:new THREE.Color(color).multiplyScalar(intensity),side:THREE.DoubleSide})

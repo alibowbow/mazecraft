@@ -26,7 +26,7 @@ export interface WaterThemePalette {
 
 export const WATER_THEMES: readonly WaterThemePalette[] = [
   {
-    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#e9c9b1',
+    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#f6f8f5',
     floor: '#f8f1e7', wall: '#f8f1e5', wallSide: '#f3e8d8', slab: '#e8ddcb',
     edge: '#c7b99f', accent: '#72bfb2', roughness: 0.16, metalness: 0.0,
   },
@@ -58,7 +58,7 @@ export const DEFAULT_WATER_LOOK: WaterLook = { theme: 'porcelain', light: 'dayli
 export const WATER_LIGHTS = {
   // Keep the sun away from the default orthographic camera's mirror angle:
   // a parallel view otherwise turns the entire flat pool into one white glint.
-  daylight: { direction: [-0.72, -0.38, 0.85], color: '#fff4df', fill: '#dceef3', sky: '#ffffff', ground: '#dbceba', intensity: 2.8, ambient: 0.9 },
+  daylight: { direction: [-0.72, -0.38, 0.85], color: '#fff9ed', fill: '#eefaff', sky: '#ffffff', ground: '#f0f6f8', intensity: 2.8, ambient: 0.9 },
   golden: { direction: [-0.76, 0.30, 0.60], color: '#ffd5a5', fill: '#eadfe6', sky: '#fff1dc', ground: '#d3ac87', intensity: 2.9, ambient: 0.8 },
   studio: { direction: [0.46, 0.72, 0.96], color: '#f2faff', fill: '#d5e7f0', sky: '#f1f8ff', ground: '#c6d6dd', intensity: 2.5, ambient: 1.0 },
 } as const;
