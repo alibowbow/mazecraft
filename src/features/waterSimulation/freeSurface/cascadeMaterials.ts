@@ -77,12 +77,12 @@ function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
   const width = 512, height = 256, pixels = new Float32Array(width * height * 4)
   const panels = [
     { direction: [-0.58, -0.24, 0.88], width: 0.58, height: 0.38, radiance: [3.5, 3.2, 2.8] },
-    // Border, rather than cover, the default flat-water mirror direction.
-    // The two moving normals then catch a narrow highlight instead of whiteout.
-    { direction: [-0.57, 0.47, 0.92], width: 0.08, height: 0.35, fade: 0.40, radiance: [5, 4.7, 4.2] },
+    // A continuous radiance gradient avoids identical bright plateaus wherever
+    // the moving water normals reflect this softbox. Its peak stays physical.
+    { direction: [-0.57, 0.47, 0.92], width: 0.08, height: 0.35, gaussian: true, radiance: [5, 4.7, 4.2] },
     // A small front softbox supplies true HDR peaks to curved ceramic faces,
     // away from the flat water's mirror direction.
-    { direction: [-0.70, -0.60, 0.45], width: 0.07, height: 0.28, radiance: [14, 12.5, 10.5] },
+    { direction: [-0.70, -0.60, 0.45], width: 0.07, height: 0.28, fade: 0.38, verticalFade: 0.30, radiance: [14, 12.5, 10.5] },
     { direction: [0.75, -0.3, 0.55], width: 0.12, height: 0.50, radiance: [1.9, 2.3, 2.7] },
     { direction: [0.1, 0.8, 0.62], width: 0.36, height: 0.035, radiance: [5.2, 5.2, 5.0] },
   ].map(panel => {
@@ -104,7 +104,15 @@ function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
       const facing = direction.dot(panel.direction)
       if (facing <= 0) continue
       const a = Math.abs(direction.dot(panel.right) / facing), b = Math.abs(direction.dot(panel.up) / facing)
-      const weight = (1 - THREE.MathUtils.smoothstep(a, panel.width * (1 - (panel.fade ?? 0.14)), panel.width)) * (1 - THREE.MathUtils.smoothstep(b, panel.height * 0.94, panel.height))
+      const u = a / panel.width, v = b / panel.height
+      // Smoothly truncate the Gaussian before the panel boundary. There is no
+      // constant-brightness center for wave normals to reveal as flat spots.
+      const weight = panel.gaussian
+        ? Math.exp(-3.2 * u * u - 0.45 * v * v)
+          * (1 - THREE.MathUtils.smoothstep(u, 0.78, 1))
+          * (1 - THREE.MathUtils.smoothstep(v, 0.70, 1))
+        : (1 - THREE.MathUtils.smoothstep(u, 1 - (panel.fade ?? 0.14), 1))
+          * (1 - THREE.MathUtils.smoothstep(v, 1 - (panel.verticalFade ?? 0.06), 1))
       for (let channel = 0; channel < 3; channel++) pixels[index + channel] += panel.radiance[channel] * weight
     }
     pixels[index + 3] = 1
