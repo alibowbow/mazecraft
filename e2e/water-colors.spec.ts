@@ -62,7 +62,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
 
   await palette.getByRole('button', { name: '물 색상 파랑', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color-preset', 'blue')
-  await expect(stage).toHaveAttribute('data-water-color', '#3786e8')
+  await expect(stage).toHaveAttribute('data-water-color', '#168bff')
   const blue = await canvas.screenshot()
   expect(blue.equals(clear)).toBe(false)
   await page.screenshot({ path: testInfo.outputPath('water-blue-desktop.png') })

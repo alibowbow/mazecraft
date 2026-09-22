@@ -5,7 +5,7 @@ import { createImageMask, loadImageFile, DEFAULT_IMAGE_OPTIONS } from '../../cor
 import { editWaterMazeWall, resizeWaterMaze } from './liveEditing'
 import type { FluidResume } from '../waterSimulation/freeSurface/types'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/freeSurface/runtime'
-import { WATER_COLOR_PRESETS, type WaterAppearance } from '../waterSimulation/freeSurface/appearance'
+import { AQUA_WATER_APPEARANCE, upgradeWaterPresetColor, WATER_COLOR_PRESETS, type WaterAppearance } from '../waterSimulation/freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, STUDIO_BACKGROUND, WATER_THEMES, normalizeWaterLook, type WaterLook } from '../waterSimulation/freeSurface/lookdev'
 import type { WaterSurfaceStyle } from '../waterSimulation/rendering'
 import { WATER_STUDIO_PRESETS, createWaterStudioProject, type WaterStudioPresetId } from './presets'
@@ -22,7 +22,7 @@ interface StudioPreferences {
 const defaults: StudioPreferences = {
   source: 'flow', generator: DEFAULT_WATER_MAZE,
   preset: 'atelier', seed: 'atelier-01', size: 0,
-  look: DEFAULT_WATER_LOOK, color: '#16aeb7', opacity: 0.72,
+  look: DEFAULT_WATER_LOOK, color: AQUA_WATER_APPEARANCE.color, opacity: 0.72,
   flow: 0.65, surface: 'natural', speed: 1,
 }
 function readPreferences(): StudioPreferences {
@@ -44,7 +44,7 @@ function readPreferences(): StudioPreferences {
       seed: typeof p.seed === 'string' && p.seed.length < 120 ? p.seed : defaults.seed,
       size: [0, 6, 8, 10].includes(p.size) ? p.size : 0,
       look: normalizeWaterLook(p.look ?? defaults.look),
-      color: p.color === null || (typeof p.color === 'string' && /^#[0-9a-f]{6}$/i.test(p.color)) ? p.color : defaults.color,
+      color: p.color === null || (typeof p.color === 'string' && /^#[0-9a-f]{6}$/i.test(p.color)) ? upgradeWaterPresetColor(p.color) : defaults.color,
       opacity: bounded(p.opacity, 0.2, 0.9, defaults.opacity), flow: bounded(p.flow, 0.1, 2.5, defaults.flow),
       surface: ['calm', 'natural', 'dynamic'].includes(p.surface) ? p.surface : defaults.surface,
       speed: [0.5, 1, 2].includes(p.speed) ? p.speed : 1,
@@ -125,7 +125,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const selectedTheme = WATER_THEMES.find(theme => theme.id === preferences.look.theme)!
   const update = (value: Partial<StudioPreferences>) => setPreferences(previous => ({ ...previous, ...value }))
   const updateLook = (value: Partial<WaterLook>) => setPreferences(previous => ({ ...previous, look: { ...previous.look, ...value } }))
-  const appearance = useMemo<WaterAppearance>(() => ({ color: preferences.color, profile: preferences.color === '#16aeb7' ? 'aqua' : preferences.color ? 'tinted' : 'clear', opacity: preferences.opacity }), [preferences.color, preferences.opacity])
+  const appearance = useMemo<WaterAppearance>(() => ({ color: preferences.color, profile: preferences.color === AQUA_WATER_APPEARANCE.color ? 'aqua' : preferences.color ? 'tinted' : 'clear', opacity: preferences.opacity }), [preferences.color, preferences.opacity])
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences)) } catch { /* Storage may be disabled. */ }
@@ -149,7 +149,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
       )
       runtime.setLook(current.preferences.look)
       runtime.setViewMode(current.mode)
-      runtime.setAppearance({ color: current.preferences.color, profile: current.preferences.color === '#16aeb7' ? 'aqua' : current.preferences.color ? 'tinted' : 'clear', opacity: current.preferences.opacity })
+      runtime.setAppearance({ color: current.preferences.color, profile: current.preferences.color === AQUA_WATER_APPEARANCE.color ? 'aqua' : current.preferences.color ? 'tinted' : 'clear', opacity: current.preferences.opacity })
       runtime.setInflowRate(current.preferences.flow)
       runtime.setSpeed(current.preferences.speed)
       runtimeRef.current = runtime
@@ -282,11 +282,11 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
           </>}
           {tab === 'material' && <>
             <div className="ws-section-label"><span>물의 색</span><span>WATER COLOR</span></div>
-            <div className="ws-water-colors" role="group" aria-label="물 색상">{WATER_COLOR_PRESETS.map(item => <button key={item.id} title={item.label} aria-label={`물 색상 ${item.label}`} aria-pressed={preferences.color === item.color} style={{ '--swatch': item.color ?? '#f5e4d8' } as CSSProperties} onClick={() => update({ color: item.color })}><i />{preferences.color === item.color && <Check size={13} />}</button>)}</div>
-            <label className="ws-custom-color">직접 선택<input type="color" aria-label="물 색상 직접 선택" value={preferences.color ?? '#72d1df'} onChange={event => update({ color: event.target.value })} /></label>
+            <div className="ws-water-colors" role="group" aria-label="물 색상">{WATER_COLOR_PRESETS.map(item => <button key={item.id} title={item.label} aria-label={`물 색상 ${item.label}`} aria-pressed={preferences.color === item.color} style={{ '--swatch': item.color ?? '#edfaff' } as CSSProperties} onClick={() => update({ color: item.color })}><i />{preferences.color === item.color && <Check size={13} />}</button>)}</div>
+            <label className="ws-custom-color">직접 선택<input type="color" aria-label="물 색상 직접 선택" value={preferences.color ?? AQUA_WATER_APPEARANCE.color!} onChange={event => update({ color: event.target.value })} /></label>
             <div className="ws-section-label"><span>미로 벽</span></div>
             <label className="ws-custom-color">벽 색상<input type="color" aria-label="벽 색상" value={preferences.look.wallColor ?? (mode === 'surface-3d' ? selectedTheme.wall : preferences.look.wallColor2d ?? '#526b7a')} onChange={event => updateLook({ wallColor: event.target.value })} /></label>
-            <div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id, wallColor: null })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>
+            <div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id, wallColor: theme.wall })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>
             {slider('벽 높이', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}
             {mode === 'free-surface' && <><div className="ws-section-label"><span>2D 바탕과 보조선</span></div><label className="ws-custom-color">격자 보조선<input type="color" aria-label="2D 격자 색상" value={preferences.look.gridColor2d ?? '#dce3e8'} onChange={event => updateLook({ gridColor2d: event.target.value })} /></label><div className="ws-option-row"><button aria-pressed={preferences.look.background2d === 'white'} onClick={() => updateLook({ background2d: 'white' })}>흰색 배경</button><button aria-pressed={preferences.look.background2d !== 'white'} onClick={() => updateLook({ background2d: 'material' })}>밝은 아이보리</button></div></>}
           </>}

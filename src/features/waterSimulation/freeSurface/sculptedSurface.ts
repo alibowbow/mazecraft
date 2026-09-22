@@ -374,9 +374,9 @@ export class SculptedSurface {
     this.floorMaterial.color.set(p.floor); this.floorMaterial.roughness = Math.max(0.16, p.roughness)
     this.sideMaterial.color.set(p.wall); this.baseMaterial.color.set(p.slab)
     this.sideMaterial.roughness = Math.min(0.8, p.roughness + 0.06)
-    this.floorMaterial.clearcoat = look.theme === 'terrace' || look.theme === 'basalt' ? 0.12 : 0.65
-    this.sideMaterial.clearcoat = look.theme === 'terrace' || look.theme === 'basalt' ? 0.08 : 0.48
-    this.uniforms.uStone.value = look.theme === 'terrace' || look.theme === 'basalt' ? 1 : 0
+    this.floorMaterial.clearcoat = p.roughness >= 0.5 ? 0.12 : 0.65
+    this.sideMaterial.clearcoat = p.roughness >= 0.5 ? 0.08 : 0.48
+    this.uniforms.uStone.value = p.roughness >= 0.5 ? 1 : 0
   }
   setBasinSnapshot(snapshot: BasinSnapshot) {
     this.basin.update(snapshot)

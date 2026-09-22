@@ -174,7 +174,7 @@ test('fountain water tint and ceramic glaze visibly change without resetting the
   await page.mouse.move(0, 0)
   await expect.poll(async () => (await capture()).equals(original), { timeout: 30_000 }).toBe(true)
   await page.getByRole('tab', { name: '색상', exact: true }).click()
-  await page.getByRole('button', { name: '글레이셔', exact: true }).click()
+  await page.getByRole('button', { name: '스카이', exact: true }).click()
   await page.mouse.move(0, 0)
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
   await expect.poll(async () => (await capture()).equals(original), { timeout: 30_000 }).toBe(false)

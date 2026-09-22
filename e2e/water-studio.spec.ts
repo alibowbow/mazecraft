@@ -46,7 +46,7 @@ test('water studio starts with live 3D water and tunes appearance without resett
   const paused = await fluidState(page)
 
   await page.getByRole('tab', { name: '색상', exact: true }).click()
-  await page.getByRole('button', { name: '글레이셔', exact: true }).click()
+  await page.getByRole('button', { name: '스카이', exact: true }).click()
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
   await page.getByRole('tab', { name: '빛', exact: true }).click()
   await page.getByRole('button', { name: /오후의 햇살/ }).click()
@@ -114,7 +114,7 @@ test('15.6 mobile water studio keeps the scene visible and tuning controls reach
   await page.getByRole('button', { name: '튜닝 열기', exact: true }).click()
   await expect(page.getByRole('button', { name: '튜닝 열기', exact: true })).toHaveAttribute('aria-expanded', 'true')
   await page.getByRole('tab', { name: '색상', exact: true }).click()
-  await page.getByRole('button', { name: '글레이셔', exact: true }).click()
+  await page.getByRole('button', { name: '스카이', exact: true }).click()
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
   await page.screenshot({ path: testInfo.outputPath('mobile-water-tuning.png') })
   await page.getByRole('button', { name: '튜닝 닫기', exact: true }).click()
