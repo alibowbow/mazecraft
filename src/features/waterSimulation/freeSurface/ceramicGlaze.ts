@@ -48,9 +48,9 @@ export function applyCeramicGlaze(material: THREE.Material, uniforms: Record<str
         // Shallow cast-glaze undulations bend the reflected softbox across
         // crowns and upright faces, while the ceramic body keeps its shape.
         vec3 glazeSlope = vec3(
-          cos(vCeramicPoint.x * 9.3 + vCeramicPoint.y * 3.1) * 0.016 + sin(vCeramicPoint.z * 39.0 + vCeramicPoint.y * 9.0) * 0.006,
-          cos(vCeramicPoint.y * 7.7 - vCeramicPoint.x * 2.5) * 0.012,
-          sin(vCeramicPoint.x * 6.8 + vCeramicPoint.y * 5.4 + vCeramicPoint.z * 2.0) * 0.013);
+          cos(vCeramicPoint.x * 9.3 + vCeramicPoint.y * 3.1) * 0.028 + sin(vCeramicPoint.z * 39.0 + vCeramicPoint.y * 9.0) * 0.006,
+          cos(vCeramicPoint.y * 7.7 - vCeramicPoint.x * 2.5) * 0.022,
+          sin(vCeramicPoint.x * 6.8 + vCeramicPoint.y * 5.4 + vCeramicPoint.z * 2.0) * 0.022);
         clearcoatNormal = normalize(clearcoatNormal + mat3(viewMatrix) * glazeSlope);
       #endif
     `)

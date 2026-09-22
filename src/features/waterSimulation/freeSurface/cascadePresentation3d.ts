@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { StudioShadows, orientStudioEnvironment } from './studioLighting'
 import type { FluidLayout } from './types'
 import type { BasinSnapshot } from './basinSimulation'
 import type { CascadeSnapshot, CascadeState } from './cascadeTypes'
@@ -6,7 +7,7 @@ import { CascadeGeometry } from './cascadeGeometry'
 import { createCascadeMaterials } from './cascadeMaterials'
 import { CascadeFalls } from './cascadeFalls'
 import { StudioStage } from './studioStage'
-import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_BACKGROUND, type WaterLook } from './lookdev'
+import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_BACKGROUND, WATER_LIGHTS, type WaterLook } from './lookdev'
 import type { WaterAppearance } from './appearance'
 
 /** An authored, three-level porcelain fountain, separate from the grid editor. */
@@ -20,6 +21,7 @@ export class CascadePresentation3D {
   private readonly materials: ReturnType<typeof createCascadeMaterials>
   private readonly sculpture: CascadeGeometry
   private readonly falls: CascadeFalls
+  private readonly shadows = new StudioShadows()
   private readonly stage: StudioStage
   private readonly water: THREE.Mesh[] = []
   private readonly ambient = new THREE.AmbientLight('#fffdfa', 0.25)
@@ -45,8 +47,7 @@ export class CascadePresentation3D {
       water.name = `cascade-reservoir-water-${index}`
       water.position.z = surface.floor + 0.46
       water.renderOrder = index + 1
-      // VSM also renders receiveShadow meshes into its depth pass. The clear
-      // surface must not become an opaque shadow blocker over its own floor.
+      // The transmitted floor receives the shadow; avoid applying it twice.
       water.receiveShadow = false
       this.water.push(water)
       this.content.add(water)
@@ -54,7 +55,7 @@ export class CascadePresentation3D {
     this.falls = new CascadeFalls(this.materials.water)
     this.content.add(this.falls.group)
     this.scene.add(this.content)
-    this.stage = new StudioStage(0, -0.3, 9.7, 10)
+    this.stage = new StudioStage(0, -0.3, 9.7, 10, -0.705)
     this.scene.add(this.stage.group)
 
     this.sun.castShadow = true
@@ -66,11 +67,11 @@ export class CascadePresentation3D {
     this.sun.shadow.bias = -0.0003
     this.sun.shadow.normalBias = 0.035
     this.sun.shadow.radius = 2.5
-    this.sun.shadow.blurSamples = 6
     this.sun.shadow.autoUpdate = false
     this.bounce.position.set(6, 2, 7)
     this.bounce.target.position.set(0, 0, 1)
     this.scene.add(this.ambient, this.sun, this.sun.target, this.bounce, this.bounce.target)
+    this.shadows.apply(this.scene)
     this.setLook(this.look)
   }
 
@@ -88,16 +89,16 @@ export class CascadePresentation3D {
     for (const floor of this.materials.floors) floor.color.set(porcelain ? 0xf7f5f0 : palette.floor)
     this.sculpture.setWallHeight(this.look.wallHeight)
     this.falls.setWallHeight(this.look.wallHeight)
-    if (this.look.light === 'golden') {
-      this.sun.color.set('#ffe7c5'); this.sun.position.set(-8, -4, 7); this.sun.intensity = 3.2
-      this.ambient.color.set('#fff8ee')
-    } else if (this.look.light === 'studio') {
-      this.sun.color.set('#ffffff'); this.sun.position.set(-4, -5, 12); this.sun.intensity = 2.8
-      this.ambient.color.set('#f3f9ff')
-    } else {
-      this.sun.color.set('#fff9ed'); this.sun.position.set(-6, -4, 8); this.sun.intensity = 2.8
-      this.ambient.color.set('#f4fbff')
-    }
+    const lighting = WATER_LIGHTS[this.look.light]
+    this.sun.color.set(lighting.color)
+    this.sun.position.set(lighting.direction[0], lighting.direction[1], lighting.direction[2]).multiplyScalar(10)
+    this.sun.intensity = lighting.intensity
+    this.ambient.color.set(lighting.sky)
+    this.ambient.intensity = lighting.ambient * 0.25
+    this.bounce.color.set(lighting.fill)
+    this.bounce.intensity = 0.22
+    this.shadows.update(this.sun)
+    orientStudioEnvironment(this.scene, lighting.direction)
     this.sun.shadow.needsUpdate = true
     this.renderer.shadowMap.needsUpdate = true
   }
