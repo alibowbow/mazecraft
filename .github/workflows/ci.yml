@@ -52,7 +52,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # Keep one software-WebGL worker per runner. Separate runners prevent
       # expensive material tests from competing for the same CPU renderer.
-      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/3 --max-failures=1
+      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
