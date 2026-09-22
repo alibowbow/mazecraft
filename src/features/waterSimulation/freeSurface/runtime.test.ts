@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDefaultProject } from '../../../core/maze'
 import type { FluidSnapshot, FluidSnapshotBuffers } from './types'
+import type { BasinSnapshot } from './basinSimulation'
 import { FreeSurfaceRuntime } from './runtime'
 
-const rendering = vi.hoisted(() => ({ render: vi.fn(), dispose: vi.fn(), setViewMode: vi.fn(), setLook: vi.fn() }))
+const rendering = vi.hoisted(() => ({ render: vi.fn(), setBasinSnapshot: vi.fn(), dispose: vi.fn(), setViewMode: vi.fn(), setLook: vi.fn() }))
 vi.mock('./renderer', () => ({
   FreeSurfaceRenderer: class {
     canvas = { width: 640, height: 480 }
     render = rendering.render
+    setBasinSnapshot = rendering.setBasinSnapshot
     dispose = rendering.dispose
     setViewMode = rendering.setViewMode
     setLook = rendering.setLook
@@ -286,5 +288,85 @@ describe('free-surface runtime clock and snapshot scheduling', () => {
     expect(worker.pending).toBe(false)
     renderFrame(10_125)
     expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', inflow: 0, steps: 12 })
+  })
+})
+
+describe('contained 3D basin runtime', () => {
+  const basin = () => rendering.setBasinSnapshot.mock.calls.at(-1)![0] as BasinSnapshot
+
+  it('starts with conserved water across the maze and advances without particle-worker batches', () => {
+    const { runtime, worker } = setup()
+    runtime.setViewMode('surface-3d')
+    const initial = status.mock.calls.at(-1)![0]
+    expect(initial.currentStoredVolume).toBeGreaterThan(0)
+    expect(initial.filledCells).toBe(initial.totalCells)
+    expect(initial.particleCount).toBe(0)
+    expect(initial.absoluteMassError).toBeLessThan(1e-8)
+    for (let time = 100; time <= 1000; time += 100) renderFrame(time)
+    expect(basin().diagnostics.time).toBeCloseTo(1, 8)
+    expect(advances(worker)).toHaveLength(0)
+    expect(basin().diagnostics.massError).toBeLessThan(1e-8)
+  })
+
+  it('drains its actual stored volume after supply stops and freezes exactly on pause', () => {
+    const { runtime } = setup()
+    runtime.setViewMode('surface-3d')
+    runtime.setInflow(false)
+    const initialVolume = basin().diagnostics.stored
+    for (let time = 100; time <= 2000; time += 100) renderFrame(time)
+    expect(basin().diagnostics.injected).toBe(0)
+    expect(basin().diagnostics.discharged).toBeGreaterThan(0)
+    expect(basin().diagnostics.stored).toBeLessThan(initialVolume)
+    expect(basin().diagnostics.stored + basin().diagnostics.discharged).toBeCloseTo(initialVolume, 8)
+    runtime.setPaused(true)
+    const pausedTime = basin().diagnostics.time
+    const pausedDepth = Array.from(basin().depth)
+    const calls = rendering.setBasinSnapshot.mock.calls.length
+    renderFrame(20_000)
+    expect(rendering.setBasinSnapshot).toHaveBeenCalledTimes(calls)
+    expect(Array.from(basin().depth)).toEqual(pausedDepth)
+    runtime.setPaused(false)
+    renderFrame(20_100)
+    expect(basin().diagnostics.time).toBeCloseTo(pausedTime + 0.1, 8)
+  })
+
+  it('applies speed and preserves distinct mode clocks, then restores the initial fill on reset', () => {
+    const { runtime, worker } = setup()
+    renderFrame(100); worker.complete(); renderFrame(100)
+    expect(worker.time).toBeCloseTo(0.1, 8)
+    runtime.setViewMode('surface-3d')
+    const initialVolume = basin().diagnostics.stored
+    runtime.setSpeed(4)
+    renderFrame(200)
+    expect(basin().diagnostics.time).toBeCloseTo(0.4, 8)
+    runtime.setViewMode('free-surface')
+    expect(status.mock.calls.at(-1)![0].simulationTime).toBeCloseTo(0.1, 8)
+    runtime.setSpeed(1)
+    renderFrame(300); worker.complete(); renderFrame(300)
+    expect(worker.time).toBeCloseTo(0.2, 8)
+    runtime.setViewMode('surface-3d')
+    expect(status.mock.calls.at(-1)![0].simulationTime).toBeCloseTo(0.4, 8)
+    runtime.restart()
+    expect(basin().diagnostics.time).toBe(0)
+    expect(basin().diagnostics.stored).toBeCloseTo(initialVolume, 8)
+    expect(basin().diagnostics.injected).toBe(0)
+    expect(basin().diagnostics.discharged).toBe(0)
+    expect(status.mock.calls.at(-1)![0].inletState).toBe('steady')
+  })
+
+  it('can show and simulate a basin before the particle worker has initialized', () => {
+    const onReady = vi.fn()
+    runtime = new FreeSurfaceRuntime(document.createElement('div'), project, 'low', 'natural', onReady, status, vi.fn(), vi.fn())
+    runtime.setViewMode('surface-3d')
+    expect(onReady).toHaveBeenCalledOnce()
+    renderFrame(100)
+    expect(basin().diagnostics.time).toBeCloseTo(0.1, 8)
+    runtime.setViewMode('free-surface')
+    expect(status.mock.calls.at(-1)![0]).toMatchObject({ simulationTime: 0, filledCells: 0, currentStoredVolume: 0, particleCount: 0 })
+    runtime.setViewMode('surface-3d')
+    expect(status.mock.calls.at(-1)![0].simulationTime).toBeCloseTo(0.1, 8)
+    FakeWorker.current.complete()
+    expect(onReady).toHaveBeenCalledOnce()
+    expect(status.mock.calls.at(-1)![0].simulationTime).toBeCloseTo(0.1, 8)
   })
 })

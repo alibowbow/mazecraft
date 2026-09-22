@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test } from '@playwright/test'
 import {
   branchingWaterProject, fallingWaterProject, importWaterProject, installWorkerProbe,
@@ -5,7 +6,7 @@ import {
 } from './helpers/waterHarness'
 
 test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌리면 동일한 화면을 복원한다', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   await installWorkerProbe(page)
   await importWaterProject(page, branchingWaterProject, 'high')
   const stage = await openParticleWater(page)
@@ -84,11 +85,15 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await expect(canvas).toHaveAttribute('data-surface-builds', initialFieldBuilds!)
 
   await page.getByRole('button', { name: '3D 수면', exact: true }).click()
+  await expect(stage).toHaveAttribute('data-fluid-model', 'hydraulic-basin')
+  const basinState = await readWaterState(stage)
+  expect(basinState.stored).toBeGreaterThan(0)
+  expect(basinState.particles).toBe(0)
   await expect(stage).toHaveAttribute('data-water-color', '#ed2f79')
   const threeDColored = await canvas.screenshot()
   await page.screenshot({ path: testInfo.outputPath('water-custom-3d-desktop.png') })
   const threeDFieldBuilds = await canvas.getAttribute('data-surface-builds')
-  const threeDOpticalBuilds = Number(await canvas.getAttribute('data-optical-builds'))
+  const threeDOrientation = await canvas.getAttribute('data-camera-orientation')
   await expect(canvas).toHaveAttribute('data-water-detail', 'multiband-ripples')
   const box = (await canvas.boundingBox())!
   await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.45)
@@ -96,7 +101,8 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.5, { steps: 3 })
   await page.mouse.up()
   await expect(canvas).toHaveAttribute('data-surface-builds', threeDFieldBuilds!)
-  expect(Number(await canvas.getAttribute('data-optical-builds'))).toBeGreaterThan(threeDOpticalBuilds)
+  expect(await canvas.getAttribute('data-camera-orientation')).not.toBe(threeDOrientation)
+  expect(await readWaterState(stage)).toEqual(basinState)
   await palette.getByRole('button', { name: '물 색상 투명 물', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color', 'clear')
   await expect(canvas).toHaveAttribute('data-surface-builds', threeDFieldBuilds!)
@@ -105,9 +111,13 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await page.screenshot({ path: testInfo.outputPath('water-colorless-ripple-3d-desktop.png') })
   await page.waitForTimeout(320)
   expect((await canvas.screenshot()).equals(clearThreeD)).toBe(true)
+  expect(await readWaterState(stage)).toEqual(basinState)
   await page.getByRole('button', { name: '2D 물 흐름', exact: true }).click()
-  expect((await canvas.screenshot()).equals(clear)).toBe(true)
-  expect(await readWaterState(stage)).toEqual(state)
+  await expect(canvas).toHaveAttribute('data-view-mode', 'free-surface')
+  await expect.poll(() => readWaterState(stage)).toEqual(state)
+  // The React mode effect schedules a new frame. Keep byte-for-byte equality,
+  // but compare after the restored 2D state has actually reached the canvas.
+  await expect.poll(async () => (await canvas.screenshot()).equals(clear)).toBe(true)
   expect(await readWorkerProbe(page)).toEqual(workers)
   await expect(canvas).toHaveAttribute('data-color-test-identity', 'same-water')
   await expect(stage).toHaveAttribute('data-phase', 'paused')
@@ -115,7 +125,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
 })
 
 test('15. 물 색상과 수면 표현이 모바일과 태블릿에서 바로 보이고 터치할 수 있다', async ({ page }, testInfo) => {
-  test.setTimeout(45_000)
+  test.setTimeout(e2eTimeout(45_000))
   await page.setViewportSize({ width: 360, height: 800 })
   await importWaterProject(page, fallingWaterProject, 'low', true)
   const stage = await openParticleWater(page)

@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { visitProjectLibrary, openProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -14,6 +15,9 @@ async function createBasic(page: Page) {
 }
 
 test('15.2 모바일 프로젝트 메뉴는 하나의 화면 내 액션 시트로 열린다', async ({ page }, testInfo) => {
+  // Two editor → water → collection round trips compile two full 24×24
+  // scenes on the CI software renderer before the menu assertions begin.
+  test.setTimeout(process.env.CI ? 180_000 : 30_000)
   await createBasic(page)
   await page.getByLabel('프로젝트 제목').fill('첫 번째 미로')
   await page.getByRole('button', { name: '홈으로' }).click()
@@ -168,7 +172,7 @@ test('15.3 모바일에서 도구 선택 즉시 캔버스로 돌아가고 한 �
 })
 
 test('15.4 모바일 그리기는 벽 도구가 아니라 실루엣 획으로 저장된다', async ({ page }) => {
-  test.setTimeout(30_000)
+  test.setTimeout(e2eTimeout(30_000))
   await createBasic(page)
   await page.locator('.mobile-tabs').getByRole('button', { name: '형태', exact: true }).click()
   await page.getByRole('button', { name: '그리기', exact: true }).click()

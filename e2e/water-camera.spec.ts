@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test, type Locator } from '@playwright/test'
 import { Quaternion, Vector3 } from 'three'
 import {
@@ -15,7 +16,7 @@ async function cameraPose(canvas: Locator) {
 }
 
 test('15. 3D 터치 회전·이동·확대가 손가락을 따르고 정지된 물 상태를 보존한다', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await importWaterProject(page, branchingWaterProject, 'high', true)

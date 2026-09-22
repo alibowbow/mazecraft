@@ -28,7 +28,8 @@ function expectGravityDrainage(project: MazeProject): void {
       queue.push(neighbor)
     }
   }
-  expect(reached.size).toBe(graph.cells.filter(cell => cell.active).length)
+  const trapped = graph.cells.filter(cell => cell.active && !reached.has(cell.index))
+  expect(trapped.map(cell => [cell.row, cell.col]), `${graph.rows}×${graph.cols}, ${graph.seed}`).toEqual([])
 }
 
 describe('water studio projects', () => {
@@ -78,32 +79,32 @@ describe('water studio projects', () => {
     expect(layouts.size).toBeGreaterThan(3)
   })
 
-  it('keeps atelier variations reproducible with wide open chambers', () => {
+  it('keeps atelier variations reproducible with branched chambers and physical islands', () => {
     const first = createWaterStudioProject('atelier', 'atelier-01')
     const second = createWaterStudioProject('atelier', 'atelier-01')
     expect(first.grid.rows).toBe(10)
-    expect(first.grid.cols).toBe(8)
+    expect(first.grid.cols).toBe(10)
     expect(first.mazeGraph).toEqual(second.mazeGraph)
     expect(first.mazeGraph.cells[0]).not.toBe(second.mazeGraph.cells[0])
+    expect(first.mask.cells.filter(active => !active)).toHaveLength(2)
+    expect(deserializeProject(serializeProject(first)).mazeGraph).toEqual(first.mazeGraph)
     for (let seed = 0; seed < 24; seed++) {
       const project = createWaterStudioProject('atelier', `atelier-variant-${seed}`)
       const graph = project.mazeGraph
-      // Broad chambers have fully open interior cells, rather than a dense
-      // grid of single-cell corridors that happens to have a valid route.
-      const openCells = graph.cells.filter(cell => getPassageNeighbors(graph, cell).length === 4)
-      expect(openCells.length).toBeGreaterThanOrEqual(graph.cells.length / 4)
+      // Real junctions and pockets retain multiple flow routes around the
+      // islands; the curated shape is not just one unbranched corridor.
+      const junctions = graph.cells.filter(cell => getPassageNeighbors(graph, cell).length >= 3)
+      expect(junctions.length).toBeGreaterThanOrEqual(graph.cells.length / 5)
       expectGravityDrainage(project)
     }
   })
 
-  it('leaves the last stepped peninsula above the outlet at every supported height', () => {
-    // Heights divisible by three are the tight case: an extra shelf could
-    // accidentally put its stepped tip on the outside boundary.
+  it('keeps chamber gates connected at every supported height and representative widths', () => {
     for (let rows = 4; rows <= 24; rows++) {
-      for (const cols of [4, 8, 24]) {
+      for (const cols of [4, 8, 10, 12, 24]) {
         const project = createWaterStudioProject('atelier', `height-${rows}-${cols}`, { rows, cols })
-        expect(validateMaze(project.mazeGraph, project.startCell, project.endCell).valid).toBe(true)
         expectGravityDrainage(project)
+        expect(validateMaze(project.mazeGraph, project.startCell, project.endCell).valid).toBe(true)
       }
     }
   })

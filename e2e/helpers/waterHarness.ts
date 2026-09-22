@@ -1,6 +1,7 @@
 import { visitProjectLibrary, enterProjectEditor } from './navigation'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { createDefaultProject, type MazeProject } from '../../src/core/maze'
+import { e2eTimeout } from './runtimeBudget'
 
 export const branchingWaterProject = createDefaultProject({
   title: '공유 입자 수면 검증 미로', seed: 'free-surface-water-e2e',
@@ -41,15 +42,15 @@ export async function importWaterProject(page: Page, project: MazeProject, quali
 export async function openParticleWater(page: Page, mode: 'free-surface' | 'surface-3d' = 'free-surface') {
   await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
   const stage = page.getByTestId('water-simulation-stage')
-  await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 20_000 })
+  await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: e2eTimeout(20_000) })
   const modes = page.getByRole('group', { name: '물 시뮬레이션 방식', exact: true })
   await expect(modes.getByRole('button', { name: '2D 물 흐름', exact: true })).toBeVisible()
   await expect(modes.getByRole('button', { name: '3D 수면', exact: true })).toBeVisible()
   await page.getByRole('button', { name: mode === 'surface-3d' ? '3D 수면' : '2D 물 흐름', exact: true }).click()
   await expect(modes.getByRole('button', { name: mode === 'surface-3d' ? '3D 수면' : '2D 물 흐름', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(stage).toHaveAttribute('data-view-mode', mode)
-  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
-  await expect(stage).toHaveAttribute('data-solver-mode', 'worker')
+  await expect(stage).toHaveAttribute('data-fluid-model', mode === 'surface-3d' ? 'hydraulic-basin' : 'position-based-free-surface')
+  await expect(stage).toHaveAttribute('data-solver-mode', mode === 'surface-3d' ? 'main-thread' : 'worker')
   await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
   return stage
 }

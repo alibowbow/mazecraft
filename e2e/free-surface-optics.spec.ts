@@ -9,8 +9,10 @@ import { buildFluidLayout } from '../src/features/waterSimulation/freeSurface/la
 import { createTerraceElevation, terraceElevationAt } from '../src/features/waterSimulation/freeSurface/terraceElevation'
 import type { FluidSnapshot } from '../src/features/waterSimulation/freeSurface/types'
 import type { FreeSurfaceRenderer } from '../src/features/waterSimulation/freeSurface/renderer'
+import type { BasinSimulation, BasinSnapshot } from '../src/features/waterSimulation/freeSurface/basinSimulation'
+import { BASIN_FLOOR_Z, BASIN_INITIAL_DEPTH } from '../src/features/waterSimulation/freeSurface/basinSimulation'
 
-test('water keeps its occupied shape at every speed and clear water remains visible on the pale board', async ({ page }) => {
+test('2D water keeps its occupied shape at every speed and clear water remains visible on the pale board', async ({ page }) => {
   test.setTimeout(120_000)
   const bundle = await build({
     entryPoints: [fileURLToPath(new URL('../src/features/waterSimulation/freeSurface/renderer.ts', import.meta.url))],
@@ -81,7 +83,8 @@ test('water keeps its occupied shape at every speed and clear water remains visi
       return { data, width, height }
     }
     try {
-      return (['free-surface', 'surface-3d'] as const).map(mode => {
+      const modes: Array<'free-surface' | 'surface-3d'> = ['free-surface']
+      return modes.map(mode => {
         view.setViewMode(mode)
         view.setAppearance({ profile: 'clear', color: null, opacity: 0.82 })
         const points = [2.35, 2.1, 2.5, 2.1, 2.65, 2.1, 2.35, 2.25, 2.5, 2.25, 2.65, 2.25]
@@ -173,4 +176,140 @@ test('water keeps its occupied shape at every speed and clear water remains visi
     expect(result.scatter).toEqual([0, 0, 0])
     expect(result.error).toBe(0)
   }
+})
+
+test('3D clear basin water uses actual conserved depth and remains visible without a particle footprint', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => {
+    if (message.type() === 'error' && /THREE|shader|WebGL|GL_INVALID/i.test(message.text())) errors.push(message.text())
+  })
+  const bundle = await build({
+    stdin: {
+      contents: `export { FreeSurfaceRenderer } from './src/features/waterSimulation/freeSurface/renderer';
+        export { BasinSimulation, BASIN_FLOOR_Z, BASIN_INITIAL_DEPTH } from './src/features/waterSimulation/freeSurface/basinSimulation';`,
+      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
+      sourcefile: 'basin-optics-fixture.ts', loader: 'ts',
+    },
+    bundle: true, platform: 'browser', format: 'iife',
+    globalName: 'BasinOpticsFixture', write: false, logLevel: 'silent',
+  })
+  await page.route('**/__basin-optics-fixture.js', route => route.fulfill({
+    contentType: 'application/javascript', body: bundle.outputFiles[0].text,
+  }))
+  await visitProjectLibrary(page)
+  await page.addScriptTag({ url: '/__basin-optics-fixture.js' })
+  // One connected, flat vessel provides a broad water core without wall
+  // occlusion. Its topology and conserved initial volume are real solver data.
+  const graph = createEmptyGraph(5, 5)
+  for (const cell of graph.cells) {
+    cell.walls = { top: cell.row === 0, right: cell.col === 4, bottom: cell.row === 4, left: cell.col === 0 }
+  }
+  const project = createTestProject({ mazeGraph: graph })
+  const layout = buildFluidLayout(project)
+  const result = await page.evaluate(({ project, layout: input }) => {
+    const fixture = (window as unknown as {
+      BasinOpticsFixture: {
+        FreeSurfaceRenderer: typeof FreeSurfaceRenderer
+        BasinSimulation: typeof BasinSimulation
+        BASIN_FLOOR_Z: number
+        BASIN_INITIAL_DEPTH: number
+      }
+    }).BasinOpticsFixture
+    const fixtureLayout = { ...input, activeCells: Uint8Array.from(input.activeCells) }
+    const mount = document.createElement('div')
+    mount.style.cssText = 'position:fixed;left:0;top:0;width:360px;height:440px;'
+    document.body.appendChild(mount)
+    const view = new fixture.FreeSurfaceRenderer(mount, fixtureLayout, 'high')
+    const solver = new fixture.BasinSimulation(project, fixtureLayout)
+    const filled = solver.snapshot()
+    const drySnapshot: BasinSnapshot = {
+      ...filled, depth: new Float32Array(filled.depth.length), velocity: new Float32Array(filled.velocity.length),
+      diagnostics: { ...filled.diagnostics, wetCells: 0, stored: 0 },
+    }
+    const internals = view as unknown as {
+      renderer: THREE.WebGLRenderer
+      particleGeometry: THREE.InstancedBufferGeometry
+      presentation3d: { camera: THREE.OrthographicCamera; sculpted: { waterMaterial: THREE.MeshPhysicalMaterial } }
+    }
+    const readColor = () => {
+      const gl = internals.renderer.getContext()
+      const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight
+      const data = new Uint8Array(width * height * 4)
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data)
+      return { data, width, height }
+    }
+    try {
+      view.setBasinSnapshot(filled)
+      view.setViewMode('surface-3d')
+      view.setInflow(false)
+      view.setAppearance({ profile: 'clear', color: null, opacity: 0.82 })
+      view.setBasinSnapshot(drySnapshot)
+      const dry = readColor()
+      const dryImage = view.canvas.toDataURL('image/png')
+      view.setBasinSnapshot(filled)
+      const wet = readColor()
+      const wetImage = view.canvas.toDataURL('image/png')
+      const eye = internals.presentation3d.camera
+      const direction = eye.getWorldDirection(eye.position.clone())
+      const waterZ = fixture.BASIN_FLOOR_Z + fixture.BASIN_INITIAL_DEPTH
+      let samples = 0, contrasted = 0, difference = 0, chromaShift = 0
+      const dryColor = [0, 0, 0], wetColor = [0, 0, 0]
+      for (let row = 0; row < wet.height; row++) for (let col = 0; col < wet.width; col++) {
+        const point = eye.position.clone().set((col + 0.5) / wet.width * 2 - 1, (row + 0.5) / wet.height * 2 - 1, 0).unproject(eye)
+        point.addScaledVector(direction, (waterZ - point.z) / direction.z)
+        // Test the liquid's interior, not its meniscus or exterior walls.
+        if (point.x < 1.5 || point.x > 3.5 || point.y < -3.5 || point.y > -1.5) continue
+        const index = (row * wet.width + col) * 4
+        const delta = [0, 1, 2].map(channel => wet.data[index + channel] - dry.data[index + channel])
+        for (const channel of [0, 1, 2]) {
+          dryColor[channel] += dry.data[index + channel]
+          wetColor[channel] += wet.data[index + channel]
+        }
+        const contrast = Math.abs(delta[0] * 0.2126 + delta[1] * 0.7152 + delta[2] * 0.0722)
+        samples++; difference += contrast
+        if (contrast >= 8) contrasted++
+        chromaShift += Math.max(...delta) - Math.min(...delta)
+      }
+      const material = internals.presentation3d.sculpted.waterMaterial
+      return {
+        dryImage, wetImage,
+        samples, sampledWaterZ: waterZ,
+        dryColor: dryColor.map(value => value / samples), wetColor: wetColor.map(value => value / samples),
+        meanContrast: difference / samples, visibleFraction: contrasted / samples, meanChromaShift: chromaShift / samples,
+        attenuationColor: material.attenuationColor.toArray(), materialColor: material.color.toArray(),
+        storedVolume: filled.diagnostics.stored, initialStoredVolume: filled.initialStoredVolume,
+        massError: filled.diagnostics.massError, wetCells: filled.diagnostics.wetCells,
+        minDepth: Math.min(...filled.depth), maxDepth: Math.max(...filled.depth),
+        particles: internals.particleGeometry.instanceCount,
+        model: view.canvas.dataset.waterModel, error: internals.renderer.getContext().getError(),
+      }
+    } finally {
+      view.dispose(); mount.remove()
+    }
+  }, { project, layout: { ...layout, activeCells: Array.from(layout.activeCells) } })
+  const { dryImage, wetImage, ...measurements } = result
+  await test.info().attach('basin-optics-dry', { body: Buffer.from(dryImage.split(',')[1], 'base64'), contentType: 'image/png' })
+  await test.info().attach('basin-optics-clear-water', { body: Buffer.from(wetImage.split(',')[1], 'base64'), contentType: 'image/png' })
+  await test.info().attach('basin-optics-measurements', { body: JSON.stringify(measurements, null, 2), contentType: 'application/json' })
+  // Report shader compilation failures directly before their missing pixels
+  // produce a less useful contrast failure.
+  expect(errors).toEqual([])
+  expect(result.error).toBe(0)
+  expect(result.model).toBe('hydraulic-basin')
+  expect(result.particles).toBe(0)
+  expect(result.wetCells).toBe(25)
+  expect(result.storedVolume).toBeCloseTo(result.initialStoredVolume, 10)
+  expect(result.massError).toBeLessThan(1e-8)
+  expect(result.minDepth).toBeCloseTo(BASIN_INITIAL_DEPTH, 6)
+  expect(result.maxDepth).toBeCloseTo(BASIN_INITIAL_DEPTH, 6)
+  expect(result.sampledWaterZ).toBeCloseTo(BASIN_FLOOR_Z + BASIN_INITIAL_DEPTH, 6)
+  expect(result.samples, 'broad interior on the actual liquid plane').toBeGreaterThan(60)
+  expect(result.meanContrast, 'clear water is visible against pale ceramic').toBeGreaterThanOrEqual(12)
+  expect(result.visibleFraction, 'contrast spans the wet body').toBeGreaterThanOrEqual(0.65)
+  expect(result.meanChromaShift, 'clear water retains the neutral backing hue').toBeLessThan(8)
+  expect(result.attenuationColor[0]).toBe(result.attenuationColor[1])
+  expect(result.attenuationColor[1]).toBe(result.attenuationColor[2])
+  expect(result.materialColor).toEqual([1, 1, 1])
 })

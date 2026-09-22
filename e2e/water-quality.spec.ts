@@ -1,11 +1,12 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test } from '@playwright/test'
 import {
   branchingWaterProject, fallingWaterProject, importWaterProject, installWorkerProbe,
   numberAttribute, openParticleWater, pauseWater, readWaterState, readWorkerProbe,
 } from './helpers/waterHarness'
 
-test('2D와 3D 전환이 같은 물 입자·Worker·canvas와 정지 상태를 유지한다', async ({ page }, testInfo) => {
-  test.setTimeout(90_000)
+test('2D와 3D 전환이 각 모드의 물 상태와 공유 Worker·canvas·일시정지를 유지한다', async ({ page }, testInfo) => {
+  test.setTimeout(e2eTimeout(90_000))
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
@@ -26,29 +27,31 @@ test('2D와 3D 전환이 같은 물 입자·Worker·canvas와 정지 상태를 �
   await expect(page.getByRole('button', { name: '3D 수면', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('button', { name: '2D 물 흐름', exact: true })).toHaveAttribute('aria-pressed', 'false')
   await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')
-  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'hydraulic-basin')
   await expect(stage).toHaveAttribute('data-phase', 'paused')
   await expect(stage).toHaveAttribute('data-inflow', 'disabled')
   await expect(canvas).toHaveAttribute('data-e2e-identity', 'shared-canvas')
-  expect(await readWaterState(stage)).toEqual(before)
+  await expect(stage).toHaveAttribute('data-particle-count', '0')
+  const basinBefore = await readWaterState(stage)
+  expect(basinBefore.particles).toBe(0)
+  expect(basinBefore.stored).toBeGreaterThan(0)
+  expect(basinBefore.time).toBe(0)
   expect(await readWorkerProbe(page)).toEqual(workers)
   const threeD = await canvas.screenshot()
   expect(threeD.equals(twoD)).toBe(false)
   await page.screenshot({ path: testInfo.outputPath('water-translucent-3d-desktop.png') })
   await page.waitForTimeout(320)
   expect((await canvas.screenshot()).equals(threeD)).toBe(true)
-  expect(await readWaterState(stage)).toEqual(before)
+  expect(await readWaterState(stage)).toEqual(basinBefore)
   await expect(page.locator('.water-status-copy, .water-success-cue')).toHaveCount(0)
   await page.getByRole('group', { name: '수면 표현' }).getByRole('button', { name: '역동' }).click()
   await expect(canvas).toHaveAttribute('data-e2e-identity', 'shared-canvas')
   await expect(stage).toHaveAttribute('data-water-surface-style', 'dynamic')
-  expect(await readWaterState(stage)).toEqual(before)
+  expect(await readWaterState(stage)).toEqual(basinBefore)
   await page.getByLabel('물 흐름 속도').selectOption('1')
   await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
-  await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(before.time + 400)
-  // A request sent before pause may already have advanced the worker while its
-  // snapshot was intentionally hidden. Measure stopped supply after that
-  // request settles, then require continued motion without new water.
+  await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(basinBefore.time + 400)
+  // Existing basin water keeps draining while the source is disabled.
   const stopped = await readWaterState(stage)
   await expect.poll(() => numberAttribute(stage, 'data-elapsed-ms')).toBeGreaterThan(stopped.time + 400)
   expect(await numberAttribute(stage, 'data-injected-volume')).toBe(stopped.injected)
@@ -63,14 +66,18 @@ test('2D와 3D 전환이 같은 물 입자·Worker·canvas와 정지 상태를 �
   await expect(stage).toHaveAttribute('data-phase', 'paused')
   await expect(stage).toHaveAttribute('data-inflow', 'enabled')
   await expect(canvas).toHaveAttribute('data-e2e-identity', 'shared-canvas')
-  expect(await readWaterState(stage)).toEqual(afterResume)
+  // Mode selection commits before its effect publishes the corresponding
+  // solver status. Await that publication and require the exact saved state.
+  await expect.poll(() => readWaterState(stage)).toEqual(before)
+  await page.getByRole('button', { name: '3D 수면', exact: true }).click()
+  await expect.poll(() => readWaterState(stage)).toEqual(afterResume)
   expect(await readWorkerProbe(page)).toEqual(workers)
   expect(afterResume.error).toBeLessThan(1e-5)
   expect(errors).toEqual([])
 })
 
-test('low와 high가 같은 입자 솔버 입력을 사용하고 3D 유출량을 보존한다', async ({ page }) => {
-  test.setTimeout(75_000)
+test('low와 high가 같은 미로 입력을 사용하고 3D 초기 물량·유입·유출을 보존한다', async ({ page }) => {
+  test.setTimeout(e2eTimeout(75_000))
   await installWorkerProbe(page)
   const layouts: string[] = []
   for (const quality of ['low', 'high'] as const) {
@@ -83,7 +90,9 @@ test('low와 high가 같은 입자 솔버 입력을 사용하고 3D 유출량을
     const state = await readWaterState(stage)
     Object.values(state).forEach(value => expect(Number.isFinite(value)).toBe(true))
     expect(state.discharged).toBeGreaterThan(0)
-    expect(Math.abs(state.injected - state.stored - state.discharged - state.escaped)).toBeLessThan(1e-5)
+    const initialVolume = Number(await stage.locator('canvas').getAttribute('data-basin-initial-volume'))
+    expect(initialVolume).toBeGreaterThan(0)
+    expect(Math.abs(initialVolume + state.injected - state.stored - state.discharged - state.escaped)).toBeLessThan(1e-5)
     expect(state.error).toBeLessThan(1e-5)
     const probe = await readWorkerProbe(page)
     expect(probe.fluidLayouts).toHaveLength(1)
@@ -97,7 +106,7 @@ test('low와 high가 같은 입자 솔버 입력을 사용하고 3D 유출량을
 })
 
 test('15. 모바일 2D·3D 전환과 반복 닫기가 하나의 Worker와 WebGL을 회수한다', async ({ page }, testInfo) => {
-  test.setTimeout(75_000)
+  test.setTimeout(e2eTimeout(75_000))
   await page.setViewportSize({ width: 360, height: 800 })
   await installWorkerProbe(page)
   await importWaterProject(page, fallingWaterProject, 'low', true)
@@ -116,7 +125,11 @@ test('15. 모바일 2D·3D 전환과 반복 닫기가 하나의 Worker와 WebGL�
     await page.getByRole('button', { name: '3D 수면', exact: true }).click()
     await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')
     await expect(canvas).toHaveAttribute('data-e2e-identity', 'mobile-shared')
-    expect(await readWaterState(stage)).toEqual(state)
+    await expect(stage).toHaveAttribute('data-particle-count', '0')
+    const basinState = await readWaterState(stage)
+    expect(basinState.particles).toBe(0)
+    expect(basinState.stored).toBeGreaterThan(0)
+    expect(basinState.time).toBe(0)
     expect(await readWorkerProbe(page)).toEqual(mounted)
     if (repeat === 0) await page.screenshot({ path: testInfo.outputPath('water-translucent-3d-mobile.png') })
     await expect(page.locator('.water-status-copy, .water-success-cue')).toHaveCount(0)
@@ -131,6 +144,8 @@ test('15. 모바일 2D·3D 전환과 반복 닫기가 하나의 Worker와 WebGL�
       return rect.width >= 44 && rect.height >= 44 && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
     }))
     expect(controlsFit).toBe(true)
+    await page.getByRole('button', { name: '2D 물 흐름', exact: true }).click()
+    await expect.poll(() => readWaterState(stage)).toEqual(state)
     await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
     await expect(stage).toHaveCount(0)
     const closed = await readWorkerProbe(page)

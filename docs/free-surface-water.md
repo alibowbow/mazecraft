@@ -1,21 +1,26 @@
-# Vertical free-surface water
+# Water Atelier: horizontal basin and vertical free surface
 
-## Sculpted Water Atelier (current 3D presentation)
+## Current 3D basin
 
-A fresh workspace opens **포슬린 가든**, a seeded 10×8 arrangement of broad connected basins and alternating ceramic peninsulas. Existing saved preferences remain intact. The full creator still offers six masks, independent 8–32 row/column counts, DFS/Prim/Kruskal, complexity and reproducible seeds; text, image and wall editing remain available. Saving and sharing preserve the actual graph.
+The default **포슬린 가든** is a seeded 10×10 single-level maze with interlocking U/C corridors, two islands and asymmetric chambers. Existing saved preferences, the six user-generated masks, 8–32 row/column controls, DFS/Prim/Kruskal, seeds, wall editing, save and share remain supported.
 
-`ceramicWalls.ts` unions the physical wall rectangles before rounding their outlines, avoiding box seams at T/L junctions. Rounded shoulders add up to .045 cells per side and a .032-cell crown bevel; thin entrance walls keep the source clearance. The solver collision footprints are unchanged. Tessellation adapts to larger networks.
+The ceramic wall height is 1.05 cells (previously .48), multiplied by the existing .55–1.75 height control. A .05 horizontal / .075 vertical crown bevel and .38 concave corner radius soften the unified wall mesh. Interior floor elevation is zero; only the small inlet/outlet shoulders remain. There are no automatically stacked interior tiers.
 
-`terraceElevation.ts` supplies one CPU/GLSL profile to the floor, walls, water, inlet and shadow materials. It creates up to four flat tiers with narrow spill slopes. Static triangles are split exactly at tier seams; the body bottom stays grounded while the wall-height control changes only a shader uniform. Mask holes and disconnected islands remain represented.
+`basinSimulation.ts` reuses the conservative hydraulic solver with a genuinely horizontal network: connected cell volumes, depth, head, portal discharge and a raised outlet sill. The source-connected vessel starts with .42 cells of real water, included in initial mass accounting. Turning off supply drains the vessel toward its .24-cell outlet sill. Source throttling leaves freeboard; exceptional overflow is recorded in the mass balance. This is a finite-volume basin model, not a volumetric splash/CFD solver.
 
-The water mesh uses the accepted particle field, a .10-cell surface film, separately controlled optical thickness, neutral clear-water attenuation, restrained ripple normals and a cached periodic caustic texture on the submerged ceramic floor. It never paints water into dry cells or across closed passages. Every animated visual uses accepted simulation time. Appearance edits and 2D/3D switching preserve the current fluid state.
+`basinField.ts` uploads depth, velocity and portal bits; surface interpolation cannot borrow a neighboring depth through a closed wall. Water height is the actual ceramic top plane (z=0) plus computed depth. Physical transmission uses that depth for absorption; fine moving normals and cached caustics stay on the accepted simulation clock. Copper supply and outlet sheets use actual source/outlet rates. They stop with the simulation, and supply visibility updates immediately when switched off.
 
-`studioStage.ts` builds a fine mineral-grain tabletop, a soft botanical shadow decal and broad photographic reflection panels locally, without downloads. Glazed walls and a single deeper ceramic body replace the stacked-board appearance. Shadows are cached and invalidated when the light or wall height changes; the new material and environment work still adds GPU cost.
+2D retains the existing falling-particle simulation. Each mode keeps its own state and clock while inactive; pause, speed, reset and source controls act consistently on the active mode. Switching modes is a switch of physical models, not a rotation of the same water state. The inactive particle worker and particle reconstruction passes do not keep running behind the 3D scene.
 
-**Simulation scope:** the existing vertical 2D gravity solver still drives this 3D presentation. The terraces are a consistent visual coordinate mapping, not a volumetric 3D fluid simulation or a horizontal basin-level solver. Consequently, upper basins can remain partially dry; this is not the continuously full, offline-rendered water in the concept art. No smartphone frame-rate claim is made. Historical performance measurements below refer to their original revisions.
+The camera frames the actual vessel rather than empty particle-catcher bounds. The initial tuning tab is water; the full creator remains one click away. `studioStage.ts` and `studioBotanicals.ts` add a mineral tabletop, instanced olive/rosemary and stones outside the vessel, and photographic reflection panels. Static shadows refresh only when their dependencies change.
 
+Local verification: production build, type checking, conservative basin tests, runtime pause/reset/mode tests and the full unit suite. `Basin visual review` captures the actual desktop/mobile app and checks GPU shader errors, initial stored water, height controls, pause and drainage. A successful build alone does not establish visual parity with the concept. Smartphone frame rate is not measured.
 
-The default **물 흐름** view simulates a vertical maze cross-section. Each water particle carries a fixed area. Gravity, area-normalized density constraints, viscosity and swept wall sliding produce falling jets, branches and pools within a maze cell. No solution path, arrival schedule or cell-fill animation drives the water boundary.
+## Vertical 2D implementation and historical measurements
+
+The following describes the vertical particle model. References below to its earlier 3D presentation and historical timings predate the horizontal basin implementation above.
+
+The **2D 물 흐름** view simulates a vertical maze cross-section. Each water particle carries a fixed area. Gravity, area-normalized density constraints, viscosity and swept wall sliding produce falling jets, branches and pools within a maze cell. No solution path, arrival schedule or cell-fill animation drives the water boundary.
 
 - `freeSurface/layout.ts` builds symmetric solid AABBs from the actual maze, a tapered top funnel and a bottom outlet. The funnel's collision walls and visible bowl share the same dimensions; water enters above its mouth and falls through its neck. Inactive cells remain inaccessible. The two visual endpoints use the topmost/bottommost active row.
 - `solver.ts` integrates at 120 Hz independently of display quality. A spatial hash bounds neighbour searches; swept AABB movement prevents thin-wall tunnelling. Three position-based density projections oppose compression using each particle's area. This remains an approximate visual liquid, not calibrated CFD or a volumetric 3D incompressible solver.

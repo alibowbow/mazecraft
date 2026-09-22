@@ -82,6 +82,10 @@ interface Toast {
 const service = new ProjectService(localProjectRepository)
 const LAST_WATER_PROJECT_KEY = 'mazecraft.last-water-project-id'
 
+function setLibraryLocation(open: boolean): void {
+  history.replaceState(null, '', location.pathname + location.search + (open ? '#/library' : ''))
+}
+
 function rememberWaterSelection(id: string): void {
   try { localStorage.setItem(LAST_WATER_PROJECT_KEY, id) } catch { /* Optional navigation preference. */ }
 }
@@ -224,6 +228,16 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    const openLibraryFromLocation = () => {
+      if (location.hash !== '#/library') return
+      setRoute('home')
+      void refreshProjects().catch(() => toast('저장한 미로를 불러오지 못했습니다.', true))
+    }
+    window.addEventListener('hashchange', openLibraryFromLocation)
+    return () => window.removeEventListener('hashchange', openLibraryFromLocation)
+  }, [refreshProjects, toast])
+
+  useEffect(() => {
     let active = true
     void (async () => {
       try {
@@ -255,10 +269,12 @@ export function App() {
         setProject(recovered)
         if (isLastWaterSelection(recovered.id)) setWaterProject(recovered)
         dispatch({ type: 'OPEN' })
-        setRoute('water')
-      } else {
-        setRoute('water')
       }
+      // Restore a classic editor project in its editor. Mounting the default
+      // water preset here would replace the recovered project through the
+      // WaterStudio onProjectChange effect before the user could resume it.
+      const recoveredRoute = recovered && !isLastWaterSelection(recovered.id) ? 'studio' : 'water'
+      setRoute(location.hash === '#/library' ? 'home' : recoveredRoute)
     })()
     return () => {
       active = false
@@ -295,6 +311,7 @@ export function App() {
     setProject(next)
     setGenerationTrace([])
     dispatch({ type: 'OPEN' })
+    setLibraryLocation(false)
     setRoute('studio')
   }
 
@@ -303,6 +320,7 @@ export function App() {
     setGenerationTrace([])
     updateSettings({ lastProjectId: next.id })
     dispatch({ type: 'OPEN' })
+    setLibraryLocation(false)
     setRoute('studio')
   }
 
@@ -313,6 +331,7 @@ export function App() {
     updateSettings({ lastProjectId: next.id })
     rememberWaterSelection(next.id)
     dispatch({ type: 'OPEN' })
+    setLibraryLocation(false)
     setRoute('water')
   }
 
@@ -483,7 +502,7 @@ export function App() {
           <WaterStudio
             initialProject={waterProject}
             onProjectChange={rememberWaterProject}
-            onLibrary={() => { setWaterProject(project); history.replaceState(null, '', location.pathname + location.search); void refreshProjects(); setRoute('home') }}
+            onLibrary={() => { setWaterProject(project); setLibraryLocation(true); void refreshProjects(); setRoute('home') }}
             onEdit={(next) => { void editWaterProject(next) }}
             onSave={async (next) => { await service.save(next, false); rememberWaterSelection(next.id); await refreshProjects(); toast('미로를 저장했습니다.') }}
             onShare={(next) => { setProject(next); setShareMode('water'); setShareOpen(true) }}
@@ -492,7 +511,7 @@ export function App() {
       )}
       {route === 'home' && (
         <>
-        <div className="water-collection-back"><button onClick={() => setRoute('water')}>← 물 스튜디오</button></div>
+        <div className="water-collection-back"><button onClick={() => { setLibraryLocation(false); setRoute('water') }}>← 물 스튜디오</button></div>
         <HomeScreen
           projects={projects}
           onCreate={(template) => void createProject(template)}

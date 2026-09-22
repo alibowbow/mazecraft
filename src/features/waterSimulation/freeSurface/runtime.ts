@@ -4,6 +4,7 @@ import type { ResolvedWaterQuality, WaterPlaybackStatus, WaterRuntimeMetrics } f
 import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
+import { BasinSimulation, type BasinSnapshot } from './basinSimulation'
 import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers } from './types'
 import type { WaterAppearance } from './appearance'
 import type { WaterLook } from './lookdev'
@@ -14,10 +15,18 @@ export interface FreeSurfaceStatus extends WaterPlaybackStatus {
   saturated: boolean
 }
 
+const EMPTY_PARTICLE_DIAGNOSTICS: FluidDiagnostics = {
+  time: 0, count: 0, injected: 0, discharged: 0, escaped: 0, stored: 0, massError: 0,
+  maxVelocity: 0, wetCells: 0, reachedExit: false, outletRate: 0, saturated: false,
+}
+
 /** One bounded worker request in flight. Wall-clock lag never enlarges dt. */
 export class FreeSurfaceRuntime {
   private readonly layout
   private readonly renderer: FreeSurfaceRenderer
+  private readonly basin: BasinSimulation
+  private basinSnapshot: BasinSnapshot
+  private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private worker: Worker | null = null
   private fallback: FreeSurfaceSolver | null = null
   private diagnostics: FluidDiagnostics | null = null
@@ -30,6 +39,7 @@ export class FreeSurfaceRuntime {
   private generation = 0
   private busy = true
   private ready = false
+  private announcedReady = false
   private disposed = false
   private paused = false
   private speed = 1
@@ -54,7 +64,10 @@ export class FreeSurfaceRuntime {
     _reducedMotion = false,
   ) {
     this.layout = buildFluidLayout(project)
+    this.basin = new BasinSimulation(project, this.layout)
+    this.basinSnapshot = this.basin.snapshot()
     this.renderer = new FreeSurfaceRenderer(mount, this.layout, quality)
+    this.renderer.setBasinSnapshot(this.basinSnapshot)
     this.renderer.setSurfaceStyle(style)
     try {
       if (typeof Worker === 'undefined') throw new Error('Worker unavailable')
@@ -115,7 +128,7 @@ export class FreeSurfaceRuntime {
 
   private failWorker() {
     if (this.disposed) return
-    if (!this.ready) { this.startFallback(); return }
+    if (!this.ready || this.viewMode === 'surface-3d') { this.startFallback(); return }
     this.worker?.terminate()
     this.worker = null
     this.paused = true
@@ -128,13 +141,24 @@ export class FreeSurfaceRuntime {
     if (this.worker) this.recycle(snapshot)
     if (!this.ready) {
       this.ready = true
-      this.lastAdvance = performance.now()
+      if (this.viewMode === 'free-surface') this.lastAdvance = performance.now()
       clearTimeout(this.watchdog)
-      this.onReady()
+      this.announceReady()
       this.publish(snapshot.diagnostics)
     } else if (performance.now() - this.lastPublish >= 100) {
       this.publish(snapshot.diagnostics)
     }
+  }
+
+  private announceReady() {
+    if (this.announcedReady) return
+    this.announcedReady = true
+    this.onReady()
+  }
+
+  private publishCurrent() {
+    if (this.viewMode === 'surface-3d') this.publish(this.basinSnapshot.diagnostics)
+    else this.publish(this.diagnostics ?? EMPTY_PARTICLE_DIAGNOSTICS)
   }
 
   private recycle(snapshot: FluidSnapshotBuffers) {
@@ -149,22 +173,25 @@ export class FreeSurfaceRuntime {
   }
 
   private publish(d: FluidDiagnostics) {
+    const basinMode = this.viewMode === 'surface-3d'
+    if (basinMode) d = this.basinSnapshot.diagnostics
+    const availableVolume = d.injected + (basinMode ? this.basinSnapshot.initialStoredVolume : 0)
     this.lastPublish = performance.now()
     this.onStatus({
       elapsedMs: d.time * 1000, simulationTime: d.time,
       filledCells: d.wetCells, totalCells: this.layout.activeCellCount,
       reachedExit: d.reachedExit, complete: false,
       inletState: this.inflow ? 'steady' : 'off',
-      inletVisible: this.inflow > 0 && d.count > 0,
+      inletVisible: this.inflow > 0 && (basinMode ? this.basinSnapshot.sourceRate > 0 : d.count > 0),
       outletVisible: d.reachedExit && d.outletRate > 0,
       activeFlowEdgeCount: 0,
       cumulativeInjectedVolume: d.injected,
       cumulativeOutletVolume: d.discharged,
       currentStoredVolume: d.stored,
       absoluteMassError: d.massError,
-      relativeMassError: d.injected ? d.massError / d.injected : 0,
+      relativeMassError: availableVolume ? d.massError / availableVolume : 0,
       maxVelocity: d.maxVelocity, outletDischarge: d.outletRate,
-      particleCount: d.count, escapedVolume: d.escaped, saturated: d.saturated,
+      particleCount: basinMode ? 0 : d.count, escapedVolume: d.escaped, saturated: d.saturated,
     })
     this.onMetrics({
       atlasWidth: this.renderer.canvas.width, atlasHeight: this.renderer.canvas.height,
@@ -173,7 +200,7 @@ export class FreeSurfaceRuntime {
       inletDropHeight: this.layout.topY - this.layout.inletY,
       inletContactGap: 0, outletDropHeight: this.layout.maxY - this.layout.outletY,
       physicsStepHz: 120, snapshotHz: 60,
-      solverMode: this.worker ? 'worker' : 'main-thread', waveBands: 0, foamMode: 'procedural',
+      solverMode: !basinMode && this.worker ? 'worker' : 'main-thread', waveBands: basinMode ? 3 : 0, foamMode: 'procedural',
     })
   }
 
@@ -183,6 +210,25 @@ export class FreeSurfaceRuntime {
     // Preserve ordinary slow frames, but bound catch-up after a long stall.
     const delta = this.lastAdvance === null ? 0 : Math.min(0.25, Math.max(0, (now - this.lastAdvance) / 1000))
     this.lastAdvance = now
+    // A horizontal basin has its own conserved cell volumes. It must not wait
+    // for the unrelated falling-particle worker, or inherit its sparse mask.
+    // Inactive modes keep their state and resume without hidden-time catch-up.
+    if (this.viewMode === 'surface-3d') {
+      if (this.paused || document.hidden) return
+      this.debt = Math.min(0.5, this.debt + delta * this.speed)
+      let seconds = Math.floor(this.debt * 120 + 1e-7) / 120
+      this.debt -= seconds
+      if (seconds <= 0) return
+      while (seconds > 1e-8) {
+        const batch = Math.min(0.25, seconds)
+        this.basin.advance(batch, this.inflow)
+        seconds -= batch
+      }
+      this.basinSnapshot = this.basin.snapshot()
+      this.renderer.setBasinSnapshot(this.basinSnapshot)
+      if (now - this.lastPublish >= 100) this.publish(this.basinSnapshot.diagnostics)
+      return
+    }
     if (this.ready && !this.paused && !document.hidden) {
       this.debt = Math.min(0.5, this.debt + delta * this.speed)
       const steps = Math.min(this.fallback ? 4 : 12, Math.floor(this.debt * 120 + 1e-7))
@@ -216,7 +262,7 @@ export class FreeSurfaceRuntime {
   private tick = () => {
     if (this.disposed) return
     const now = performance.now()
-    if (this.ready && !this.paused && !document.hidden) this.displayRequested = true
+    if (this.viewMode === 'free-surface' && this.ready && !this.paused && !document.hidden) this.displayRequested = true
     this.advance(now)
     if (this.pendingSnapshot && !this.paused && !document.hidden) {
       const snapshot = this.pendingSnapshot
@@ -242,7 +288,7 @@ export class FreeSurfaceRuntime {
     this.debt = 0
     this.lastAdvance = performance.now()
     this.releasePending()
-    if (this.diagnostics) this.publish(this.diagnostics)
+    this.publishCurrent()
   }
   setInflow(value: boolean) {
     this.inflowEnabled = value
@@ -250,7 +296,7 @@ export class FreeSurfaceRuntime {
     this.debt = 0
     this.lastAdvance = performance.now()
     this.renderer.setInflow(value)
-    if (this.diagnostics) this.publish(this.diagnostics)
+    this.publishCurrent()
   }
   setInflowRate(value: number) {
     if (!Number.isFinite(value)) return
@@ -258,17 +304,34 @@ export class FreeSurfaceRuntime {
     this.inflow = this.inflowEnabled ? this.inflowRate : 0
     this.debt = 0
     this.lastAdvance = performance.now()
-    if (this.diagnostics) this.publish(this.diagnostics)
+    this.publishCurrent()
   }
   setViewMode(mode: 'free-surface' | 'surface-3d') {
+    if (this.viewMode !== mode) {
+      this.viewMode = mode
+      this.debt = 0
+      this.lastAdvance = performance.now()
+      this.displayRequested = false
+      this.refineAfterCatchUp = false
+    }
     this.renderer.setViewMode(mode)
-    if (this.diagnostics) this.publish(this.diagnostics)
+    if (mode === 'surface-3d') {
+      this.announceReady()
+      this.publish(this.basinSnapshot.diagnostics)
+    } else this.publishCurrent()
   }
   setSurfaceStyle(style: WaterSurfaceStyle) {
     this.renderer.setSurfaceStyle(style)
   }
   setAppearance(appearance: WaterAppearance) { this.renderer.setAppearance(appearance) }
-  setLook(look: Partial<WaterLook>) { this.renderer.setLook(look) }
+  setLook(look: Partial<WaterLook>) {
+    if (typeof look.wallHeight === 'number' && Number.isFinite(look.wallHeight)) {
+      this.basin.setWallHeight(look.wallHeight)
+      this.basinSnapshot = this.basin.snapshot()
+      this.renderer.setBasinSnapshot(this.basinSnapshot)
+    }
+    this.renderer.setLook(look)
+  }
   resetCamera() { this.renderer.resetCamera() }
   zoomCamera(factor: number) { this.renderer.zoomCamera(factor) }
   restart() {
@@ -281,11 +344,20 @@ export class FreeSurfaceRuntime {
     this.lastAdvance = null
     this.lastPublish = 0
     this.ready = false
+    this.announcedReady = false
     this.displayRequested = false
     this.refineAfterCatchUp = false
     this.workerDirty = false
     this.diagnostics = null
     this.releasePending()
+    this.basin.reset()
+    this.basinSnapshot = this.basin.snapshot()
+    this.renderer.setBasinSnapshot(this.basinSnapshot)
+    if (this.viewMode === 'surface-3d') {
+      this.lastAdvance = performance.now()
+      this.announceReady()
+      this.publish(this.basinSnapshot.diagnostics)
+    }
     if (this.worker) {
       this.busy = true
       const buffers = this.recycledBuffers.pop()

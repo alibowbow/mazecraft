@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test } from '@playwright/test'
 import {
   branchingWaterProject, importWaterProject, numberAttribute, openParticleWater,
@@ -5,7 +6,7 @@ import {
 } from './helpers/waterHarness'
 
 test('화면이 8fps로 느려져도 물리 시간을 버리지 않고 미로에 물을 채운다', async ({ page }) => {
-  test.setTimeout(45_000)
+  test.setTimeout(e2eTimeout(45_000))
   await page.addInitScript(() => {
     const request = window.requestAnimationFrame.bind(window)
     const cancel = window.cancelAnimationFrame.bind(window)

@@ -1,11 +1,13 @@
 import * as THREE from 'three'
 import type { FluidLayout } from './types'
 import { SurfaceTrackball } from './camera3d'
-import { ceramicWallGeometry } from './ceramicWalls'
+import { ceramicBasinWallGeometry } from './ceramicWalls'
 import { applyCeramicGlaze } from './ceramicGlaze'
-import { createTerraceElevation, createTerraceUniforms, splitTerraceGeometry, warpTerraceGeometry, terraceElevationSlopeAt, type TerraceElevationProfile } from './terraceElevation'
+import { createTerraceElevation, createTerraceUniforms, splitTerraceGeometry, terraceElevationSlopeAt, type TerraceElevationProfile } from './terraceElevation'
 import { StudioStage, createAtelierEnvironment } from './studioStage'
 import { SculptedSurface } from './sculptedSurface'
+import type { BasinSnapshot } from './basinSimulation'
+import { BasinFixtures } from './basinFixtures'
 import type { WaterAppearance } from './appearance'
 import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, WATER_LIGHTS, type WaterLook } from './lookdev'
 
@@ -34,6 +36,8 @@ export class FreeSurfacePresentation3D {
   private readonly centerY: number
   private readonly boardWidth: number
   private readonly boardHeight: number
+  private readonly sculptureWidth: number
+  private readonly sculptureHeight: number
   private readonly distance: number
   private readonly screenOffset = new THREE.Vector3()
   private readonly wallTop = new THREE.MeshPhysicalMaterial({ clearcoat: 0.8, clearcoatRoughness: 0.16 })
@@ -48,6 +52,7 @@ export class FreeSurfacePresentation3D {
   private readonly wallMesh: THREE.Mesh
   private readonly wallUniforms: Record<string, THREE.IUniform>
   private readonly terrace: TerraceElevationProfile
+  private readonly fixtures: BasinFixtures
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
   private disposed = false
 
@@ -57,12 +62,16 @@ export class FreeSurfacePresentation3D {
     if (renderer) {
       this.environment = createAtelierEnvironment(renderer)
       this.scene.environment = this.environment.texture
-      this.scene.environmentIntensity = 0.42
+      this.scene.environmentIntensity = 0.55
     }
     this.boardWidth = layout.maxX - layout.minX + 2 * SURFACE_FIELD_PADDING
     this.boardHeight = layout.maxY - layout.minY + 2 * SURFACE_FIELD_PADDING
-    this.centerX = (layout.minX + layout.maxX) * 0.5
-    this.centerY = -(layout.minY + layout.maxY) * 0.5
+    const activeColumns = Array.from(layout.activeCells, (active, i) => active ? i % layout.cols : -1).filter(col => col >= 0)
+    const left = Math.min(...activeColumns), right = Math.max(...activeColumns) + 1
+    this.sculptureWidth = right - left + 0.7
+    this.sculptureHeight = layout.bottomY - layout.topY + 1.7
+    this.centerX = (left + right) * 0.5
+    this.centerY = -(layout.topY + layout.bottomY) * 0.5 + 0.25
     this.distance = Math.hypot(this.boardWidth, this.boardHeight) * 1.6 + 4
     this.content.name = 'free-surface-3d-board'
     this.scene.add(this.content)
@@ -76,7 +85,7 @@ export class FreeSurfacePresentation3D {
     // Union the entire network before rounding it: each T/L/cross junction is
     // part of one ceramic surface, with no intersecting boxes or cap seams.
     const terrace = this.terrace = createTerraceElevation(layout)
-    const sourceWallGeometry = ceramicWallGeometry(layout.walls)
+    const sourceWallGeometry = ceramicBasinWallGeometry(layout)
     const wallGeometry = splitTerraceGeometry(sourceWallGeometry, terrace)
     sourceWallGeometry.dispose()
     const wallPositions = wallGeometry.getAttribute('position')
@@ -107,16 +116,15 @@ export class FreeSurfacePresentation3D {
     this.geometries.push(wallGeometry)
     this.materials.push(this.wallTop, this.wallSide, depthMaterial)
 
-    this.stage = new StudioStage(this.centerX, this.centerY, this.boardWidth, this.boardHeight)
+    this.fixtures = new BasinFixtures(layout)
+    this.content.add(this.fixtures.group)
+    this.stage = new StudioStage(this.centerX, this.centerY, this.sculptureWidth, this.sculptureHeight)
     this.scene.add(this.stage.group)
     this.key.castShadow = true
     this.key.shadow.mapSize.set(2048, 2048)
-    const extent = Math.max(this.boardWidth, this.boardHeight) * 0.7
-    Object.assign(this.key.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 0.1, far: 100 })
-    this.key.shadow.camera.updateProjectionMatrix()
-    this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.025
-    this.key.shadow.radius = 16
-    this.key.shadow.blurSamples = 8
+    this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.01
+    this.key.shadow.radius = 2.5
+    this.key.shadow.blurSamples = 6
     this.key.shadow.autoUpdate = false
 
     this.key.target.position.set(this.centerX, this.centerY, 0)
@@ -139,65 +147,67 @@ export class FreeSurfacePresentation3D {
     this.wallTop.metalness = palette.metalness
     this.wallSide.roughness = Math.min(0.85, palette.roughness + 0.04)
     this.wallSide.metalness = palette.metalness * 0.5
-    this.wallTop.clearcoat = this.look.theme === 'glacier' ? 0.7 : this.look.theme === 'terrace' ? 0.05 : 0.8
+    const mineral = this.look.theme === 'terrace' || this.look.theme === 'basalt'
+    this.wallTop.clearcoat = mineral ? 0.08 : 1
+    this.wallSide.clearcoat = mineral ? 0.08 : 0.9
+    this.wallTop.clearcoatRoughness = 0.10
+    this.wallSide.clearcoatRoughness = 0.13
+    this.wallTop.envMapIntensity = 1.1
+    this.wallSide.envMapIntensity = 0.95
     this.sculpted.setLook(this.look)
+    this.fixtures.setWallHeight(this.look.wallHeight)
     this.stage.material.color.set(palette.background)
     this.key.shadow.needsUpdate = true
     if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     this.ambient.color.set(lighting.sky)
     this.ambient.groundColor.set(lighting.ground)
-    this.ambient.intensity = lighting.ambient * 0.28
+    this.ambient.intensity = lighting.ambient * 0.23
     this.key.color.set(lighting.color)
-    this.key.intensity = lighting.intensity * 1.05
-    this.key.position.set(this.centerX + lighting.direction[0] * 12, this.centerY + lighting.direction[1] * 12, lighting.direction[2] * Math.max(18, this.boardHeight))
+    this.key.intensity = lighting.intensity * 0.95
+    const lightDistance = Math.max(16, this.sculptureHeight * 1.4)
+    this.key.position.set(this.centerX + lighting.direction[0] * lightDistance, this.centerY + lighting.direction[1] * lightDistance, lighting.direction[2] * lightDistance)
     this.fill.color.set(lighting.fill)
-    this.fill.intensity = 0.28
+    this.fill.intensity = 0.11
+    this.fitShadowCamera()
     // Only uniforms change on look edits; geometry and the fluid field stay
     // untouched, including when the height slider moves continuously.
     this.wallUniforms.uCeramicHeight.value = this.look.wallHeight
     this.wallUniforms.uCeramicMineral.value = this.look.theme === 'terrace' || this.look.theme === 'basalt' ? 1.0 : 0.55
   }
 
-  setAppearance(appearance: WaterAppearance): void { this.sculpted.setAppearance(appearance) }
-  updateWater(time: number, style: number): void { this.sculpted.update(time, style) }
-  addFunnel(source: THREE.Group): void {
-    source.updateMatrixWorld(true)
-    const funnel = source.clone(true)
-    funnel.name = 'ceramic-inlet-reservoir'
-    funnel.traverse(object => {
-      if (!(object instanceof THREE.Mesh)) return
-      // Clone before warping: the shared 2D accessory keeps its original XY.
-      const sourceGeometry = object.geometry.clone()
-      const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material]
-      const rail = sourceMaterials.some(material => (material.userData.originalColor ?? (material as THREE.MeshBasicMaterial).color?.getHexString()) === 'afc7ce')
-      if (rail) sourceGeometry.scale(1, 1, 3.2)
-      sourceGeometry.applyMatrix4(object.matrix)
-      const geometry = warpTerraceGeometry(sourceGeometry, this.terrace)
-      sourceGeometry.dispose()
-      object.geometry = geometry
-      object.position.set(0, 0, 0); object.rotation.set(0, 0, 0); object.scale.set(1, 1, 1)
-      this.geometries.push(geometry)
-      const convert = (original: THREE.Material) => {
-        const basic = original as THREE.MeshBasicMaterial
-        const bowl = basic.transparent && Math.abs(basic.opacity - 0.055) < 0.001
-        const isCollar = basic.transparent && (basic.opacity < 0.05 || basic.opacity === 0.35)
-        const nozzle = ['9fadb0', '71848b'].includes(basic.userData.originalColor ?? basic.color.getHexString())
-        const material = new THREE.MeshPhysicalMaterial({
-          color: nozzle ? '#c98668' : bowl ? '#f3e8d7' : basic.transparent ? basic.color : '#f3e7d2',
-          roughness: nozzle ? 0.29 : 0.22, metalness: nozzle ? 0.28 : 0,
-          transparent: basic.transparent && !bowl,
-          opacity: isCollar ? 0.018 : bowl ? 1 : basic.opacity,
-          depthWrite: bowl || basic.depthWrite, side: basic.side,
-          clearcoat: 0.65, clearcoatRoughness: 0.16, envMapIntensity: 0.7,
-        })
-        this.materials.push(material); return material
-      }
-      object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material)
-      object.castShadow = !Array.isArray(object.material) && !object.material.transparent
-      object.receiveShadow = true
+  private fitShadowCamera(): void {
+    // Fit the sculpture and its border plants in light space. The solver's
+    // distant particle capture area wastes shadow texels on empty ground.
+    // Include the highest wall/nozzle setting so a height edit stays stable.
+    this.key.updateMatrixWorld()
+    this.key.target.updateMatrixWorld()
+    this.key.shadow.updateMatrices(this.key)
+    const camera = this.key.shadow.camera
+    const bounds = new THREE.Box3()
+    const point = new THREE.Vector3()
+    for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-0.72, 3.2]) {
+      point.set(this.centerX + x * (this.sculptureWidth * 0.5 + 1.1), this.centerY + y * (this.sculptureHeight * 0.5 + 0.7), z)
+      bounds.expandByPoint(point.applyMatrix4(camera.matrixWorldInverse))
+    }
+    Object.assign(camera, {
+      left: bounds.min.x - 0.6, right: bounds.max.x + 0.6,
+      bottom: bounds.min.y - 0.6, top: bounds.max.y + 0.6,
+      near: Math.max(0.1, -bounds.max.z - 1), far: -bounds.min.z + 2,
     })
-    this.content.add(funnel)
+    camera.updateProjectionMatrix()
   }
+
+  setAppearance(appearance: WaterAppearance): void { this.sculpted.setAppearance(appearance); this.fixtures.setAppearance(appearance) }
+  setInflow(enabled: boolean): void { this.fixtures.setInflow(enabled) }
+  setBasinSnapshot(snapshot: BasinSnapshot): void {
+    if (this.disposed) return
+    this.sculpted.setBasinSnapshot(snapshot)
+    this.fixtures.update(snapshot)
+  }
+  updateWater(time: number, style: number): void { this.sculpted.update(time, style) }
+  // The 2D funnel remains owned by the particle renderer. The horizontal
+  // basin has its own raised copper supply and a real retaining outlet sill.
+  addFunnel(_source: THREE.Group): void {}
 
   updateView(widthPx: number, heightPx: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
     if (this.disposed) return
@@ -205,9 +215,9 @@ export class FreeSurfacePresentation3D {
     // Keep the original front-view framing at every orbit angle. Refitting
     // rotated bounds on each touch made rotation unexpectedly zoom the board.
     // Corners can leave the viewport during free roll; zoom remains explicit.
-    const width = this.boardWidth + 0.60
-    const height = this.boardHeight + 0.60
-    const depth = 2.25
+    const width = this.sculptureWidth + 0.45
+    const height = this.sculptureHeight + 0.45
+    const depth = 1.65
     const basis = new THREE.Matrix4().makeRotationFromQuaternion(new SurfaceTrackball().orientation.invert()).elements
     const frontWidth = Math.abs(basis[0]) * width + Math.abs(basis[4]) * height + Math.abs(basis[8]) * depth
     const frontHeight = Math.abs(basis[1]) * width + Math.abs(basis[5]) * height + Math.abs(basis[9]) * depth
@@ -240,7 +250,7 @@ export class FreeSurfacePresentation3D {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.sculpted.dispose(); this.stage.dispose(); this.environment?.dispose(); this.key.shadow.dispose()
+    this.sculpted.dispose(); this.fixtures.dispose(); this.stage.dispose(); this.environment?.dispose(); this.key.shadow.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     // The external field texture and accessories can also belong to the 2D

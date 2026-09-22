@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -111,7 +112,7 @@ async function openGridSettings(page: Page) {
 test('15. 모바일에서 가로·세로 셀을 순차 입력해 해당 크기의 미로를 다시 생성한다', async ({
   page,
 }) => {
-  test.setTimeout(45_000)
+  test.setTimeout(e2eTimeout(45_000))
   await openGridSettings(page)
 
   const columns = page.getByLabel('가로 셀', { exact: true })
@@ -185,7 +186,7 @@ test('15.1 모바일 크기 초안은 취소·보정할 수 있고 생성 전에
 test('15.seed-a Seed를 비워 두면 클릭할 때마다 새 Seed와 새 미로를 만든다', async ({
   page,
 }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   await openGridSettings(page)
 
   const seedInput = page.getByRole('textbox', { name: 'Seed', exact: true })
@@ -223,7 +224,7 @@ test('15.seed-a Seed를 비워 두면 클릭할 때마다 새 Seed와 새 미로
 })
 
 test('15.seed-b Seed를 직접 입력한 경우에만 같은 미로를 재현한다', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   await openGridSettings(page)
 
   const seedInput = page.getByRole('textbox', { name: 'Seed', exact: true })

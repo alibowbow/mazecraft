@@ -12,7 +12,7 @@ export class SurfaceTrackball {
   }
 
   reset(): void {
-    const view = new THREE.Matrix4().lookAt(new THREE.Vector3(0.85, -1.05, 1.35), new THREE.Vector3(), new THREE.Vector3(0, 0, 1))
+    const view = new THREE.Matrix4().lookAt(new THREE.Vector3(0.85, -1.05, 1.65), new THREE.Vector3(), new THREE.Vector3(0, 0, 1))
     this.orientation.setFromRotationMatrix(view)
   }
 
