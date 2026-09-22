@@ -375,7 +375,7 @@ export class FreeSurfaceRenderer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.setClearColor(0xffefdf, 1)
     this.renderer.info.autoReset = false
-    this.renderer.shadowMap.type = THREE.VSMShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     this.renderer.shadowMap.autoUpdate = false
     this.canvas = this.renderer.domElement
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { StudioShadows, orientStudioEnvironment } from './studioLighting'
 import type { FluidLayout } from './types'
 import { SurfaceTrackball } from './camera3d'
 import { ceramicBasinWallGeometry, ceramicWallGeometry } from './ceramicWalls'
@@ -42,6 +43,7 @@ export class FreeSurfacePresentation3D {
   private readonly screenOffset = new THREE.Vector3()
   private readonly wallTop = new THREE.MeshPhysicalMaterial({ clearcoat: 0.8, clearcoatRoughness: 0.16 })
   private readonly wallSide = new THREE.MeshPhysicalMaterial({ clearcoat: 0.7, clearcoatRoughness: 0.18 })
+  private readonly shadows = new StudioShadows()
   private readonly stage: StudioStage
   private readonly sculpted: SculptedSurface
   private readonly environment: THREE.WebGLRenderTarget | null
@@ -123,9 +125,8 @@ export class FreeSurfacePresentation3D {
     this.ambient.position.set(0, 0, 1)
     this.key.castShadow = true
     this.key.shadow.mapSize.set(2048, 2048)
-    this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.01
+    this.key.shadow.bias = -0.00015; this.key.shadow.normalBias = 0.018
     this.key.shadow.radius = 2.5
-    this.key.shadow.blurSamples = 6
     this.key.shadow.autoUpdate = false
 
     this.key.target.position.set(this.centerX, this.centerY, 0)
@@ -139,6 +140,7 @@ export class FreeSurfacePresentation3D {
         if (material instanceof THREE.MeshStandardMaterial) material.envMap = this.environment!.texture
       }
     })
+    this.shadows.apply(this.scene)
     this.setLook(this.look)
     this.updateView(1, 1, 1, 0, 0, new SurfaceTrackball().orientation)
   }
@@ -173,22 +175,24 @@ export class FreeSurfacePresentation3D {
     this.wallSide.clearcoat = mineral ? 0.08 : 0.9
     this.wallTop.clearcoatRoughness = 0.10
     this.wallSide.clearcoatRoughness = 0.13
-    this.wallTop.envMapIntensity = 0.75
-    this.wallSide.envMapIntensity = 0.65
+    this.wallTop.envMapIntensity = 1.15
+    this.wallSide.envMapIntensity = 1.15
     this.sculpted.setLook(this.look)
     this.fixtures.setWallHeight(this.look.wallHeight)
     this.key.shadow.needsUpdate = true
     if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     this.ambient.color.set(lighting.sky)
     this.ambient.groundColor.set(lighting.ground)
-    this.ambient.intensity = lighting.ambient * 0.35
+    this.ambient.intensity = lighting.ambient * 0.25
     this.key.color.set(lighting.color)
     this.key.intensity = lighting.intensity * 1.0
     const lightDistance = Math.max(16, this.sculptureHeight * 1.4)
     this.key.position.set(this.centerX + lighting.direction[0] * lightDistance, this.centerY + lighting.direction[1] * lightDistance, lighting.direction[2] * lightDistance)
     this.fill.color.set(lighting.fill)
-    this.fill.intensity = 0.40
+    this.fill.intensity = 0.22
     this.fitShadowCamera()
+    this.shadows.update(this.key)
+    orientStudioEnvironment(this.scene, lighting.direction)
     // Only uniforms change on look edits; geometry and the fluid field stay
     // untouched, including when the height slider moves continuously.
     this.wallUniforms.uCeramicHeight.value = this.look.wallHeight

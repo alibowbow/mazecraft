@@ -76,15 +76,16 @@ function causticTexture(normal: THREE.DataTexture): THREE.DataTexture {
 export function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
   const width = 512, height = 256, pixels = new Float32Array(width * height * 4)
   const panels = [
-    { direction: [-0.58, -0.24, 0.88], width: 0.58, height: 0.38, radiance: [3.5, 3.2, 2.8] },
-    // A continuous radiance gradient avoids identical bright plateaus wherever
-    // the moving water normals reflect this softbox. Its peak stays physical.
-    { direction: [-0.57, 0.47, 0.92], width: 0.08, height: 0.35, gaussian: true, radiance: [5, 4.7, 4.2] },
-    // A small front softbox supplies true HDR peaks to curved ceramic faces,
-    // away from the flat water's mirror direction.
-    { direction: [-0.70, -0.60, 0.45], width: 0.07, height: 0.28, fade: 0.38, verticalFade: 0.30, radiance: [14, 12.5, 10.5] },
-    { direction: [0.75, -0.3, 0.55], width: 0.12, height: 0.50, radiance: [1.9, 2.3, 2.7] },
-    { direction: [0.1, 0.8, 0.62], width: 0.36, height: 0.035, radiance: [5.2, 5.2, 5.0] },
+    // One dominant window at the daylight key. Narrow hot edges read as glaze
+    // highlights; the wider, lower-energy center provides soft studio fill.
+    { direction: [-0.72, 0.30, 1.35], width: 0.30, height: 0.48, gaussian: true, radiance: [6, 5.6, 5.0] },
+    { direction: [-0.91, 0.27, 0.78], width: 0.055, height: 0.60, fade: 0.45, verticalFade: 0.30, radiance: [30, 27, 23] },
+    { direction: [-0.70, -0.36, 0.42], width: 0.065, height: 0.42, fade: 0.45, verticalFade: 0.25, radiance: [18, 16, 14] },
+    // Overhead diffusion strip is reflected by the shallow glazed wall crowns.
+    // Its narrow width leaves the oblique pool reflection direction clear.
+    { direction: [0.15, 0.24, 1.0], width: 0.08, height: 0.42, gaussian: true, radiance: [8, 7.6, 7.0] },
+    { direction: [-0.48, 0.61, 1.0], width: 0.075, height: 0.30, gaussian: true, radiance: [14, 13, 11] },
+    { direction: [0.75, -0.3, 0.55], width: 0.28, height: 0.50, gaussian: true, radiance: [0.9, 1.1, 1.3] },
   ].map(panel => {
     const direction = new THREE.Vector3(...panel.direction).normalize()
     const right = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 0, 1)).normalize()
@@ -99,9 +100,9 @@ export function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarg
     const index = (y * width + x) * 4
     // Open daylight and white courtyard walls illuminate the entire glaze,
     // including faces that do not happen to reflect a studio panel.
-    pixels[index] = 0.26 + sky * 0.25
-    pixels[index + 1] = 0.255 + sky * 0.26
-    pixels[index + 2] = 0.25 + sky * 0.28
+    pixels[index] = 0.17 + sky * 0.17
+    pixels[index + 1] = 0.18 + sky * 0.18
+    pixels[index + 2] = 0.20 + sky * 0.19
     for (const panel of panels) {
       const facing = direction.dot(panel.direction)
       if (facing <= 0) continue
@@ -137,11 +138,26 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
   const time = { value: 0 }, strength = { value: 1 }
   // An explicit map preserves each material's intensity. Three substitutes
   // scene.environmentIntensity when a Standard/Physical material's map is null.
-  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMap: environment.texture, envMapIntensity: 0.75, shadowSide: THREE.BackSide })
-  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xc4f2f7, attenuationDistance: 3.5, normalMap: normalA, normalScale: new THREE.Vector2(0.22, 0.22), envMap: environment.texture, envMapIntensity: 0.60, depthWrite: false })
+  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMap: environment.texture, envMapIntensity: 1.15, shadowSide: THREE.BackSide })
+  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xc4f2f7, attenuationDistance: 3.5, normalMap: normalA, normalScale: new THREE.Vector2(0.22, 0.22), envMap: environment.texture, envMapIntensity: 0.22, depthWrite: false })
   water.userData.cascadeNormalMaps = [normalA, normalB]
   const vertexPoint = `varying vec3 vCascadePoint;`
   const worldPoint = `vCascadePoint = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+  porcelain.onBeforeCompile = shader => {
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${vertexPoint}`)
+      .replace('#include <project_vertex>', `${worldPoint}\n#include <project_vertex>`)
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${vertexPoint}`)
+      .replace('#include <clearcoat_normal_fragment_maps>', `
+        #include <clearcoat_normal_fragment_maps>
+        #ifdef USE_CLEARCOAT
+          vec3 p = vCascadePoint;
+          vec3 glazeSlope = vec3(cos(p.x * 7.1 + p.y * 2.3) * 0.026,
+            cos(p.y * 6.3 - p.x * 1.7) * 0.021, sin(p.x * 4.2 + p.y * 5.1 + p.z * 3.0) * 0.026);
+          clearcoatNormal = normalize(clearcoatNormal + mat3(viewMatrix) * glazeSlope);
+        #endif
+      `)
+  }
+  porcelain.customProgramCacheKey = () => 'cascade-cast-glaze-v1'
   water.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, { uCascadeTime: time, uCascadeStrength: strength, uCascadeNormalB: { value: normalB } })
     shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${vertexPoint}`)
@@ -185,7 +201,15 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
     update(state, style) {
       time.value = state.time
       strength.value = THREE.MathUtils.clamp(style, 0.45, 1.5)
-      floorDepth.forEach((depth, index) => { depth.value = state.depths[index] })
+      floorDepth.forEach((depth, index) => {
+        depth.value = state.depths[index]
+        // Submerged glaze meets water (n=1.333), not air. Keeping the dry
+        // air/glaze Fresnel response underneath transmission doubles the white
+        // window reflection and makes turquoise pools look milky.
+        const wet = THREE.MathUtils.smoothstep(depth.value, 0.005, 0.04)
+        floors[index].ior = THREE.MathUtils.lerp(1.5, 1.5 / 1.333, wet)
+        floors[index].clearcoat = THREE.MathUtils.lerp(1, 0.08, wet)
+      })
       water.thickness = Math.max(0.08, (state.depths[0] + state.depths[1] + state.depths[2]) / 3)
     },
     setAppearance(appearance) {
