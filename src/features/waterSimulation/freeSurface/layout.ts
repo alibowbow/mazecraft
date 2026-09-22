@@ -2,7 +2,7 @@ import type { MazeProject } from '../../../core/maze'
 import type { FluidFunnel, FluidLayout, FluidWall } from './types'
 
 /** Geometry and sampling are independent of the renderer's quality setting. */
-export function buildFluidLayout(project: MazeProject): FluidLayout {
+export function buildFluidLayout(project: MazeProject, particleCapacity?: number): FluidLayout {
   const graph = project.mazeGraph
   const { rows, cols } = graph
   if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 || graph.cells.length !== rows * cols) {
@@ -134,6 +134,7 @@ export function buildFluidLayout(project: MazeProject): FluidLayout {
     minY: Math.min(globalTopY - 0.4, sourceTop - 0.2),
     maxY: Math.max(globalBottomY + 0.4, bottomY + 2.2),
     radius, particleArea: (radius * 2) ** 2,
-    capacity: Math.min(18_000, Math.max(320, Math.ceil(activeCellCount * 48 + reservoirHalfWidth * 150))),
+    // Editing maze density must not increase the existing liquid budget.
+    capacity: particleCapacity ?? Math.min(18_000, Math.max(320, Math.ceil(activeCellCount * 48 + reservoirHalfWidth * 150))),
   }
 }

@@ -79,6 +79,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const [draft, setDraft] = useState<WaterMazeOptions>(() => readPreferences().generator)
   const [resolutionPreview, setResolutionPreview] = useState<number | null>(null)
   const resolutionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const resolutionSource = useRef<{ source: MazeProject; result: MazeProject } | null>(null)
   const [wallEditing, setWallEditing] = useState(false)
   const [imageSource, setImageSource] = useState<{ image: HTMLImageElement; dataUrl: string; name: string } | null>(null)
   const [imageResolution, setImageResolution] = useState(96)
@@ -189,14 +190,21 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   }
   const resizeLive = (rows: number, cols: number) => {
     if (!Number.isFinite(rows) || !Number.isFinite(cols) || rows < 4 || cols < 4 || rows > 128 || cols > 128) return
-    try { applyLiveProject(resizeWaterMaze(project, rows, cols)) } catch (reason) { setEditError(String(reason)) }
+    try {
+      const source = resolutionSource.current?.result === project ? resolutionSource.current.source : project
+      const next = resizeWaterMaze(project, rows, cols, source)
+      if (next === project) return
+      resolutionSource.current = { source, result: next }
+      applyLiveProject(next)
+    } catch (reason) { setEditError(String(reason)) }
   }
   const changeResolution = (value: number) => {
     setResolutionPreview(value)
     if (resolutionTimer.current) clearTimeout(resolutionTimer.current)
-    const largest = Math.max(project.mazeGraph.rows, project.mazeGraph.cols)
+    const source = resolutionSource.current?.result === project ? resolutionSource.current.source : project
+    const largest = Math.max(source.mazeGraph.rows, source.mazeGraph.cols)
     resolutionTimer.current = setTimeout(() => {
-      resizeLive(Math.max(4, Math.round(project.mazeGraph.rows / largest * value)), Math.max(4, Math.round(project.mazeGraph.cols / largest * value)))
+      resizeLive(Math.max(4, Math.round(source.mazeGraph.rows / largest * value)), Math.max(4, Math.round(source.mazeGraph.cols / largest * value)))
       setResolutionPreview(null)
     }, 240)
   }
