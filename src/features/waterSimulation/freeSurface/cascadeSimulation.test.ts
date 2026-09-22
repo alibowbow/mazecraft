@@ -81,6 +81,25 @@ describe('conservative three-basin cascade', () => {
     expect(snapshot.diagnostics.massError).toBeLessThan(1e-9)
   })
 
+  it('keeps the complete paused snapshot identical when look updates resend the same wall height', () => {
+    for (const [height, equivalent] of [[1, 1], [0.55, 0.1], [1.75, 4]]) {
+      const simulation = createCascade()
+      simulation.setWallHeight(height)
+      advance(simulation, 2, 0.65)
+      const snapshot = simulation.snapshot()
+      const frozen = {
+        ...snapshot, depth: snapshot.depth.slice(), velocity: snapshot.velocity.slice(),
+        connections: snapshot.connections.slice(),
+      }
+      // No advance represents pause. Repeated material/light edits must not
+      // recompute hydraulic rates from the post-step depths or alter motion.
+      for (const repeated of [height, equivalent, height]) {
+        simulation.setWallHeight(repeated)
+        expect(simulation.snapshot()).toEqual(frozen)
+      }
+    }
+  })
+
   it('accounts for displaced water when lowering filled walls and resets the complete state', () => {
     const simulation = createCascade()
     advance(simulation, 600, 2.5)

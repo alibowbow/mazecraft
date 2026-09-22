@@ -10,7 +10,7 @@ import type { FreeSurfaceRenderer } from '../src/features/waterSimulation/freeSu
 import type { CascadeSimulation } from '../src/features/waterSimulation/freeSurface/cascadeSimulation'
 import type { createCascadeSurfaces } from '../src/features/waterSimulation/freeSurface/cascadeGeometry'
 
-test('cascade optics isolates water reflections, floor caustics and sun shadows at one frozen time', async ({ page }, testInfo) => {
+test('cascade optics isolates water reflections, floor caustics, sun shadows and porcelain materials at one frozen time', async ({ page }, testInfo) => {
   test.setTimeout(180_000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -23,7 +23,8 @@ test('cascade optics isolates water reflections, floor caustics and sun shadows 
         export { CascadeSimulation } from './src/features/waterSimulation/freeSurface/cascadeSimulation';
         export { createCascadeSurfaces } from './src/features/waterSimulation/freeSurface/cascadeGeometry';
         export { buildFluidLayout } from './src/features/waterSimulation/freeSurface/layout';
-        export { createWaterStudioProject } from './src/features/waterStudio/presets';`,
+        export { createWaterStudioProject } from './src/features/waterStudio/presets';
+        export { MeshBasicMaterial } from 'three';`,
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
       sourcefile: 'cascade-optics-fixture.ts', loader: 'ts',
     },
@@ -44,6 +45,7 @@ test('cascade optics isolates water reflections, floor caustics and sun shadows 
         createCascadeSurfaces: typeof createCascadeSurfaces
         buildFluidLayout: typeof buildFluidLayout
         createWaterStudioProject: typeof createWaterStudioProject
+        MeshBasicMaterial: typeof THREE.MeshBasicMaterial
       }
     }).CascadeOpticsFixture
     const layout = fixture.buildFluidLayout(fixture.createWaterStudioProject('atelier', 'atelier-01'))
@@ -60,12 +62,16 @@ test('cascade optics isolates water reflections, floor caustics and sun shadows 
       presentation3d: {
         scene: THREE.Scene
         sun: THREE.DirectionalLight
-        materials: { water: THREE.MeshPhysicalMaterial; floors: THREE.MeshPhysicalMaterial[] }
+        materials: {
+          porcelain: THREE.MeshPhysicalMaterial
+          water: THREE.MeshPhysicalMaterial
+          floors: THREE.MeshPhysicalMaterial[]
+        }
       }
     }
     let baselinePixels: Uint8Array | null = null
     const capture = (name: string) => {
-      // All four renders use the same hydraulic snapshot. Read pixels and
+      // All six renders use the same hydraulic snapshot. Read pixels and
       // encode the canvas synchronously, before the browser discards its buffer.
       view.setBasinSnapshot(snapshot)
       const gl = internals.renderer.getContext()
@@ -100,42 +106,86 @@ test('cascade optics isolates water reflections, floor caustics and sun shadows 
       view.setAppearance({ profile: 'aqua', color: '#16aeb7', opacity: 0.72 })
       view.setSurfaceStyle('natural')
       const presentation = internals.presentation3d
-      const frames = [capture('cascade-optics-baseline')]
 
       // Include the cloned waterfall materials as well as the main surface,
       // so water-reflections-off has no leftover reflected waterfall stripes.
       const liquids = new Set<THREE.MeshPhysicalMaterial>([presentation.materials.water])
+      const solids = new Set([presentation.materials.porcelain, ...presentation.materials.floors])
+      const solidMeshes: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = []
       presentation.scene.traverse(object => {
         const mesh = object as THREE.Mesh
         if (!mesh.isMesh) return
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        if (materials.some(material => solids.has(material as THREE.MeshPhysicalMaterial))) {
+          solidMeshes.push({ mesh, material: mesh.material })
+        }
         for (const material of materials) {
           const physical = material as THREE.MeshPhysicalMaterial
           if (physical.isMeshPhysicalMaterial && physical.transmission > 0) liquids.add(physical)
         }
       })
       const reflections = [...liquids].map(material => ({ material, intensity: material.envMapIntensity }))
-      for (const { material } of reflections) material.envMapIntensity = 0
-      frames.push(capture('cascade-optics-water-reflections-off'))
-      for (const { material, intensity } of reflections) material.envMapIntensity = intensity
-
       const floors = presentation.materials.floors.map(material => ({
         material, compile: material.onBeforeCompile, cacheKey: material.customProgramCacheKey,
       }))
+      const solidOptics = [...solids].map(material => ({
+        material, clearcoat: material.clearcoat, intensity: material.envMapIntensity,
+      }))
+      const castShadow = presentation.sun.castShadow
+      const basic = new fixture.MeshBasicMaterial({
+        color: 0xf7f5f0,
+        side: presentation.materials.porcelain.side,
+        shadowSide: presentation.materials.porcelain.shadowSide,
+      })
+      const restoreBaseline = () => {
+        for (const { material, intensity } of reflections) material.envMapIntensity = intensity
+        for (const { material, compile, cacheKey } of floors) {
+          material.onBeforeCompile = compile; material.customProgramCacheKey = cacheKey
+          material.needsUpdate = true
+        }
+        for (const { material, clearcoat, intensity } of solidOptics) {
+          material.clearcoat = clearcoat; material.envMapIntensity = intensity
+          material.needsUpdate = true
+        }
+        for (const { mesh, material } of solidMeshes) mesh.material = material
+        presentation.sun.castShadow = castShadow
+        internals.renderer.shadowMap.needsUpdate = true
+      }
+      const frames = [capture('cascade-optics-baseline')]
+
+      for (const { material } of reflections) material.envMapIntensity = 0
+      frames.push(capture('cascade-optics-water-reflections-off'))
+      restoreBaseline()
+
       for (const { material } of floors) {
         material.onBeforeCompile = () => {}
         material.customProgramCacheKey = () => 'cascade-diagnostic-caustics-off'
         material.needsUpdate = true
       }
       frames.push(capture('cascade-optics-floor-caustics-off'))
-      for (const { material, compile, cacheKey } of floors) {
-        material.onBeforeCompile = compile; material.customProgramCacheKey = cacheKey
-        material.needsUpdate = true
-      }
+      restoreBaseline()
 
       presentation.sun.castShadow = false
       internals.renderer.shadowMap.needsUpdate = true
       frames.push(capture('cascade-optics-sun-shadows-off'))
+      restoreBaseline()
+
+      for (const { material } of solidOptics) {
+        material.clearcoat = 0; material.envMapIntensity = 0
+        material.needsUpdate = true
+      }
+      frames.push(capture('cascade-optics-porcelain-clearcoat-reflections-off'))
+      restoreBaseline()
+
+      // Replace exactly the same porcelain and floor slots, retaining geometry,
+      // depth testing, water and lighting to separate raster artifacts from PBR.
+      for (const { mesh, material } of solidMeshes) {
+        const replace = (slot: THREE.Material) => solids.has(slot as THREE.MeshPhysicalMaterial) ? basic : slot
+        mesh.material = Array.isArray(material) ? material.map(replace) : replace(material)
+      }
+      frames.push(capture('cascade-optics-porcelain-basic-material'))
+      restoreBaseline()
+      basic.dispose()
       return { time: snapshot.cascade.time, massError: snapshot.diagnostics.massError, frames }
     } finally {
       view.dispose(); mount.remove()

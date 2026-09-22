@@ -80,7 +80,11 @@ export class CascadeSimulation {
 
   setWallHeight(multiplier: number): void {
     if (!Number.isFinite(multiplier)) return
-    this.rimDepth = CASCADE_WALL_HEIGHT * Math.max(0.55, Math.min(1.75, multiplier))
+    const rimDepth = CASCADE_WALL_HEIGHT * Math.max(0.55, Math.min(1.75, multiplier))
+    // A theme/light update can resend the unchanged height while paused.
+    // Preserve the last integrated rates as well as water volumes and time.
+    if (rimDepth === this.rimDepth) return
+    this.rimDepth = rimDepth
     this.maximumDepth = this.rimDepth - 0.04
     // Lowering a wall into existing water physically displaces its excess.
     // Account for that spill explicitly; never silently delete stored water.

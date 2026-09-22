@@ -53,7 +53,7 @@ test('three porcelain terraces visibly cascade, conserve water and freeze comple
   page.on('console', message => {
     if (message.type() === 'error') errors.push(message.text())
   })
-  const { canvas, clip } = await openFountain(page)
+  const { clip } = await openFountain(page)
   const capture = (file?: string) => page.screenshot({ clip, path: file ? testInfo.outputPath(file) : undefined })
   // Software WebGL can occupy the main thread while compiling transmission;
   // allow that first state read to finish before evaluating the same thresholds.
@@ -100,6 +100,21 @@ test('three porcelain terraces visibly cascade, conserve water and freeze comple
     contentType: 'application/json',
   })
   await page.screenshot({ path: testInfo.outputPath('deep-basin-desktop.png') })
+  expect(errors).toEqual([])
+})
+
+test('fountain walls, drainage and view changes preserve the real cascade', async ({ page }, testInfo) => {
+  test.setTimeout(180_000)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => {
+    if (message.type() === 'error') errors.push(message.text())
+  })
+  const { canvas } = await openFountain(page)
+  const flowState = () => readCascade(page)
+  await expect.poll(async () => (await flowState()).time, { timeout: 30_000 }).toBeGreaterThan(0.5)
+  await pauseFountain(page)
+  const { time, stored } = await flowState()
   await page.getByRole('tab', { name: '재질', exact: true }).click()
   const height = page.getByRole('slider', { name: '벽 높이', exact: true })
   await height.focus(); await height.press('End')

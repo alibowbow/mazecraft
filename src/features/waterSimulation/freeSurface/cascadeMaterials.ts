@@ -79,7 +79,7 @@ function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
     { direction: [-0.58, -0.24, 0.88], width: 0.58, height: 0.38, radiance: [3.5, 3.2, 2.8] },
     // Border, rather than cover, the default flat-water mirror direction.
     // The two moving normals then catch a narrow highlight instead of whiteout.
-    { direction: [-0.475, 0.53, 0.84], width: 0.08, height: 0.35, radiance: [5, 4.7, 4.2] },
+    { direction: [-0.57, 0.47, 0.92], width: 0.08, height: 0.35, fade: 0.40, radiance: [5, 4.7, 4.2] },
     // A small front softbox supplies true HDR peaks to curved ceramic faces,
     // away from the flat water's mirror direction.
     { direction: [-0.70, -0.60, 0.45], width: 0.07, height: 0.28, radiance: [14, 12.5, 10.5] },
@@ -104,7 +104,7 @@ function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
       const facing = direction.dot(panel.direction)
       if (facing <= 0) continue
       const a = Math.abs(direction.dot(panel.right) / facing), b = Math.abs(direction.dot(panel.up) / facing)
-      const weight = (1 - THREE.MathUtils.smoothstep(a, panel.width * 0.86, panel.width)) * (1 - THREE.MathUtils.smoothstep(b, panel.height * 0.94, panel.height))
+      const weight = (1 - THREE.MathUtils.smoothstep(a, panel.width * (1 - (panel.fade ?? 0.14)), panel.width)) * (1 - THREE.MathUtils.smoothstep(b, panel.height * 0.94, panel.height))
       for (let channel = 0; channel < 3; channel++) pixels[index + channel] += panel.radiance[channel] * weight
     }
     pixels[index + 3] = 1
@@ -125,8 +125,10 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
   const normalA = waveTexture(17), normalB = waveTexture(63), caustic = causticTexture(normalA)
   const environment = studioHdri(renderer)
   const time = { value: 0 }, strength = { value: 1 }
-  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMapIntensity: 1.2, shadowSide: THREE.BackSide })
-  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xb9ebef, attenuationDistance: 2.8, normalMap: normalA, normalScale: new THREE.Vector2(0.20, 0.20), envMapIntensity: 0.60, depthWrite: false })
+  // An explicit map preserves each material's intensity. Three substitutes
+  // scene.environmentIntensity when a Standard/Physical material's map is null.
+  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMap: environment.texture, envMapIntensity: 1.2, shadowSide: THREE.BackSide })
+  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xb9ebef, attenuationDistance: 2.8, normalMap: normalA, normalScale: new THREE.Vector2(0.20, 0.20), envMap: environment.texture, envMapIntensity: 0.60, depthWrite: false })
   water.userData.cascadeNormalMaps = [normalA, normalB]
   const vertexPoint = `varying vec3 vCascadePoint;`
   const worldPoint = `vCascadePoint = (modelMatrix * vec4(transformed, 1.0)).xyz;`
