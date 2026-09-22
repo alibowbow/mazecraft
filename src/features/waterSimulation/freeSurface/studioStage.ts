@@ -104,7 +104,9 @@ export function createAtelierEnvironment(renderer: THREE.WebGLRenderer): THREE.W
   panel(9,6,new THREE.Vector3(-5,3,8),'#fff1df',1.4)
   // The strip borders the default mirror direction. Small real surface
   // slopes catch its bright edge without whitening the entire flat basin.
-  panel(.48,5,new THREE.Vector3(-4.45,5.1,8),'#fffaf1',8)
+  // Keep it in front of the broad softbox at the same angular size: an
+  // environment capture also depth-tests these panels against one another.
+  panel(.432,4.5,new THREE.Vector3(-4.005,4.59,7.2),'#fffaf1',8)
   panel(3,7,new THREE.Vector3(6,-2,4),'#e7f1f5',0.85)
   panel(10,2.4,new THREE.Vector3(1,8,6),'#ffffff',1.2)
   panel(.4,5,new THREE.Vector3(5,-4,6),'#ffffff',3.8)
