@@ -15,6 +15,9 @@ async function createBasic(page: Page) {
 }
 
 test('15.2 모바일 프로젝트 메뉴는 하나의 화면 내 액션 시트로 열린다', async ({ page }, testInfo) => {
+  // Two editor → water → collection round trips compile two full 24×24
+  // scenes on the CI software renderer before the menu assertions begin.
+  test.setTimeout(process.env.CI ? 180_000 : 30_000)
   await createBasic(page)
   await page.getByLabel('프로젝트 제목').fill('첫 번째 미로')
   await page.getByRole('button', { name: '홈으로' }).click()

@@ -32,12 +32,20 @@ jobs:
 
   browser:
     needs: test
+    name: browser (${{ matrix.suite }} ${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        include:
+          - { suite: regression, shard: 1, total: 2 }
+          - { suite: regression, shard: 2, total: 2 }
+          - { suite: studio, shard: 1, total: 3 }
+          - { suite: studio, shard: 2, total: 3 }
+          - { suite: studio, shard: 3, total: 3 }
+    env:
+      PLAYWRIGHT_SUITE: ${{ matrix.suite }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,10 +60,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # Keep one software-WebGL worker per runner. Separate runners prevent
       # expensive material tests from competing for the same CPU renderer.
-      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/3
+      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: browser-results-${{ matrix.shard }}
+          name: browser-results-${{ matrix.suite }}-${{ matrix.shard }}
           path: test-results/
           retention-days: 7

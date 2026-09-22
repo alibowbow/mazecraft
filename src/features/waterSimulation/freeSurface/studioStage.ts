@@ -91,20 +91,22 @@ export class StudioStage {
   }
 }
 
-/** Broad photographic softboxes give curved glaze and water readable reflections. */
+/** Dark surroundings and narrow window strips give glaze a readable reflection edge. */
 export function createAtelierEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
   const environment = new THREE.Scene()
-  environment.background = new THREE.Color('#a7a098')
+  environment.background = new THREE.Color('#737a79')
   const panels: THREE.Mesh[]=[]
   const panel=(w:number,h:number,position:THREE.Vector3,color:string,intensity:number)=>{
     const material=new THREE.MeshBasicMaterial({color:new THREE.Color(color).multiplyScalar(intensity),side:THREE.DoubleSide})
     const mesh=new THREE.Mesh(new THREE.PlaneGeometry(w,h),material)
     mesh.position.copy(position);mesh.lookAt(0,0,0);environment.add(mesh);panels.push(mesh)
   }
-  panel(9,6,new THREE.Vector3(-5,3,8),'#fff1df',3.5)
-  panel(.65,6,new THREE.Vector3(-3.8,2.7,7.8),'#fffaf1',6.8)
-  panel(3,7,new THREE.Vector3(6,-2,4),'#e7f1f5',1.5)
-  panel(10,2.4,new THREE.Vector3(1,8,6),'#ffffff',2.1)
+  panel(9,6,new THREE.Vector3(-5,3,8),'#fff1df',1.4)
+  // The strip borders the default mirror direction. Small real surface
+  // slopes catch its bright edge without whitening the entire flat basin.
+  panel(.48,5,new THREE.Vector3(-4.45,5.1,8),'#fffaf1',8)
+  panel(3,7,new THREE.Vector3(6,-2,4),'#e7f1f5',0.85)
+  panel(10,2.4,new THREE.Vector3(1,8,6),'#ffffff',1.2)
   panel(.4,5,new THREE.Vector3(5,-4,6),'#ffffff',3.8)
   const pmrem=new THREE.PMREMGenerator(renderer)
   const target=pmrem.fromScene(environment,.055,.1,100)

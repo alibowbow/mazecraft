@@ -113,8 +113,11 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   expect((await canvas.screenshot()).equals(clearThreeD)).toBe(true)
   expect(await readWaterState(stage)).toEqual(basinState)
   await page.getByRole('button', { name: '2D 물 흐름', exact: true }).click()
-  expect((await canvas.screenshot()).equals(clear)).toBe(true)
-  expect(await readWaterState(stage)).toEqual(state)
+  await expect(canvas).toHaveAttribute('data-view-mode', 'free-surface')
+  await expect.poll(() => readWaterState(stage)).toEqual(state)
+  // The React mode effect schedules a new frame. Keep byte-for-byte equality,
+  // but compare after the restored 2D state has actually reached the canvas.
+  await expect.poll(async () => (await canvas.screenshot()).equals(clear)).toBe(true)
   expect(await readWorkerProbe(page)).toEqual(workers)
   await expect(canvas).toHaveAttribute('data-color-test-identity', 'same-water')
   await expect(stage).toHaveAttribute('data-phase', 'paused')

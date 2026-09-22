@@ -91,7 +91,7 @@ function createCausticTexture(): THREE.DataTexture {
   const seed = (x: number, y: number, offset: number) => fract(Math.sin(x * 127.1 + y * 311.7 + offset) * 43758.5453)
   const sites = Array.from({ length: cells * cells }, (_, i) => {
     const x = i % cells, y = Math.floor(i / cells)
-    return [0.18 + seed(x, y, 0) * 0.64, 0.18 + seed(x, y, 73.19) * 0.64]
+    return [0.04 + seed(x, y, 0) * 0.92, 0.04 + seed(x, y, 73.19) * 0.92]
   })
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const px = x / size * cells, py = y / size * cells
@@ -120,7 +120,7 @@ export class SculptedSurface {
   readonly water: THREE.Mesh
   readonly body: THREE.Mesh
   readonly foundation: THREE.Mesh
-  readonly waterMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.095, metalness: 0, ior: 1.333, transmission: 1, thickness: 0.42, clearcoat: 0, envMapIntensity: 0.85, side: THREE.FrontSide })
+  readonly waterMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.065, metalness: 0, ior: 1.333, transmission: 1, thickness: 0.42, clearcoat: 0, envMapIntensity: 1.05, side: THREE.FrontSide })
   readonly floorMaterial = new THREE.MeshPhysicalMaterial({ roughness: 0.28, clearcoat: 0.65, clearcoatRoughness: 0.2, envMapIntensity: 0.5 })
   readonly sideMaterial = new THREE.MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.48, clearcoatRoughness: 0.24, envMapIntensity: 0.55 })
   readonly baseMaterial = new THREE.MeshPhysicalMaterial({ roughness: 0.4, clearcoat: 0.25, envMapIntensity: 0.4 })
@@ -238,8 +238,18 @@ export class SculptedSurface {
           vec2 phase = ripplePhase(p, uLiquidTime);
           vec2 micro = vec2(cos(phase.x) * 0.023 + cos(phase.y) * 0.014,
             cos(phase.x) * 0.013 - cos(phase.y) * 0.026);
+          // Millimetre-scale capillary slopes break the reflected strip light
+          // into moving glints; Three's Fresnel still controls their strength.
+          // Filtering the phase keeps those glints stable on smaller screens.
+          vec3 capillaryPhase = vec3(dot(p, vec2(18.0, 8.0)) - uLiquidTime * 2.9,
+            dot(p, vec2(-9.0, 22.0)) - uLiquidTime * 2.4,
+            dot(p, vec2(31.0, -8.0)) + uLiquidTime * 1.7);
+          vec3 capillaryFilter = vec3(1.0) - smoothstep(vec3(0.7), vec3(2.2), fwidth(capillaryPhase));
+          vec3 capillary = cos(capillaryPhase) * capillaryFilter;
+          vec2 fineSlope = vec2(capillary.x * 0.060 - capillary.y * 0.023 + capillary.z * 0.024,
+            capillary.x * 0.026 + capillary.y * 0.057 - capillary.z * 0.006);
           float interior = smoothstep(0.105, 0.24, flow.r);
-          vec3 worldRipple = vec3(micro * motion * uLiquidStyle * interior, 0.0);
+          vec3 worldRipple = vec3((micro * motion + fineSlope * (0.55 + motion * 0.45)) * uLiquidStyle * interior, 0.0);
           normal = normalize(normal + mat3(viewMatrix) * worldRipple);
         `)
         .replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment.replace(
@@ -249,7 +259,7 @@ export class SculptedSurface {
           'material.thickness = uBasinEnabled > 0.5 ? max(0.012, density) : thickness * mix(0.32, 1.15, smoothstep(0.105, 0.68, density));',
         ))
     }
-    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v2'
+    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v3'
     this.floorMaterial.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.uniforms)
       shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${common}`)
@@ -263,23 +273,27 @@ export class SculptedSurface {
           diffuseColor.rgb *= 0.977 + grain * 0.018 + ceramicCloud * 0.012 + vein * uStone * 0.025;
           diffuseColor.rgb *= texture2D(uContact, vLiquidUv).r;
         `)
-        .replace('#include <emissivemap_fragment>', `
-          #include <emissivemap_fragment>
+        .replace('#include <lights_fragment_end>', `
+          #include <lights_fragment_end>
           vec4 liquid = liquidField(vLiquidUv);
           float wet = uBasinEnabled > 0.5 ? liquid.b * smoothstep(0.003, 0.045, liquid.r) : smoothstep(0.12, 0.29, liquid.r);
           float motion = smoothstep(0.03, 0.30, liquid.g / max(liquid.r, 0.01));
           if (uBasinEnabled > 0.5) motion = 0.22 + motion * 0.78;
           float t = uLiquidTime * motion;
           vec2 phase = ripplePhase(vBodyPoint, t);
-          vec2 warp = vec2(sin(phase.x), sin(phase.y)) * 0.017 * uLiquidStyle;
-          vec2 causticUv = vBodyPoint * 0.32 + warp + vec2(t * 0.008, -t * 0.004);
+          vec2 warp = vec2(sin(phase.x), sin(phase.y)) * 0.044 * uLiquidStyle;
+          vec2 causticUv = vBodyPoint * 0.29 + warp + vec2(t * 0.008, -t * 0.004);
           float primary = texture2D(uCaustic, causticUv).r;
-          float secondary = texture2D(uCaustic, causticUv * 1.34 + vec2(0.21, 0.37) - warp * 0.5).r;
-          float caustic = primary * 0.8 + secondary * 0.22;
-          totalEmissiveRadiance += mix(vec3(1.0), uLiquidTint, 0.12) * caustic * wet * 1.05;
+          vec2 secondaryUv = mat2(0.80, 0.60, -0.60, 0.80) * causticUv * 1.17 + vec2(0.21, 0.37) - warp * 0.7;
+          float secondary = texture2D(uCaustic, secondaryUv).r;
+          float focus = 0.5 + 0.5 * sin(phase.x * 0.43 + sin(phase.y * 0.61));
+          float caustic = pow(primary, 1.3) * (0.22 + focus * focus * 0.78) + pow(secondary, 2.0) * 0.20;
+          // Concentrate received sunlight on the bed. A wall's shadow must
+          // suppress the caustic too; water never makes the floor emissive.
+          reflectedLight.directDiffuse *= mix(1.0, 0.91 + caustic * 2.7, wet);
         `)
     }
-    this.floorMaterial.customProgramCacheKey = () => 'atelier-ceramic-basin-floor-v1'
+    this.floorMaterial.customProgramCacheKey = () => 'atelier-ceramic-basin-floor-v2'
     this.sideMaterial.onBeforeCompile = shader => {
       shader.uniforms.uStone = this.uniforms.uStone
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCastPosition;')

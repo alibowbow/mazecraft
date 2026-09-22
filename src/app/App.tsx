@@ -228,6 +228,16 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    const openLibraryFromLocation = () => {
+      if (location.hash !== '#/library') return
+      setRoute('home')
+      void refreshProjects().catch(() => toast('저장한 미로를 불러오지 못했습니다.', true))
+    }
+    window.addEventListener('hashchange', openLibraryFromLocation)
+    return () => window.removeEventListener('hashchange', openLibraryFromLocation)
+  }, [refreshProjects, toast])
+
+  useEffect(() => {
     let active = true
     void (async () => {
       try {

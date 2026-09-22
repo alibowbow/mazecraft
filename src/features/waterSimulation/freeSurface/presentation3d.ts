@@ -122,12 +122,9 @@ export class FreeSurfacePresentation3D {
     this.scene.add(this.stage.group)
     this.key.castShadow = true
     this.key.shadow.mapSize.set(2048, 2048)
-    const extent = Math.max(this.boardWidth, this.boardHeight) * 0.7
-    Object.assign(this.key.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 0.1, far: 100 })
-    this.key.shadow.camera.updateProjectionMatrix()
-    this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.025
-    this.key.shadow.radius = 5
-    this.key.shadow.blurSamples = 8
+    this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.01
+    this.key.shadow.radius = 2.5
+    this.key.shadow.blurSamples = 6
     this.key.shadow.autoUpdate = false
 
     this.key.target.position.set(this.centerX, this.centerY, 0)
@@ -170,11 +167,34 @@ export class FreeSurfacePresentation3D {
     const lightDistance = Math.max(16, this.sculptureHeight * 1.4)
     this.key.position.set(this.centerX + lighting.direction[0] * lightDistance, this.centerY + lighting.direction[1] * lightDistance, lighting.direction[2] * lightDistance)
     this.fill.color.set(lighting.fill)
-    this.fill.intensity = 0.22
+    this.fill.intensity = 0.11
+    this.fitShadowCamera()
     // Only uniforms change on look edits; geometry and the fluid field stay
     // untouched, including when the height slider moves continuously.
     this.wallUniforms.uCeramicHeight.value = this.look.wallHeight
     this.wallUniforms.uCeramicMineral.value = this.look.theme === 'terrace' || this.look.theme === 'basalt' ? 1.0 : 0.55
+  }
+
+  private fitShadowCamera(): void {
+    // Fit the sculpture and its border plants in light space. The solver's
+    // distant particle capture area wastes shadow texels on empty ground.
+    // Include the highest wall/nozzle setting so a height edit stays stable.
+    this.key.updateMatrixWorld()
+    this.key.target.updateMatrixWorld()
+    this.key.shadow.updateMatrices(this.key)
+    const camera = this.key.shadow.camera
+    const bounds = new THREE.Box3()
+    const point = new THREE.Vector3()
+    for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-0.72, 3.2]) {
+      point.set(this.centerX + x * (this.sculptureWidth * 0.5 + 1.1), this.centerY + y * (this.sculptureHeight * 0.5 + 0.7), z)
+      bounds.expandByPoint(point.applyMatrix4(camera.matrixWorldInverse))
+    }
+    Object.assign(camera, {
+      left: bounds.min.x - 0.6, right: bounds.max.x + 0.6,
+      bottom: bounds.min.y - 0.6, top: bounds.max.y + 0.6,
+      near: Math.max(0.1, -bounds.max.z - 1), far: -bounds.min.z + 2,
+    })
+    camera.updateProjectionMatrix()
   }
 
   setAppearance(appearance: WaterAppearance): void { this.sculpted.setAppearance(appearance); this.fixtures.setAppearance(appearance) }

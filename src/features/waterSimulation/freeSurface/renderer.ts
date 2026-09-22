@@ -835,6 +835,9 @@ export class FreeSurfaceRenderer {
     this.waterMaterial.uniforms.uCenter.value.set(x, y)
     this.waterMaterial.uniforms.uViewSize.value.set(this.viewWidth, this.viewHeight)
     this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
+    // Orbiting the basin must not leak its view-dependent Fresnel angle into
+    // the restored front-facing 2D water. Its paused pixels stay reproducible.
+    this.waterMaterial.uniforms.uViewDirection.value.set(0, 0, 1)
     this.fieldDirty = true
     this.weightsDirty = true
   }
