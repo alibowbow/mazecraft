@@ -24,7 +24,7 @@ export interface WaterStudioPreset extends WaterStudioSize {
 }
 
 export const WATER_STUDIO_PRESETS: readonly WaterStudioPreset[] = [
-  { id: 'atelier', name: '포슬린 가든', caption: '도자기 곡선을 돌아 흐르는 청록빛 수로', rows: 10, cols: 8 },
+  { id: 'atelier', name: '포슬린 가든', caption: '둥근 회랑과 작은 섬을 감싸는 청록빛 수로', rows: 10, cols: 10 },
   { id: 'cascade', name: '캐스케이드', caption: '넓은 수조 사이로 이어지는 낙수', rows: 8, cols: 6 },
   { id: 'split', name: '트윈 플로우', caption: '둘로 갈라져 다시 만나는 흐름', rows: 8, cols: 8 },
   { id: 'serpentine', name: '리본', caption: '좌우를 가로지르는 긴 물길', rows: 8, cols: 6 },
@@ -93,9 +93,55 @@ export function createWaterStudioProject(
   const mirrored = (col: number) => mirror ? cols - 1 - col : col
 
   if (id === 'atelier') {
-    // Begin with one open basin, then sculpt continuous ceramic peninsulas.
-    // Their alternating stepped outlines make wide, offset chambers rather
-    // than repeating a narrow passage on every row.
+    if (rows >= 10 && cols >= 10) {
+      // The strokes describe a single-level ceramic garden, with large U/C
+      // chambers, a broken central ring and clear passages between them.
+      // They remain ordinary grid walls for editing, export and simulation;
+      // the ceramic mesher rounds the connected corners of the same walls.
+      const x = (value: number) => Math.round(value * cols / 10)
+      const y = (value: number) => Math.round(value * rows / 10)
+      const island = (row: number, col: number) => {
+        graph.cells[Math.floor(row * rows / 10) * cols + mirrored(Math.floor(col * cols / 10))].active = false
+      }
+      island(5, 5)
+      island(random.boolean() ? 2 : 3, 2)
+      for (let row = 0; row < rows; row++) {
+        horizontalLane(graph, row)
+        if (row < rows - 1) for (let col = 0; col < cols; col++) fall(graph, row, col)
+      }
+      const stroke = (points: readonly (readonly [number, number])[]) => {
+        for (let segment = 1; segment < points.length; segment++) {
+          const [ax, ay] = points[segment - 1], [bx, by] = points[segment]
+          if (ay === by) {
+            for (let col = x(Math.min(ax, bx)); col < x(Math.max(ax, bx)); col++) {
+              closePassage(graph, { row: y(ay) - 1, col: mirrored(col) }, { row: y(ay), col: mirrored(col) })
+            }
+          } else {
+            for (let row = y(Math.min(ay, by)); row < y(Math.max(ay, by)); row++) {
+              closePassage(graph, { row, col: mirrored(x(ax) - 1) }, { row, col: mirrored(x(ax)) })
+            }
+          }
+        }
+      }
+      // Upper left inlet garden: the opening above its island splits the flow.
+      stroke([[1, 4], [1, 1], [2, 1]])
+      stroke([[3, 1], [4, 1], [4, random.boolean() ? 3 : 4]])
+      // Broad right-hand hook, open below; the short foot turns the water
+      // without sealing the base of its chamber.
+      stroke([[6, random.boolean() ? 3 : 4], [6, 1], [9, 1], [9, 4], [8, 4]])
+      // Central island loop has real inlet/outlet gates, so it is never a
+      // decorative ring with inaccessible water or a sealed lower pocket.
+      stroke([[5, 4], [4, 4], [4, 7], [5, 7]])
+      stroke([[6, 4], [7, 4], [7, 7], [6, 7]])
+      // Unequal lower U-shaped bays connect to the open outlet promenade.
+      stroke([[1, 9], [1, 6], [3, 6], [3, random.boolean() ? 8 : 9]])
+      stroke([[7, 9], [7, 7]])
+      stroke([[8, 7], [8, 6], [9, 6], [9, 9], [8, 9]])
+      return projectFor(graph, preset.name, mirrored(Math.floor(cols * 0.25)), mirrored(Math.floor(cols * 0.65)))
+    }
+
+    // Compact editor sizes retain a simple S passage with room to turn. The
+    // larger sculptural chambers would lose their drain openings below 10×10.
     for (let row = 0; row < rows; row++) {
       horizontalLane(graph, row)
       if (row < rows - 1) for (let col = 0; col < cols; col++) fall(graph, row, col)
@@ -113,17 +159,14 @@ export function createWaterStudioProject(
         const col = column(offset)
         closePassage(graph, { row, col }, { row: row + 1, col })
       }
-      // The tip must step DOWN toward its gate. Reversing this bend would
-      // create a basin sealed below and at the side, trapping simulated water.
       closePassage(graph,
         { row: base + 1, col: column(bend - 1) },
         { row: base + 1, col: column(bend) },
       )
     }
     const lastNearLeft = ((shelves - 1) % 2 === 0) !== mirror
-    const startCol = mirrored(1)
     const endCol = lastNearLeft ? cols - 1 - Math.floor(gateWidth / 2) : Math.floor(gateWidth / 2)
-    return projectFor(graph, preset.name, startCol, endCol)
+    return projectFor(graph, preset.name, mirrored(1), endCol)
   }
 
   if (id === 'garden') {

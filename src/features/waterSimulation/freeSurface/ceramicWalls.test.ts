@@ -44,10 +44,39 @@ describe('continuous ceramic wall sculpture', () => {
     expect(isCovered(4.5, 4.5)).toBe(false)
     expect(JSON.stringify(layout.walls)).toBe(before)
     expect(geometry.boundingBox!.min.z).toBeCloseTo(0)
-    expect(geometry.boundingBox!.max.z).toBeCloseTo(0.48)
+    expect(geometry.boundingBox!.max.z).toBeCloseTo(1.05)
     const normals = geometry.getAttribute('normal')
     for (let i = 0; i < normals.count; i++) expect(Number.isFinite(normals.getX(i) + normals.getY(i) + normals.getZ(i))).toBe(true)
     geometry.dispose(); material.dispose()
+  })
+
+  it('has tall continuous sides, a rounded crown, and broad inward bends without sealing channels', () => {
+    const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(3, 3) }))
+    const geometry = ceramicWallGeometry(layout.walls)
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }))
+    // A full-height wall remains solid above the old 0.48-cell rim.
+    for (const z of [0.5, 0.75, 0.94]) {
+      const hits = new THREE.Raycaster(new THREE.Vector3(0.5, -1.5, z), new THREE.Vector3(1, 0, 0)).intersectObject(mesh)
+      expect(hits[0].point.x).toBeLessThan(1)
+      expect(hits[0].point.x).toBeGreaterThan(0.75)
+    }
+    const crown = geometry.getAttribute('position'), normals = geometry.getAttribute('normal')
+    let roundedCrown = 0
+    for (let i = 0; i < crown.count; i++) {
+      if (crown.getZ(i) > 0.975 && crown.getZ(i) < 1.049
+        && Math.abs(normals.getZ(i)) > 0.1 && Math.abs(normals.getZ(i)) < 0.98) roundedCrown++
+    }
+    expect(roundedCrown).toBeGreaterThan(50)
+    const holes = ceramicWallShapes(layout.walls).flatMap(shape => shape.holes)
+    const broadBends = holes.flatMap(hole => hole.curves).filter(curve => curve instanceof THREE.CubicBezierCurve
+      && Math.abs(curve.v0.x - curve.v3.x) > 0.34 && Math.abs(curve.v0.y - curve.v3.y) > 0.34)
+    expect(broadBends.length).toBeGreaterThan(4)
+    // Each existing inlet emission lane remains visibly unobstructed.
+    for (let lane = 0; lane < 6; lane++) {
+      const x = layout.inletX + (lane - 2.5) * layout.radius * 2.12
+      expect(new THREE.Raycaster(new THREE.Vector3(x, -layout.topY, 2), new THREE.Vector3(0, 0, -1)).intersectObject(mesh)).toHaveLength(0)
+    }
+    geometry.dispose(); mesh.material.dispose()
   })
 
   it('ignores the independently rendered funnel and accepts an empty network', () => {

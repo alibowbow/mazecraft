@@ -4,9 +4,9 @@ import {
   openParticleWater, readWorkerProbe,
 } from './helpers/waterHarness'
 
-// The historical atlas UI was replaced by a second view of the particle water.
+// The historical atlas UI was replaced by a conserved 3D basin.
 // Keep its real-browser shader/asset-loading gate on the current visible mode.
-test('고화질 3D 물은 입자 Worker를 사용하고 레거시 atlas 없이 렌더링된다', async ({ page }, testInfo) => {
+test('고화질 3D 수조는 2D Worker를 보존하고 레거시 atlas 없이 렌더링된다', async ({ page }, testInfo) => {
   test.setTimeout(60_000)
   const errors: string[] = []
   const legacyRequests: string[] = []
@@ -20,7 +20,7 @@ test('고화질 3D 물은 입자 Worker를 사용하고 레거시 atlas 없이 �
   const stage = await openParticleWater(page, 'surface-3d')
   await expect.poll(() => numberAttribute(stage, 'data-filled-cells'), { timeout: 20_000 }).toBeGreaterThan(1)
   await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')
-  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'hydraulic-basin')
   const probe = await readWorkerProbe(page)
   expect(probe.fluidLayouts).toHaveLength(1)
   expect(probe.urls.filter(url => /fluid\.worker/.test(url))).toHaveLength(1)

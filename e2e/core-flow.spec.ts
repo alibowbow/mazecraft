@@ -303,7 +303,7 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
   await waitForChangedImage(complete)
 })
 
-test('15. 3D 입자 물이 위쪽 깔때기에서 아래 출구로 흐른다', async ({ page }) => {
+test('15. 3D 수조의 물이 출구로 배출되고 실제 물량을 보존한다', async ({ page }) => {
   test.setTimeout(60_000)
   await page.setViewportSize({ width: 360, height: 800 })
   const errors: string[] = []
@@ -317,7 +317,7 @@ test('15. 3D 입자 물이 위쪽 깔때기에서 아래 출구로 흐른다', a
   const stage = page.getByTestId('water-simulation-stage')
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 20_000 })
   await expect(stage).toHaveAttribute('data-view-mode', 'surface-3d')
-  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
+  await expect(stage).toHaveAttribute('data-fluid-model', 'hydraulic-basin')
   await expect(stage).toHaveAttribute('data-start-edge', 'top')
   await expect(stage).toHaveAttribute('data-end-edge', 'bottom')
   await expect(stage).toHaveAttribute('data-quality', 'low')
@@ -336,4 +336,3 @@ test('15. 3D 입자 물이 위쪽 깔때기에서 아래 출구로 흐른다', a
   await expect(stage).toHaveCount(0)
   expect(errors).toEqual([])
 })
-

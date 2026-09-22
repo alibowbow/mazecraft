@@ -2,9 +2,11 @@ import * as THREE from 'three'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { FluidWall } from './types'
 
-const CORNER_RADIUS = 0.18
-const CROWN_BEVEL = 0.032
-const WALL_HEIGHT = 0.48
+const OUTER_CORNER_RADIUS = 0.18
+const CHANNEL_CORNER_RADIUS = 0.38
+const CROWN_WIDTH = 0.05
+const CROWN_HEIGHT = 0.075
+const WALL_HEIGHT = 1.05
 
 /** A small glaze shoulder; thin inlet walls retain the source's clearance. */
 function shoulder(wall: FluidWall): number {
@@ -27,7 +29,11 @@ function roundedPath<T extends THREE.Path>(points: readonly THREE.Vector2[], pat
   for (let i = 0; i < points.length; i++) {
     const p = points[i], previous = points[(i + points.length - 1) % points.length], next = points[(i + 1) % points.length]
     const incoming = previous.clone().sub(p), outgoing = next.clone().sub(p)
-    const radius = Math.min(CORNER_RADIUS, incoming.length() * 0.499, outgoing.length() * 0.499)
+    // All union boundaries keep ceramic to their right. Negative cross here
+    // is an inward channel corner: give it a broad sweep while retaining the
+    // smaller convex cap radius and the local edge-length clearance limit.
+    const cornerRadius = incoming.cross(outgoing) < 0 ? CHANNEL_CORNER_RADIUS : OUTER_CORNER_RADIUS
+    const radius = Math.min(cornerRadius, incoming.length() * 0.499, outgoing.length() * 0.499)
     incoming.setLength(radius); outgoing.setLength(radius)
     const a = p.clone().add(incoming), b = p.clone().add(outgoing)
     if (i === 0) path.moveTo(a.x, a.y)
@@ -114,11 +120,11 @@ export function ceramicWallGeometry(input: readonly FluidWall[]): THREE.BufferGe
   const shapes = ceramicWallShapes(input)
   const detail = input.length > 1600 ? 2 : input.length > 650 ? 3 : 6
   const geometry = new THREE.ExtrudeGeometry(shapes, {
-    depth: WALL_HEIGHT - CROWN_BEVEL * 2,
-    bevelEnabled: true, bevelSize: CROWN_BEVEL, bevelThickness: CROWN_BEVEL,
+    depth: WALL_HEIGHT - CROWN_HEIGHT * 2,
+    bevelEnabled: true, bevelSize: CROWN_WIDTH, bevelThickness: CROWN_HEIGHT,
     bevelSegments: Math.min(5, detail + 1), steps: 1, curveSegments: detail,
   })
-  geometry.translate(0, 0, CROWN_BEVEL)
+  geometry.translate(0, 0, CROWN_HEIGHT)
   // The extrusion duplicates every face normal. Weld positions first so the
   // crown catches a continuous highlight instead of a stack of flat stripes.
   geometry.deleteAttribute('normal'); geometry.deleteAttribute('uv')

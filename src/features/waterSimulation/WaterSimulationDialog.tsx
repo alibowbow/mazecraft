@@ -279,8 +279,8 @@ export default function WaterSimulationDialog({
           className="water-simulation-stage"
           data-testid="water-simulation-stage"
           data-renderer={renderState}
-          data-fluid-renderer="particle-density-free-boundary"
-          data-fluid-model="position-based-free-surface"
+          data-fluid-renderer={mode === 'surface-3d' ? 'contained-basin-heightfield' : 'particle-density-free-boundary'}
+          data-fluid-model={mode === 'surface-3d' ? 'hydraulic-basin' : 'position-based-free-surface'}
           data-view-mode={mode}
           data-particle-count={status.particleCount}
           data-escaped-volume={status.escapedVolume}
@@ -301,7 +301,7 @@ export default function WaterSimulationDialog({
           data-solver-mode={
             metrics.solverMode === 'worker'
               ? 'worker'
-              : 'main-thread-fallback'
+              : mode === 'surface-3d' ? 'main-thread' : 'main-thread-fallback'
           }
           data-physics-step-hz={metrics.physicsStepHz}
           data-snapshot-hz={metrics.snapshotHz}

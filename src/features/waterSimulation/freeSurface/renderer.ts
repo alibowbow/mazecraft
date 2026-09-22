@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { FluidLayout, FluidSnapshot } from './types'
+import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
 import { SurfaceTrackball } from './camera3d'
@@ -304,7 +305,7 @@ const waterFragment = /* glsl */ `
   }
 `
 
-/** Render the particle solver's free surface; no independent animation clock. */
+/** Render each solver's accepted state; no independent animation clock. */
 export class FreeSurfaceRenderer {
   readonly canvas: HTMLCanvasElement
   private readonly renderer: THREE.WebGLRenderer
@@ -313,6 +314,7 @@ export class FreeSurfaceRenderer {
   private readonly flatWalls = new THREE.Group()
   private readonly funnel: THREE.Group
   private presentation3d: FreeSurfacePresentation3D | null = null
+  private basinSnapshot: BasinSnapshot | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private readonly trackball = new SurfaceTrackball()
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
@@ -609,7 +611,18 @@ export class FreeSurfaceRenderer {
     }
     this.particleGeometry.instanceCount = count
     this.fieldDirty = true
-    this.draw()
+    if (this.viewMode === 'free-surface') this.draw()
+  }
+
+  setBasinSnapshot(snapshot: BasinSnapshot): void {
+    if (this.disposed) return
+    this.basinSnapshot = snapshot
+    this.presentation3d?.setBasinSnapshot(snapshot)
+    this.canvas.dataset.basinTime = String(snapshot.diagnostics.time)
+    this.canvas.dataset.basinStoredVolume = String(snapshot.diagnostics.stored)
+    this.canvas.dataset.basinInitialVolume = String(snapshot.initialStoredVolume)
+    this.canvas.dataset.basinWetCells = String(snapshot.diagnostics.wetCells)
+    if (this.viewMode === 'surface-3d') this.draw()
   }
 
   setSurfaceStyle(style: SurfaceStyle): void {
@@ -661,6 +674,7 @@ export class FreeSurfaceRenderer {
     if (indicator) indicator.visible = enabled
     const indicator3d = this.presentation3d?.content.getObjectByName('supply-glint')
     if (indicator3d) indicator3d.visible = enabled
+    this.presentation3d?.setInflow(enabled)
     this.draw()
   }
 
@@ -714,14 +728,17 @@ export class FreeSurfaceRenderer {
     this.fieldDirty = true
     this.canvas.dataset.viewMode = mode
     this.canvas.dataset.waterDetail = mode === 'surface-3d' ? 'multiband-ripples' : 'flat-meniscus'
+    this.canvas.dataset.waterModel = mode === 'surface-3d' ? 'hydraulic-basin' : 'position-based-free-surface'
     this.canvas.setAttribute('aria-label', mode === 'surface-3d'
-      ? '같은 미로 물의 입체 보기. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
+      ? '벽 안에 담긴 미로의 물. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     if (mode === 'surface-3d' && !this.presentation3d) {
       this.presentation3d = new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer)
       this.presentation3d.addFunnel(this.funnel)
       this.presentation3d.setAppearance(this.appearance)
       this.presentation3d.setLook(this.look)
+      if (this.basinSnapshot) this.presentation3d.setBasinSnapshot(this.basinSnapshot)
+      this.presentation3d.setInflow(this.canvas.dataset.inflow !== 'disabled')
     }
     this.resetCamera()
   }
@@ -864,7 +881,7 @@ export class FreeSurfaceRenderer {
       this.cameraFrame = undefined
     }
     this.renderer.info.reset()
-    if (this.weightsDirty) {
+    if (this.viewMode === 'free-surface' && this.weightsDirty) {
       this.weightsMaterial.uniforms.uStep.value.set(0.035 / this.viewWidth, 0)
       this.renderer.setRenderTarget(this.weightsX)
       this.renderer.render(this.weightsScene, this.camera)
@@ -874,7 +891,7 @@ export class FreeSurfaceRenderer {
       this.weightsDirty = false
       this.canvas.dataset.wallWeightBuilds = String(++this.weightBuilds)
     }
-    if (this.fieldDirty) {
+    if (this.viewMode === 'free-surface' && this.fieldDirty) {
       this.renderer.setRenderTarget(this.densityTarget)
       this.renderer.setClearColor(0x000000, 0)
       this.renderer.render(this.densityScene, this.camera)
@@ -891,7 +908,7 @@ export class FreeSurfaceRenderer {
     }
     this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
-      this.presentation3d.updateWater(this.waterMaterial.uniforms.uTime.value, 0.5 + this.waterMaterial.uniforms.uStyle.value)
+      this.presentation3d.updateWater(this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
       this.renderer.setRenderTarget(null)
       this.renderer.shadowMap.enabled = true
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping

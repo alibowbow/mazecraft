@@ -33,6 +33,9 @@ export function applyCeramicGlaze(material: THREE.Material, uniforms: Record<str
         + sin(ceramicP.x * 4.1 - ceramicP.y) * 0.18));
       float ceramicVein = 1.0 - smoothstep(0.012, 0.046 + fwidth(ceramicWave), ceramicWave);
       diffuseColor.rgb *= 1.0 - vec3(0.10, 0.13, 0.16) * ceramicVein * uCeramicMineral;
+      float ceramicCloud = sin(ceramicP.x * 1.32 + sin(ceramicP.y * 0.83))
+        * sin(ceramicP.y * 1.17 + ceramicP.z * 1.8);
+      diffuseColor.rgb *= vec3(0.987, 0.984, 0.980) + ceramicCloud * 0.012;
       float ceramicFoot = 1.0 - smoothstep(0.02, 0.17, ceramicP.z);
       diffuseColor.rgb *= 1.0 - ceramicFoot * 0.055;
     `).replace('#include <roughnessmap_fragment>', `
@@ -41,5 +44,5 @@ export function applyCeramicGlaze(material: THREE.Material, uniforms: Record<str
       roughnessFactor = clamp(roughnessFactor + ceramicGrain * 0.008, 0.06, 1.0);
     `)
   }
-  material.customProgramCacheKey = () => glaze ? 'continuous-terraced-ceramic-v1' : 'continuous-terraced-ceramic-depth-v1'
+  material.customProgramCacheKey = () => glaze ? 'continuous-deep-ceramic-v2' : 'continuous-terraced-ceramic-depth-v1'
 }

@@ -3,6 +3,8 @@ import type { FluidLayout } from './types'
 import type { WaterAppearance } from './appearance'
 import { getWaterTheme, type WaterLook } from './lookdev'
 import { createTerraceElevation, createTerraceUniforms, TERRACE_ELEVATION_GLSL, warpTerraceGeometry } from './terraceElevation'
+import { BasinField, BASIN_FIELD_GLSL } from './basinField'
+import { BASIN_FLOOR_Z, type BasinSnapshot } from './basinSimulation'
 
 /** Boundary loops preserve the user's active-cell silhouette, including holes. */
 export function mazeBodyShapes(layout: FluidLayout): THREE.Shape[] {
@@ -127,9 +129,11 @@ export class SculptedSurface {
   private geometry: THREE.BufferGeometry[] = []
   private readonly contactTexture: THREE.DataTexture
   private readonly causticTexture = createCausticTexture()
+  private readonly basin: BasinField
 
   constructor(layout: FluidLayout, surface: THREE.Texture, bounds: THREE.Vector4) {
     const terraces = createTerraceElevation(layout)
+    this.basin = new BasinField(layout.rows, layout.cols)
     // A static, local ambient-occlusion field gives the ceramic joints depth.
     // Only wall neighbourhoods are rasterized; no per-frame CPU work is needed.
     const size = 512, contact = new Uint8Array(size * size).fill(255)
@@ -154,6 +158,7 @@ export class SculptedSurface {
       uLiquid: { value: surface }, uLiquidTime: { value: 0 }, uLiquidStyle: { value: 0.6 },
       uLiquidBounds: { value: bounds }, uLiquidLod: { value: 2.0 }, uStone: { value: 0 }, uContact: { value: this.contactTexture },
       uCaustic: { value: this.causticTexture }, uLiquidTint: { value: new THREE.Color('#ffffff') },
+      uBasin: { value: this.basin.texture }, uBasinSize: { value: this.basin.size }, uBasinEnabled: { value: 0 },
       ...createTerraceUniforms(terraces),
     }
     const common = `
@@ -164,6 +169,14 @@ export class SculptedSurface {
       uniform vec4 uLiquidBounds;
       varying vec2 vLiquidUv;
       varying vec2 vBodyPoint;
+      ${BASIN_FIELD_GLSL}
+      vec4 liquidField(vec2 uv) {
+        if (uBasinEnabled > 0.5) {
+          vec4 basin = basinAt(uLiquidBounds.xy + uv * uLiquidBounds.zw);
+          return vec4(basin.r, length(basin.gb) * basin.r, basin.a, basin.r);
+        }
+        return texture2D(uLiquid, uv);
+      }
       vec2 ripplePhase(vec2 p, float t) {
         return vec2(dot(p, vec2(4.1, 2.3)) - t * 1.5,
           dot(p, vec2(-2.2, 5.8)) - t * 1.1);
@@ -171,6 +184,14 @@ export class SculptedSurface {
     `
     const fieldFunctions = `
       float liquidHeight(vec2 p) {
+        if (uBasinEnabled > 0.5) {
+          vec2 world = uLiquidBounds.xy + p * uLiquidBounds.zw;
+          vec4 basin = basinAt(world);
+          float speed = min(1.0, length(basin.gb) * 2.0);
+          vec2 phase = ripplePhase(world - basin.gb * uLiquidTime * 0.06, uLiquidTime);
+          float waves = (sin(phase.x) * 0.0028 + sin(phase.y) * 0.0018) * (0.2 + speed * 0.8) * uLiquidStyle;
+          return ${BASIN_FLOOR_Z} + basin.r + waves * smoothstep(0.002, 0.07, basin.r);
+        }
         vec4 f = texture2DLodEXT(uLiquid, p, uLiquidLod);
         vec2 world = uLiquidBounds.xy + p * uLiquidBounds.zw;
         float speed = smoothstep(0.02, 0.35, f.g / max(f.r, 0.01));
@@ -202,13 +223,15 @@ export class SculptedSurface {
       shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${common}`)
         .replace('#include <alphatest_fragment>', `
           #include <alphatest_fragment>
-          float density = texture2D(uLiquid, vLiquidUv).r;
-          if (density < 0.105) discard;
+          vec4 acceptedLiquid = liquidField(vLiquidUv);
+          float density = acceptedLiquid.r;
+          if (uBasinEnabled > 0.5 ? acceptedLiquid.b < 0.5 || density < 0.002 : density < 0.105) discard;
         `)
         .replace('#include <normal_fragment_maps>', `
           #include <normal_fragment_maps>
-          vec4 flow = texture2D(uLiquid, vLiquidUv);
+          vec4 flow = liquidField(vLiquidUv);
           float motion = smoothstep(0.025, 0.35, flow.g / max(flow.r, 0.01));
+          if (uBasinEnabled > 0.5) motion = 0.24 + motion * 0.76;
           vec2 p = uLiquidBounds.xy + vLiquidUv * uLiquidBounds.zw;
           vec2 phase = ripplePhase(p, uLiquidTime);
           vec2 micro = vec2(cos(phase.x) * 0.023 + cos(phase.y) * 0.014,
@@ -221,10 +244,10 @@ export class SculptedSurface {
           'material.thickness = thickness;',
           // Vary optical depth only where accepted liquid exists. This does
           // not fill a cell, blur across a wall, or change the wet footprint.
-          'material.thickness = thickness * mix(0.32, 1.15, smoothstep(0.105, 0.68, density));',
+          'material.thickness = uBasinEnabled > 0.5 ? max(0.012, density) : thickness * mix(0.32, 1.15, smoothstep(0.105, 0.68, density));',
         ))
     }
-    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-liquid-v2'
+    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v1'
     this.floorMaterial.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.uniforms)
       shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${common}`)
@@ -240,9 +263,10 @@ export class SculptedSurface {
         `)
         .replace('#include <emissivemap_fragment>', `
           #include <emissivemap_fragment>
-          vec4 liquid = texture2D(uLiquid, vLiquidUv);
-          float wet = smoothstep(0.12, 0.29, liquid.r);
+          vec4 liquid = liquidField(vLiquidUv);
+          float wet = uBasinEnabled > 0.5 ? liquid.b * smoothstep(0.003, 0.045, liquid.r) : smoothstep(0.12, 0.29, liquid.r);
           float motion = smoothstep(0.03, 0.30, liquid.g / max(liquid.r, 0.01));
+          if (uBasinEnabled > 0.5) motion = 0.22 + motion * 0.78;
           float t = uLiquidTime * motion;
           vec2 phase = ripplePhase(vBodyPoint, t);
           vec2 warp = vec2(sin(phase.x), sin(phase.y)) * 0.017 * uLiquidStyle;
@@ -250,10 +274,10 @@ export class SculptedSurface {
           float primary = texture2D(uCaustic, causticUv).r;
           float secondary = texture2D(uCaustic, causticUv * 1.34 + vec2(0.21, 0.37) - warp * 0.5).r;
           float caustic = primary * 0.8 + secondary * 0.22;
-          totalEmissiveRadiance += mix(vec3(1.0), uLiquidTint, 0.12) * caustic * wet * 0.72;
+          totalEmissiveRadiance += mix(vec3(1.0), uLiquidTint, 0.12) * caustic * wet * 1.05;
         `)
     }
-    this.floorMaterial.customProgramCacheKey = () => 'atelier-ceramic-floor-v2'
+    this.floorMaterial.customProgramCacheKey = () => 'atelier-ceramic-basin-floor-v1'
     this.sideMaterial.onBeforeCompile = shader => {
       shader.uniforms.uStone = this.uniforms.uStone
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCastPosition;')
@@ -322,13 +346,18 @@ export class SculptedSurface {
     this.sideMaterial.clearcoat = look.theme === 'terrace' || look.theme === 'basalt' ? 0.08 : 0.48
     this.uniforms.uStone.value = look.theme === 'terrace' || look.theme === 'basalt' ? 1 : 0
   }
+  setBasinSnapshot(snapshot: BasinSnapshot) {
+    this.basin.update(snapshot)
+    this.uniforms.uBasinEnabled.value = 1
+    this.uniforms.uLiquidTime.value = snapshot.diagnostics.time
+  }
   setAppearance(appearance: WaterAppearance) {
     const tint = new THREE.Color(appearance.color ?? '#ffffff')
     this.waterMaterial.color.copy(tint).lerp(new THREE.Color('#ffffff'), appearance.color ? 0.83 : 1)
     ;(this.uniforms.uLiquidTint.value as THREE.Color).copy(tint)
     if (appearance.color) {
       this.waterMaterial.attenuationColor.copy(tint).lerp(new THREE.Color('#ffffff'), 0.035)
-      this.waterMaterial.attenuationDistance = Math.max(0.28, (1 - appearance.opacity) * 1.25)
+      this.waterMaterial.attenuationDistance = Math.max(0.45, (1 - appearance.opacity) * 1.9)
     } else {
       // Neutral shallow absorption makes clear water legible on pale ceramic
       // while preserving the floor's hue and physical transmission.
@@ -346,5 +375,5 @@ export class SculptedSurface {
     // world-space smoothing radius stays constant as the canvas is resized.
     this.uniforms.uLiquidLod.value = Math.max(1, Math.log2(0.12 * Math.max(image.width / bounds.z, image.height / bounds.w)))
   }
-  dispose() { this.contactTexture.dispose(); this.causticTexture.dispose(); this.geometry.forEach(g => g.dispose()); [this.waterDepth, this.waterMaterial, this.floorMaterial, this.sideMaterial, this.baseMaterial].forEach(m => m.dispose()) }
+  dispose() { this.basin.dispose(); this.contactTexture.dispose(); this.causticTexture.dispose(); this.geometry.forEach(g => g.dispose()); [this.waterDepth, this.waterMaterial, this.floorMaterial, this.sideMaterial, this.baseMaterial].forEach(m => m.dispose()) }
 }

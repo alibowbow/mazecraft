@@ -48,8 +48,8 @@ export async function openParticleWater(page: Page, mode: 'free-surface' | 'surf
   await page.getByRole('button', { name: mode === 'surface-3d' ? '3D 수면' : '2D 물 흐름', exact: true }).click()
   await expect(modes.getByRole('button', { name: mode === 'surface-3d' ? '3D 수면' : '2D 물 흐름', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(stage).toHaveAttribute('data-view-mode', mode)
-  await expect(stage).toHaveAttribute('data-fluid-model', 'position-based-free-surface')
-  await expect(stage).toHaveAttribute('data-solver-mode', 'worker')
+  await expect(stage).toHaveAttribute('data-fluid-model', mode === 'surface-3d' ? 'hydraulic-basin' : 'position-based-free-surface')
+  await expect(stage).toHaveAttribute('data-solver-mode', mode === 'surface-3d' ? 'main-thread' : 'worker')
   await expect(stage.locator('canvas.water-simulation-canvas')).toBeVisible()
   return stage
 }

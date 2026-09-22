@@ -11,8 +11,8 @@ async function openStudio(page: Page) {
 
 async function fluidState(canvas: Locator) {
   return {
-    time: Number(await canvas.getAttribute('data-simulation-time')),
-    particles: Number(await canvas.getAttribute('data-particle-count')),
+    time: Number(await canvas.getAttribute('data-basin-time')),
+    stored: Number(await canvas.getAttribute('data-basin-stored-volume')),
   }
 }
 
@@ -21,7 +21,7 @@ test('water studio starts with live 3D water and tunes appearance without resett
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   const canvas = await openStudio(page)
-  await expect.poll(async () => (await fluidState(canvas)).particles).toBeGreaterThan(0)
+  await expect.poll(async () => (await fluidState(canvas)).stored).toBeGreaterThan(0)
   const initialTime = (await fluidState(canvas)).time
   await expect.poll(async () => (await fluidState(canvas)).time).toBeGreaterThan(initialTime)
   await page.getByRole('button', { name: '일시정지', exact: true }).click()
@@ -149,6 +149,7 @@ test('creates a reproducible shaped maze with the original generator and carries
   await openStudio(page)
   await page.getByRole('button', { name: '일시정지', exact: true }).click()
   await page.getByRole('button', { name: '2D', exact: true }).click()
+  await page.getByRole('tab', { name: '미로', exact: true }).click()
   await page.getByRole('button', { name: '하트', exact: true }).click()
   await page.getByLabel('가로 셀', { exact: true }).fill('16')
   await page.getByLabel('세로 셀', { exact: true }).fill('14')

@@ -4,6 +4,7 @@ import { createGeneratedWaterMaze, DEFAULT_WATER_MAZE } from '../../waterStudio/
 import { buildFluidLayout } from './layout'
 import { mazeBodyShapes, SculptedSurface } from './sculptedSurface'
 import { AQUA_WATER_APPEARANCE, DEFAULT_WATER_APPEARANCE } from './appearance'
+import { BASIN_FLOOR_Z } from './basinSimulation'
 
 describe('sculpted maze body', () => {
   it('builds a closed solid body with the original active-cell silhouette', () => {
@@ -36,6 +37,7 @@ describe('sculpted maze body', () => {
     const surface = new SculptedSurface(layout, new THREE.Texture(), new THREE.Vector4(-1, -15, 15, 19))
     surface.body.geometry.computeBoundingBox()
     const bounds = surface.body.geometry.boundingBox!
+    expect(bounds.max.z).toBeCloseTo(BASIN_FLOOR_Z, 6)
     expect(bounds.min.z).toBeGreaterThan(-0.7)
     expect(bounds.max.z - bounds.min.z).toBeGreaterThan(0.6)
     expect(surface.foundation.visible).toBe(false)

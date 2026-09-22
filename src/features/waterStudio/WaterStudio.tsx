@@ -77,7 +77,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const [paused, setPaused] = useState(false)
   const [inflow, setInflow] = useState(true)
   const [mode, setMode] = useState<'surface-3d' | 'free-surface'>('surface-3d')
-  const [tab, setTab] = useState<'water' | 'material' | 'light' | 'maze'>('maze')
+  const [tab, setTab] = useState<'water' | 'material' | 'light' | 'maze'>('water')
   const [tuningOpen, setTuningOpen] = useState(false)
   const [focus, setFocus] = useState(false)
   const [retry, setRetry] = useState(0)
@@ -208,7 +208,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
             {slider('물의 농도', preferences.opacity, 0.2, 0.9, 0.01, opacity => update({ opacity }), `${Math.round(preferences.opacity * 100)}%`)}
             <div className="ws-section-label"><span>수면의 움직임</span></div><div className="ws-option-row">{([['calm', '잔잔하게'], ['natural', '자연스럽게'], ['dynamic', '생동감 있게']] as const).map(([id, label]) => <button key={id} aria-pressed={preferences.surface === id} onClick={() => update({ surface: id })}>{label}</button>)}</div>
           </>}
-          {tab === 'material' && <><div className="ws-section-label"><span>미로의 재질</span><span>MATERIAL</span></div><div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>{slider('벽의 입체감', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}</>}
+          {tab === 'material' && <><div className="ws-section-label"><span>미로의 재질</span><span>MATERIAL</span></div><div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>{slider('벽 높이', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}</>}
           {tab === 'light' && <><div className="ws-section-label"><span>빛의 분위기</span><span>LIGHTING</span></div><div className="ws-light-options">{([['daylight', '맑은 낮', '부드럽고 선명한 빛'], ['golden', '오후의 햇살', '따뜻한 색감과 음영'], ['studio', '스튜디오', '재질을 드러내는 차분한 빛']] as const).map(([id, label, caption]) => <button key={id} data-light={id} aria-pressed={preferences.look.light === id} onClick={() => updateLook({ light: id })}><i /><span><strong>{label}</strong><small>{caption}</small></span>{preferences.look.light === id && <Check size={15} />}</button>)}</div></>}
           {tab === 'maze' && <>
             <div className="ws-section-label"><span>미로의 모양</span></div>

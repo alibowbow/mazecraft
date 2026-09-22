@@ -23,8 +23,9 @@ export const MAX_TERRACE_KNOTS = 16
 
 /**
  * A single profile drives the ceramic floor, walls, water and accessories.
- * Interior plateaus are flat and transitions coincide with whole-row seams.
- * The small outside-board shoulders keep bevels level at the inlet and outlet.
+ * The default maze is one continuous flat basin. Only the small outside-board
+ * inlet/outlet shoulders change elevation; explicit legacy plateau options
+ * still produce transitions at whole-row seams.
  */
 export function createTerraceElevation(
   layout: { topY: number; bottomY: number },
@@ -34,12 +35,12 @@ export function createTerraceElevation(
   if (!Number.isFinite(rows) || rows <= 0 || !Number.isFinite(layout.topY)) {
     throw new RangeError('Terraces need finite, ordered maze bounds.')
   }
-  const requestedCount = options.plateauCount ?? Math.floor(rows / 2)
+  const requestedCount = options.plateauCount ?? 1
   const plateauCount = Math.min(4, Math.max(1, Math.min(Math.floor(rows), Math.round(requestedCount))))
   const totalRise = plateauCount > 1 ? options.totalRise ?? 1.2 : 0
   const transitionWidth = options.transitionWidth ?? 0.16
-  const outletDrop = options.outletDrop ?? 0.52
-  const inletRise = options.inletRise ?? 0.32
+  const outletDrop = options.outletDrop ?? 0.20
+  const inletRise = options.inletRise ?? 0.12
   if (![requestedCount, totalRise, transitionWidth, outletDrop, inletRise].every(Number.isFinite)
     || totalRise < 0 || transitionWidth <= 0 || transitionWidth > 0.5 || outletDrop < 0 || inletRise < 0) {
     throw new RangeError('Invalid terrace dimensions.')
