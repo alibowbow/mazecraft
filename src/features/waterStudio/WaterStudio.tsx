@@ -6,7 +6,7 @@ import { editWaterMazeWall, resizeWaterMaze } from './liveEditing'
 import type { FluidResume } from '../waterSimulation/freeSurface/types'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/freeSurface/runtime'
 import { WATER_COLOR_PRESETS, type WaterAppearance } from '../waterSimulation/freeSurface/appearance'
-import { DEFAULT_WATER_LOOK, WATER_THEMES, normalizeWaterLook, type WaterLook } from '../waterSimulation/freeSurface/lookdev'
+import { DEFAULT_WATER_LOOK, STUDIO_BACKGROUND, WATER_THEMES, normalizeWaterLook, type WaterLook } from '../waterSimulation/freeSurface/lookdev'
 import type { WaterSurfaceStyle } from '../waterSimulation/rendering'
 import { WATER_STUDIO_PRESETS, createWaterStudioProject, type WaterStudioPresetId } from './presets'
 import { createGeneratedWaterMaze, DEFAULT_WATER_MAZE, WATER_MAZE_SHAPES, type WaterMazeOptions } from './createMaze'
@@ -230,7 +230,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const slider = (label: string, value: number, min: number, max: number, step: number, onChange: (n: number) => void, display: string) => <label className="ws-slider"><span>{label}<output>{display}</output></span><input type="range" aria-label={label} min={min} max={max} step={step} value={value} onChange={event => onChange(Number(event.target.value))} /></label>
 
   return <main className={`water-studio${focus ? ' is-focused' : ''}${tuningOpen ? ' tuning-open' : ''}${mode === 'free-surface' ? ' is-2d' : ''}`} data-testid="water-studio" data-theme-name={preferences.look.theme}
-    style={{ '--ws-scene': selectedTheme.background, '--ws-material': selectedTheme.color } as CSSProperties}>
+    style={{ '--ws-scene': STUDIO_BACKGROUND, '--ws-material': selectedTheme.color } as CSSProperties}>
     <header className="ws-header">
       <div className="ws-brand"><Waves size={25} strokeWidth={1.8} /><div><strong>MAZECRAFT</strong><span>WATER ATELIER</span></div></div>
       <nav className="ws-navigation" aria-label="주 메뉴"><span aria-current="page">물 스튜디오</span><button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
@@ -265,8 +265,8 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
         {focus && <button className="ws-focus-exit" onClick={() => setFocus(false)}><X size={16} />몰입 화면 닫기</button>}
       </section>
       <aside className="ws-tuning" id="water-tuning" aria-label="시뮬레이션 튜닝">
-        <div className="ws-panel-heading"><div><span className="ws-eyebrow">DESIGN YOUR FLOW</span><h2>{tab === 'maze' ? '미로 만들기' : '물과 재질'}</h2></div><SlidersHorizontal size={20} /><button className="ws-mobile-tune ws-icon" aria-label="튜닝 닫기" onClick={() => setTuningOpen(false)}><X size={19} /></button></div>
-        <div className="ws-tabs" role="tablist" aria-label="튜닝 항목">{([['maze', '미로'], ['water', '물'], ['material', '재질'], ['light', '빛']] as const).map(([id, label]) => <button key={id} role="tab" id={`ws-tab-${id}`} aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} onKeyDown={event => {
+        <div className="ws-panel-heading"><div><span className="ws-eyebrow">DESIGN YOUR FLOW</span><h2>{{ maze: '미로 만들기', water: '물의 흐름', material: '색상과 재질', light: '조명' }[tab]}</h2></div><SlidersHorizontal size={20} /><button className="ws-mobile-tune ws-icon" aria-label="튜닝 닫기" onClick={() => setTuningOpen(false)}><X size={19} /></button></div>
+        <div className="ws-tabs" role="tablist" aria-label="튜닝 항목">{([['maze', '미로'], ['water', '물'], ['material', '색상'], ['light', '빛']] as const).map(([id, label]) => <button key={id} role="tab" id={`ws-tab-${id}`} aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} onKeyDown={event => {
           const tabs = ['maze', 'water', 'material', 'light'] as const
           const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
           if (!offset && event.key !== 'Home' && event.key !== 'End') return
@@ -276,15 +276,21 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
         }} aria-controls={`ws-panel-${id}`} onClick={() => setTab(id)}>{label}</button>)}</div>
         <div className="ws-panel-content" role="tabpanel" id={`ws-panel-${tab}`} aria-labelledby={`ws-tab-${tab}`}>
           {tab === 'water' && <>
-            <div className="ws-section-label"><span>물의 색</span><span>WATER COLOR</span></div>
-            <div className="ws-water-colors" role="group" aria-label="물 색상">{WATER_COLOR_PRESETS.map(item => <button key={item.id} title={item.label} aria-label={`물 색상 ${item.label}`} aria-pressed={preferences.color === item.color} style={{ '--swatch': item.color ?? '#f5e4d8' } as CSSProperties} onClick={() => update({ color: item.color })}><i />{preferences.color === item.color && <Check size={13} />}</button>)}</div>
-            <label className="ws-custom-color">직접 선택<input type="color" aria-label="물 색상 직접 선택" value={preferences.color ?? '#72d1df'} onChange={event => update({ color: event.target.value })} /></label>
             {slider('유입량', preferences.flow, 0.1, 2.5, 0.05, flow => update({ flow }), `${preferences.flow.toFixed(2)}×`)}
             {slider('물의 농도', preferences.opacity, 0.2, 0.9, 0.01, opacity => update({ opacity }), `${Math.round(preferences.opacity * 100)}%`)}
             <div className="ws-section-label"><span>수면의 움직임</span></div><div className="ws-option-row">{([['calm', '잔잔하게'], ['natural', '자연스럽게'], ['dynamic', '생동감 있게']] as const).map(([id, label]) => <button key={id} aria-pressed={preferences.surface === id} onClick={() => update({ surface: id })}>{label}</button>)}</div>
           </>}
-          {tab === 'material' && <><div className="ws-section-label"><span>2D 선 색상</span></div><label className="ws-custom-color">벽 색상<input type="color" aria-label="2D 벽 색상" value={preferences.look.wallColor2d ?? '#526b7a'} onChange={event => updateLook({ wallColor2d: event.target.value })} /></label><label className="ws-custom-color">격자 색상<input type="color" aria-label="2D 격자 색상" value={preferences.look.gridColor2d ?? '#dce3e8'} onChange={event => updateLook({ gridColor2d: event.target.value })} /></label><div className="ws-section-label"><span>미로의 재질</span><span>MATERIAL</span></div><div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>{slider('벽 높이', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}</>}
-          {tab === 'light' && <><div className="ws-section-label"><span>2D 배경</span></div><div className="ws-option-row"><button aria-pressed={preferences.look.background2d === 'white'} onClick={() => updateLook({ background2d: 'white' })}>흰색 배경</button><button aria-pressed={preferences.look.background2d !== 'white'} onClick={() => updateLook({ background2d: 'material' })}>재질 배경</button></div><div className="ws-section-label"><span>빛의 분위기</span><span>LIGHTING</span></div><div className="ws-light-options">{([['daylight', '맑은 낮', '부드럽고 선명한 빛'], ['golden', '오후의 햇살', '따뜻한 색감과 음영'], ['studio', '스튜디오', '재질을 드러내는 차분한 빛']] as const).map(([id, label, caption]) => <button key={id} data-light={id} aria-pressed={preferences.look.light === id} onClick={() => updateLook({ light: id })}><i /><span><strong>{label}</strong><small>{caption}</small></span>{preferences.look.light === id && <Check size={15} />}</button>)}</div></>}
+          {tab === 'material' && <>
+            <div className="ws-section-label"><span>물의 색</span><span>WATER COLOR</span></div>
+            <div className="ws-water-colors" role="group" aria-label="물 색상">{WATER_COLOR_PRESETS.map(item => <button key={item.id} title={item.label} aria-label={`물 색상 ${item.label}`} aria-pressed={preferences.color === item.color} style={{ '--swatch': item.color ?? '#f5e4d8' } as CSSProperties} onClick={() => update({ color: item.color })}><i />{preferences.color === item.color && <Check size={13} />}</button>)}</div>
+            <label className="ws-custom-color">직접 선택<input type="color" aria-label="물 색상 직접 선택" value={preferences.color ?? '#72d1df'} onChange={event => update({ color: event.target.value })} /></label>
+            <div className="ws-section-label"><span>미로 벽</span></div>
+            <label className="ws-custom-color">벽 색상<input type="color" aria-label="벽 색상" value={preferences.look.wallColor ?? (mode === 'surface-3d' ? selectedTheme.wall : preferences.look.wallColor2d ?? '#526b7a')} onChange={event => updateLook({ wallColor: event.target.value })} /></label>
+            <div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id, wallColor: null })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>
+            {slider('벽 높이', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}
+            {mode === 'free-surface' && <><div className="ws-section-label"><span>2D 바탕과 보조선</span></div><label className="ws-custom-color">격자 보조선<input type="color" aria-label="2D 격자 색상" value={preferences.look.gridColor2d ?? '#dce3e8'} onChange={event => updateLook({ gridColor2d: event.target.value })} /></label><div className="ws-option-row"><button aria-pressed={preferences.look.background2d === 'white'} onClick={() => updateLook({ background2d: 'white' })}>흰색 배경</button><button aria-pressed={preferences.look.background2d !== 'white'} onClick={() => updateLook({ background2d: 'material' })}>밝은 아이보리</button></div></>}
+          </>}
+          {tab === 'light' && <><div className="ws-section-label"><span>빛의 분위기</span><span>LIGHTING</span></div><div className="ws-light-options">{([['daylight', '맑은 낮', '부드럽고 선명한 빛'], ['golden', '오후의 햇살', '따뜻한 색감과 음영'], ['studio', '스튜디오', '재질을 드러내는 차분한 빛']] as const).map(([id, label, caption]) => <button key={id} data-light={id} aria-pressed={preferences.look.light === id} onClick={() => updateLook({ light: id })}><i /><span><strong>{label}</strong><small>{caption}</small></span>{preferences.look.light === id && <Check size={15} />}</button>)}</div></>}
           {tab === 'maze' && <>
             <div className="ws-section-label"><span>2D 실시간 편집</span></div>
             <button className="ws-live-edit" aria-pressed={wallEditing} onClick={() => { setMode('free-surface'); setWallEditing(!wallEditing); setTuningOpen(false) }}>{wallEditing ? '벽 편집 마치기' : '벽 직접 편집'}</button>

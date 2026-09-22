@@ -9,7 +9,7 @@ import { SculptedSurface } from './sculptedSurface'
 import type { BasinSnapshot } from './basinSimulation'
 import { BasinFixtures } from './basinFixtures'
 import type { WaterAppearance } from './appearance'
-import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, WATER_LIGHTS, type WaterLook } from './lookdev'
+import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_BACKGROUND, WATER_LIGHTS, type WaterLook } from './lookdev'
 
 // Particle centers stop at the solver bounds, but their optical footprints can
 // extend .392 cells farther. Preserve the whole silhouette at the board edge.
@@ -161,9 +161,9 @@ export class FreeSurfacePresentation3D {
     this.look = normalizeWaterLook(next, this.look)
     const palette = getWaterTheme(this.look.theme)
     const lighting = WATER_LIGHTS[this.look.light]
-    this.scene.background = new THREE.Color(palette.background)
-    this.wallTop.color.set(palette.wall)
-    this.wallSide.color.set(palette.wallSide)
+    this.scene.background = new THREE.Color(STUDIO_BACKGROUND)
+    this.wallTop.color.set(this.look.wallColor ?? palette.wall)
+    this.wallSide.color.set(this.look.wallColor ?? palette.wallSide)
     this.wallTop.roughness = palette.roughness
     this.wallTop.metalness = palette.metalness
     this.wallSide.roughness = Math.min(0.85, palette.roughness + 0.04)
@@ -177,7 +177,6 @@ export class FreeSurfacePresentation3D {
     this.wallSide.envMapIntensity = 0.65
     this.sculpted.setLook(this.look)
     this.fixtures.setWallHeight(this.look.wallHeight)
-    this.stage.material.color.set(this.look.theme === 'porcelain' ? '#fff0dd' : palette.background)
     this.key.shadow.needsUpdate = true
     if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     this.ambient.color.set(lighting.sky)
