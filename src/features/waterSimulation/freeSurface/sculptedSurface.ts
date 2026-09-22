@@ -183,6 +183,17 @@ export class SculptedSurface {
         return vec2(dot(p, vec2(4.1, 2.3)) - t * 1.5,
           dot(p, vec2(-2.2, 5.8)) - t * 1.1);
       }
+      float rippleHash(vec2 p) {
+        vec3 h = fract(vec3(p.xyx) * 0.1031);
+        h += dot(h, h.yzx + 33.33);
+        return fract((h.x + h.y) * h.z);
+      }
+      float rippleNoise(vec2 p) {
+        vec2 cell = floor(p), local = fract(p);
+        vec2 blend = local * local * (3.0 - 2.0 * local);
+        return mix(mix(rippleHash(cell), rippleHash(cell + vec2(1.0, 0.0)), blend.x),
+          mix(rippleHash(cell + vec2(0.0, 1.0)), rippleHash(cell + vec2(1.0, 1.0)), blend.x), blend.y);
+      }
     `
     const fieldFunctions = `
       float liquidHeight(vec2 p) {
@@ -238,16 +249,21 @@ export class SculptedSurface {
           vec2 phase = ripplePhase(p, uLiquidTime);
           vec2 micro = vec2(cos(phase.x) * 0.023 + cos(phase.y) * 0.014,
             cos(phase.x) * 0.013 - cos(phase.y) * 0.026);
-          // Millimetre-scale capillary slopes break the reflected strip light
-          // into moving glints; Three's Fresnel still controls their strength.
-          // Filtering the phase keeps those glints stable on smaller screens.
-          vec3 capillaryPhase = vec3(dot(p, vec2(18.0, 8.0)) - uLiquidTime * 2.9,
-            dot(p, vec2(-9.0, 22.0)) - uLiquidTime * 2.4,
-            dot(p, vec2(31.0, -8.0)) + uLiquidTime * 1.7);
+          // One dominant, gently wandering wave train carries small, unequal
+          // cross-ripples. Smooth wave packets prevent crossed periodic waves
+          // from turning the reflected light into an even lattice of dots.
+          vec2 drift = p + vec2(-0.024, 0.016) * uLiquidTime;
+          vec2 warp = vec2(rippleNoise(drift * 0.68), rippleNoise(drift * 0.91 + vec2(5.2, -9.1))) - 0.5;
+          vec2 wavePoint = p + warp * 0.64;
+          float packet = smoothstep(0.22, 0.85, rippleNoise(drift * 0.47 + vec2(-3.7, 8.6)));
+          vec3 capillaryPhase = vec3(dot(wavePoint, vec2(5.8, 9.5)) - uLiquidTime * 1.32,
+            dot(wavePoint + warp.yx * 0.21, vec2(15.3, -4.7)) - uLiquidTime * 2.01,
+            dot(wavePoint, vec2(-22.0, 13.0)) + uLiquidTime * 1.61);
           vec3 capillaryFilter = vec3(1.0) - smoothstep(vec3(0.7), vec3(2.2), fwidth(capillaryPhase));
           vec3 capillary = cos(capillaryPhase) * capillaryFilter;
-          vec2 fineSlope = vec2(capillary.x * 0.060 - capillary.y * 0.023 + capillary.z * 0.024,
-            capillary.x * 0.026 + capillary.y * 0.057 - capillary.z * 0.006);
+          vec2 fineSlope = (vec2(0.52, 0.85) * capillary.x * 0.052
+            + vec2(0.96, -0.29) * capillary.y * 0.016
+            + vec2(-0.86, 0.51) * capillary.z * 0.006) * (0.22 + packet * 0.78);
           float interior = smoothstep(0.105, 0.24, flow.r);
           vec3 worldRipple = vec3((micro * motion + fineSlope * (0.55 + motion * 0.45)) * uLiquidStyle * interior, 0.0);
           normal = normalize(normal + mat3(viewMatrix) * worldRipple);
@@ -259,7 +275,7 @@ export class SculptedSurface {
           'material.thickness = uBasinEnabled > 0.5 ? max(0.012, density) : thickness * mix(0.32, 1.15, smoothstep(0.105, 0.68, density));',
         ))
     }
-    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v3'
+    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v4'
     this.floorMaterial.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.uniforms)
       shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${common}`)
