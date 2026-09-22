@@ -62,7 +62,7 @@ export class FreeSurfacePresentation3D {
     if (renderer) {
       this.environment = createAtelierEnvironment(renderer)
       this.scene.environment = this.environment.texture
-      this.scene.environmentIntensity = 0.55
+      this.scene.environmentIntensity = 0.65
     }
     this.boardWidth = layout.maxX - layout.minX + 2 * SURFACE_FIELD_PADDING
     this.boardHeight = layout.maxY - layout.minY + 2 * SURFACE_FIELD_PADDING
@@ -161,13 +161,13 @@ export class FreeSurfacePresentation3D {
     if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     this.ambient.color.set(lighting.sky)
     this.ambient.groundColor.set(lighting.ground)
-    this.ambient.intensity = lighting.ambient * 0.23
+    this.ambient.intensity = lighting.ambient * 0.45
     this.key.color.set(lighting.color)
-    this.key.intensity = lighting.intensity * 0.95
+    this.key.intensity = lighting.intensity * 1.15
     const lightDistance = Math.max(16, this.sculptureHeight * 1.4)
     this.key.position.set(this.centerX + lighting.direction[0] * lightDistance, this.centerY + lighting.direction[1] * lightDistance, lighting.direction[2] * lightDistance)
     this.fill.color.set(lighting.fill)
-    this.fill.intensity = 0.11
+    this.fill.intensity = 0.40
     this.fitShadowCamera()
     // Only uniforms change on look edits; geometry and the fluid field stay
     // untouched, including when the height slider moves continuously.

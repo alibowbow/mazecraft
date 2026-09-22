@@ -97,9 +97,11 @@ function studioHdri(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
     direction.set(Math.cos(latitude) * Math.cos(longitude), Math.sin(latitude), Math.cos(latitude) * Math.sin(longitude))
     const sky = THREE.MathUtils.smoothstep(direction.z, -0.12, 0.7)
     const index = (y * width + x) * 4
-    pixels[index] = 0.12 + sky * 0.055
-    pixels[index + 1] = 0.105 + sky * 0.070
-    pixels[index + 2] = 0.088 + sky * 0.090
+    // Open daylight and white courtyard walls illuminate the entire glaze,
+    // including faces that do not happen to reflect a studio panel.
+    pixels[index] = 0.36 + sky * 0.28
+    pixels[index + 1] = 0.38 + sky * 0.32
+    pixels[index + 2] = 0.40 + sky * 0.36
     for (const panel of panels) {
       const facing = direction.dot(panel.direction)
       if (facing <= 0) continue
@@ -135,8 +137,8 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
   const time = { value: 0 }, strength = { value: 1 }
   // An explicit map preserves each material's intensity. Three substitutes
   // scene.environmentIntensity when a Standard/Physical material's map is null.
-  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMap: environment.texture, envMapIntensity: 1.2, shadowSide: THREE.BackSide })
-  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xb9ebef, attenuationDistance: 2.8, normalMap: normalA, normalScale: new THREE.Vector2(0.20, 0.20), envMap: environment.texture, envMapIntensity: 0.60, depthWrite: false })
+  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xf7f5f0, clearcoat: 1, clearcoatRoughness: 0.1, roughness: 0.15, metalness: 0, envMap: environment.texture, envMapIntensity: 1.1, shadowSide: THREE.BackSide })
+  const water = new THREE.MeshPhysicalMaterial({ color: 0x38b6d3, transmission: 0.92, transparent: true, ior: 1.333, roughness: 0.08, metalness: 0, thickness: 0.42, attenuationColor: 0xc4f2f7, attenuationDistance: 3.5, normalMap: normalA, normalScale: new THREE.Vector2(0.14, 0.14), envMap: environment.texture, envMapIntensity: 0.60, depthWrite: false })
   water.userData.cascadeNormalMaps = [normalA, normalB]
   const vertexPoint = `varying vec3 vCascadePoint;`
   const worldPoint = `vCascadePoint = (modelMatrix * vec4(transformed, 1.0)).xyz;`
@@ -190,8 +192,8 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
       const clear = appearance.profile === 'clear' || !appearance.color
       const opacity = THREE.MathUtils.clamp(Number.isFinite(appearance.opacity) ? appearance.opacity : 0.72, 0.1, 0.9)
       water.color.set(clear ? 0xffffff : appearance.profile === 'aqua' ? 0x38b6d3 : appearance.color!)
-      water.attenuationColor.set(clear ? 0xaaaaaa : 0xb9ebef)
-      water.attenuationDistance = clear ? 0.72 + (1 - opacity) * 3.2 : 1.2 + (1 - opacity) * 5.7
+      water.attenuationColor.set(clear ? 0xf5fcff : 0xc4f2f7)
+      water.attenuationDistance = clear ? 5 + (1 - opacity) * 8 : 1.8 + (1 - opacity) * 6
       // The required surface transmission remains physical for every dye.
       water.transmission = 0.92
     },
