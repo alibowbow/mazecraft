@@ -8,6 +8,10 @@ export class BasinFixtures {
   readonly group = new THREE.Group()
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
+  private readonly supplyCurve: THREE.CatmullRomCurve3
+  private readonly supply: THREE.Mesh
+  private readonly nozzle: THREE.Mesh
+  private readonly opening: THREE.Mesh
   private readonly jet: THREE.Mesh
   private readonly spill: THREE.Mesh
   private readonly ripples: THREE.Mesh[] = []
@@ -18,6 +22,7 @@ export class BasinFixtures {
   private readonly outletX: number
   private readonly waterMaterial: THREE.MeshPhysicalMaterial
   private inflowEnabled = true
+  private supplyLift = 0
   private snapshot: BasinSnapshot | null = null
 
   constructor(layout: FluidLayout) {
@@ -44,18 +49,22 @@ export class BasinFixtures {
     // A small cast pedestal seats the supply beside the rim, not across it.
     const foot = add(new THREE.CylinderGeometry(0.23, 0.27, 0.30, 28), ceramic)
     foot.rotation.x = Math.PI / 2; foot.position.set(x, y + 0.56, -0.44)
-    const supply = new THREE.CatmullRomCurve3([
+    foot.name = 'basin-supply-foot'
+    const supply = this.supplyCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(x, y + 0.56, -0.32),
       new THREE.Vector3(x, y + 0.56, 0.95),
       new THREE.Vector3(x, y + 0.40, 1.37),
       new THREE.Vector3(x, y + 0.04, 1.43),
       new THREE.Vector3(x, this.inletY, 1.24),
     ])
-    add(new THREE.TubeGeometry(supply, 36, 0.085, 12, false), copper)
-    const nozzle = add(new THREE.CylinderGeometry(0.10, 0.10, 0.13, 24, 1, true), copper)
+    this.supply = add(new THREE.TubeGeometry(supply, 36, 0.085, 12, false), copper)
+    this.supply.name = 'basin-supply-pipe'
+    const nozzle = this.nozzle = add(new THREE.CylinderGeometry(0.10, 0.10, 0.13, 24, 1, true), copper)
     nozzle.rotation.x = Math.PI / 2; nozzle.position.set(x, this.inletY, 1.20)
-    const opening = add(new THREE.CircleGeometry(0.071, 24), dark)
+    nozzle.name = 'basin-supply-nozzle'
+    const opening = this.opening = add(new THREE.CircleGeometry(0.071, 24), dark)
     opening.rotation.x = Math.PI; opening.position.set(x, this.inletY, 1.134)
+    opening.name = 'basin-supply-opening'
     this.jet = add(new THREE.CylinderGeometry(0.049, 0.066, 1, 16, 8, true), liquid)
     this.jet.rotation.x = Math.PI / 2
     this.jet.name = 'supply-glint'
@@ -84,7 +93,7 @@ export class BasinFixtures {
     const inletLevel = BASIN_FLOOR_Z + (snapshot.depth[this.inletCell] ?? 0)
     const source = snapshot.sourceRate
     this.jet.visible = this.inflowEnabled && source > 0.000001
-    const fallHeight = Math.max(0.01, 1.134 - inletLevel)
+    const fallHeight = Math.max(0.01, this.opening.position.z - inletLevel)
     const jetWidth = Math.min(1.8, 0.6 + Math.sqrt(source) * 2)
     this.jet.scale.set(jetWidth, fallHeight, jetWidth)
     // Supply position is captured from the ripple center; it never follows
@@ -107,8 +116,10 @@ export class BasinFixtures {
       for (let i = 0; i < positions.count; i++) {
         const t = 1 - uv.getY(i), across = uv.getX(i) - 0.5
         const ripple = Math.sin(across * 42 + snapshot.diagnostics.time * 4) * 0.007
+        // Overlap the in-basin water before crossing the lip. The basin field
+        // ends at outletY, so starting outside it would leave a dry air gap.
         positions.setXYZ(i, this.outletX + across * width,
-          this.outletY - 0.08 - t * 0.55,
+          this.outletY + 0.08 - t * 0.71,
           level - (level + 0.53) * t * t + ripple * t)
       }
       positions.needsUpdate = true
@@ -119,6 +130,26 @@ export class BasinFixtures {
 
   setAppearance(appearance: WaterAppearance): void {
     this.waterMaterial.color.set(appearance.color ?? '#ffffff').lerp(new THREE.Color('#ffffff'), 0.78)
+  }
+
+  setWallHeight(multiplier: number): void {
+    if (!Number.isFinite(multiplier)) return
+    const lift = 1.05 * Math.max(0, Math.min(1.75, multiplier) - 1)
+    if (lift === this.supplyLift) return
+    this.supplyLift = lift
+    // Raise the arch and nozzle together, keeping the pedestal connection
+    // planted and the tube circular even at the tallest supported rim.
+    const heights = [-0.32, 0.95, 1.37, 1.43, 1.24]
+    this.supplyCurve.points.forEach((point, i) => { point.z = heights[i] + (i ? lift : 0) })
+    this.supplyCurve.updateArcLengths()
+    const previous = this.supply.geometry
+    const geometry = new THREE.TubeGeometry(this.supplyCurve, 36, 0.085, 12, false)
+    this.supply.geometry = geometry
+    this.geometries[this.geometries.indexOf(previous)] = geometry
+    previous.dispose()
+    this.nozzle.position.z = 1.20 + lift
+    this.opening.position.z = 1.134 + lift
+    if (this.snapshot) this.update(this.snapshot)
   }
 
   setInflow(enabled: boolean): void {

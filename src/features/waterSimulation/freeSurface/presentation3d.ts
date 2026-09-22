@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { FluidLayout } from './types'
 import { SurfaceTrackball } from './camera3d'
-import { ceramicWallGeometry } from './ceramicWalls'
+import { ceramicBasinWallGeometry } from './ceramicWalls'
 import { applyCeramicGlaze } from './ceramicGlaze'
 import { createTerraceElevation, createTerraceUniforms, splitTerraceGeometry, terraceElevationSlopeAt, type TerraceElevationProfile } from './terraceElevation'
 import { StudioStage, createAtelierEnvironment } from './studioStage'
@@ -85,7 +85,7 @@ export class FreeSurfacePresentation3D {
     // Union the entire network before rounding it: each T/L/cross junction is
     // part of one ceramic surface, with no intersecting boxes or cap seams.
     const terrace = this.terrace = createTerraceElevation(layout)
-    const sourceWallGeometry = ceramicWallGeometry(layout.walls)
+    const sourceWallGeometry = ceramicBasinWallGeometry(layout)
     const wallGeometry = splitTerraceGeometry(sourceWallGeometry, terrace)
     sourceWallGeometry.dispose()
     const wallPositions = wallGeometry.getAttribute('position')
@@ -158,6 +158,7 @@ export class FreeSurfacePresentation3D {
     this.wallTop.envMapIntensity = 1.1
     this.wallSide.envMapIntensity = 0.95
     this.sculpted.setLook(this.look)
+    this.fixtures.setWallHeight(this.look.wallHeight)
     this.stage.material.color.set(palette.background)
     this.key.shadow.needsUpdate = true
     if (this.renderer) this.renderer.shadowMap.needsUpdate = true

@@ -159,6 +159,7 @@ export class SculptedSurface {
       uLiquidBounds: { value: bounds }, uLiquidLod: { value: 2.0 }, uStone: { value: 0 }, uContact: { value: this.contactTexture },
       uCaustic: { value: this.causticTexture }, uLiquidTint: { value: new THREE.Color('#ffffff') },
       uBasin: { value: this.basin.texture }, uBasinSize: { value: this.basin.size }, uBasinEnabled: { value: 0 },
+      uBasinFloorZ: { value: BASIN_FLOOR_Z },
       ...createTerraceUniforms(terraces),
     }
     const common = `
@@ -166,6 +167,7 @@ export class SculptedSurface {
       uniform float uLiquidTime;
       uniform float uLiquidStyle;
       uniform float uLiquidLod;
+      uniform float uBasinFloorZ;
       uniform vec4 uLiquidBounds;
       varying vec2 vLiquidUv;
       varying vec2 vBodyPoint;
@@ -190,7 +192,7 @@ export class SculptedSurface {
           float speed = min(1.0, length(basin.gb) * 2.0);
           vec2 phase = ripplePhase(world - basin.gb * uLiquidTime * 0.06, uLiquidTime);
           float waves = (sin(phase.x) * 0.0028 + sin(phase.y) * 0.0018) * (0.2 + speed * 0.8) * uLiquidStyle;
-          return ${BASIN_FLOOR_Z} + basin.r + waves * smoothstep(0.002, 0.07, basin.r);
+          return uBasinFloorZ + basin.r + waves * smoothstep(0.002, 0.07, basin.r);
         }
         vec4 f = texture2DLodEXT(uLiquid, p, uLiquidLod);
         vec2 world = uLiquidBounds.xy + p * uLiquidBounds.zw;
@@ -247,7 +249,7 @@ export class SculptedSurface {
           'material.thickness = uBasinEnabled > 0.5 ? max(0.012, density) : thickness * mix(0.32, 1.15, smoothstep(0.105, 0.68, density));',
         ))
     }
-    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v1'
+    this.waterMaterial.customProgramCacheKey = () => 'atelier-physical-basin-v2'
     this.floorMaterial.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.uniforms)
       shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${common}`)

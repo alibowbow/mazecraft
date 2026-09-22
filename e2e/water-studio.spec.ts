@@ -3,8 +3,9 @@ import { readShareHash } from '../src/features/share/codec'
 
 async function openStudio(page: Page) {
   await page.goto('/')
-  const canvas = page.getByTestId('water-studio-canvas')
-  await expect(canvas).toHaveAttribute('data-renderer', 'ready', { timeout: 30_000 })
+  const stage = page.getByTestId('water-studio-canvas')
+  await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 30_000 })
+  const canvas = stage.locator('canvas.water-simulation-canvas')
   await expect(canvas).toHaveAttribute('data-view-mode', 'surface-3d')
   return canvas
 }
@@ -53,7 +54,7 @@ test('water studio starts with live 3D water and tunes appearance without resett
   await page.screenshot({ path: testInfo.outputPath('water-studio-tuned.png') })
 
   await page.reload()
-  await expect(canvas).toHaveAttribute('data-renderer', 'ready', { timeout: 30_000 })
+  await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: 30_000 })
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
   await page.getByRole('tab', { name: '물', exact: true }).click()
   await expect(page.getByRole('button', { name: '물 색상 분홍', exact: true })).toHaveAttribute('aria-pressed', 'true')

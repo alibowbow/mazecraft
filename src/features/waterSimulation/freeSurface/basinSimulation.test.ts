@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import * as THREE from 'three'
 import { createEmptyGraph } from '../../../core/maze'
 import { createTestProject } from '../../../test/projectFixture'
 import { BASIN_FLOOR_Z, BASIN_INITIAL_DEPTH, BASIN_OUTLET_SILL_DEPTH, BasinSimulation } from './basinSimulation'
 import { BasinField } from './basinField'
+import { BasinFixtures } from './basinFixtures'
 import { buildFluidLayout } from './layout'
 
 const createBasin = () => {
@@ -72,5 +74,37 @@ describe('physical horizontal basin', () => {
     snapshot.depth[0] = 0
     expect(data[0]).toBeCloseTo(BASIN_INITIAL_DEPTH)
     field.dispose()
+  })
+
+  it('keeps the inlet pipe over the tallest rim and its jet joined to both nozzle and water', () => {
+    const project = createTestProject(), layout = buildFluidLayout(project)
+    const basin = new BasinSimulation(project, layout), fixtures = new BasinFixtures(layout)
+    basin.advance(0.25, 1)
+    const snapshot = basin.snapshot()
+    fixtures.update(snapshot)
+    const foot = fixtures.group.getObjectByName('basin-supply-foot')!
+    const footPosition = foot.position.clone()
+    const pipe = fixtures.group.getObjectByName('basin-supply-pipe') as THREE.Mesh
+    const opening = fixtures.group.getObjectByName('basin-supply-opening')!
+    const jet = fixtures.group.getObjectByName('supply-glint')!
+    for (const height of [1.75, 0.55, 1.75]) {
+      fixtures.setWallHeight(height)
+      fixtures.group.updateMatrixWorld(true)
+      const rim = height * 1.05 + 0.014
+      const positions = pipe.geometry.getAttribute('position')
+      let crossingVertices = 0
+      for (let i = 0; i < positions.count; i++) {
+        if (Math.abs(positions.getY(i) + layout.topY) > 0.14) continue
+        crossingVertices++
+        expect(positions.getZ(i)).toBeGreaterThan(rim)
+      }
+      expect(crossingVertices).toBeGreaterThan(0)
+      const bounds = new THREE.Box3().setFromObject(jet)
+      expect(bounds.max.z).toBeCloseTo(opening.position.z, 6)
+      expect(bounds.min.z).toBeCloseTo(snapshot.depth[layout.topY * layout.cols + Math.floor(layout.inletX)] + BASIN_FLOOR_Z, 6)
+      expect(bounds.max.y).toBeLessThan(-layout.topY - 0.14)
+      expect(foot.position.equals(footPosition)).toBe(true)
+    }
+    fixtures.dispose()
   })
 })

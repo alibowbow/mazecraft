@@ -1,12 +1,22 @@
 import * as THREE from 'three'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
-import type { FluidWall } from './types'
+import type { FluidLayout, FluidWall } from './types'
 
 const OUTER_CORNER_RADIUS = 0.18
 const CHANNEL_CORNER_RADIUS = 0.38
 const CROWN_WIDTH = 0.05
 const CROWN_HEIGHT = 0.075
 const WALL_HEIGHT = 1.05
+
+/** The overhead basin spout needs a closed rim; keep the 2D funnel opening intact. */
+export function ceramicBasinWallGeometry(layout: FluidLayout): THREE.BufferGeometry {
+  const sourceCol = Math.floor(layout.inletX)
+  const half = 0.075
+  return ceramicWallGeometry([...layout.walls, {
+    x0: sourceCol - half, x1: sourceCol + 1 + half,
+    y0: layout.topY - half, y1: layout.topY + half,
+  }])
+}
 
 /** A small glaze shoulder; thin inlet walls retain the source's clearance. */
 function shoulder(wall: FluidWall): number {

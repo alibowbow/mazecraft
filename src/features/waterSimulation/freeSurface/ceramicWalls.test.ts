@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { createEmptyGraph } from '../../../core/maze'
 import { createTestProject } from '../../../test/projectFixture'
 import { buildFluidLayout } from './layout'
-import { ceramicWallGeometry, ceramicWallShapes } from './ceramicWalls'
+import { ceramicBasinWallGeometry, ceramicWallGeometry, ceramicWallShapes } from './ceramicWalls'
 
 describe('continuous ceramic wall sculpture', () => {
   it('unions an overlapping T junction into one rounded perimeter, without internal faces', () => {
@@ -84,5 +84,20 @@ describe('continuous ceramic wall sculpture', () => {
     const geometry = ceramicWallGeometry([])
     expect(geometry.getAttribute('position').count).toBe(0)
     geometry.dispose()
+  })
+
+  it('closes the overhead-fed basin rim while keeping the 2D inlet and basin outlet open', () => {
+    const layout = buildFluidLayout(createTestProject({ mazeGraph: createEmptyGraph(3, 3) }))
+    const before = JSON.stringify(layout.walls)
+    const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    const basin = new THREE.Mesh(ceramicBasinWallGeometry(layout), material)
+    const particle = new THREE.Mesh(ceramicWallGeometry(layout.walls), material)
+    const inletRay = new THREE.Raycaster(new THREE.Vector3(layout.inletX, -layout.topY - 0.5, 0.42), new THREE.Vector3(0, 1, 0))
+    expect(inletRay.intersectObject(basin).length).toBeGreaterThan(0)
+    expect(inletRay.intersectObject(particle)).toHaveLength(0)
+    const outletRay = new THREE.Raycaster(new THREE.Vector3(layout.outletX, -layout.outletY, 2), new THREE.Vector3(0, 0, -1))
+    expect(outletRay.intersectObject(basin)).toHaveLength(0)
+    expect(JSON.stringify(layout.walls)).toBe(before)
+    basin.geometry.dispose(); particle.geometry.dispose(); material.dispose()
   })
 })

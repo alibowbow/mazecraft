@@ -281,6 +281,10 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
     }
   }, { project, layout: { ...layout, activeCells: Array.from(layout.activeCells) } })
   await test.info().attach('basin-optics-measurements', { body: JSON.stringify(result, null, 2), contentType: 'application/json' })
+  // Report shader compilation failures directly before their missing pixels
+  // produce a less useful contrast failure.
+  expect(errors).toEqual([])
+  expect(result.error).toBe(0)
   expect(result.model).toBe('hydraulic-basin')
   expect(result.particles).toBe(0)
   expect(result.wetCells).toBe(25)
@@ -296,6 +300,4 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
   expect(result.attenuationColor[0]).toBe(result.attenuationColor[1])
   expect(result.attenuationColor[1]).toBe(result.attenuationColor[2])
   expect(result.materialColor).toEqual([1, 1, 1])
-  expect(result.error).toBe(0)
-  expect(errors).toEqual([])
 })
