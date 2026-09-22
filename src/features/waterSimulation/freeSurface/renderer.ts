@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { FluidLayout, FluidSnapshot } from './types'
+import type { FluidLayout, FluidSnapshot, FluidDiagnostics } from './types'
 import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
@@ -147,6 +147,8 @@ const waterFragment = /* glsl */ `
   uniform vec3 uLightDirection;
   uniform vec3 uLightColor;
   uniform float uWallDepth;
+  uniform float uWhiteBackground;
+  uniform vec3 uGridColor;
   varying vec2 vUv;
 
   vec3 boardAt(vec2 maze) {
@@ -159,7 +161,8 @@ const waterFragment = /* glsl */ `
     float pastelBlend = clamp(maze.y / max(uMazeSize.y, 1.0), 0.0, 1.0);
     vec3 color = mix(uFloor * 0.98, min(vec3(1.0), uFloor + vec3(0.012)), pastelBlend);
     color *= mix(vec3(1.0), uLightColor, 0.16);
-    color -= max(line.x, line.y) * inside * mix(0.012, 0.021, uClearOptics);
+    color = mix(color, vec3(1.0), uWhiteBackground);
+    color = mix(color, uGridColor, max(line.x, line.y) * inside);
     float dotMark = 1.0 - smoothstep(0.008, 0.020, length(fract(maze) - 0.5));
     color -= dotMark * inside * 0.024;
     // A short directional contact shade makes the recess legible and follows
@@ -233,8 +236,8 @@ const waterFragment = /* glsl */ `
       * (1.0 - smoothstep(uMazeSize.y - 0.02, uMazeSize.y + 0.04, maze.y));
     float chamber = insideX * insideY;
     vec3 background = boardAt(maze);
-    background += chamber * vec3(0.005, 0.008, 0.010);
-    background -= dot(vUv - vec2(0.5, 0.55), vUv - vec2(0.5, 0.55)) * 0.025;
+    background += chamber * vec3(0.005, 0.008, 0.010) * (1.0 - uWhiteBackground);
+    background -= dot(vUv - vec2(0.5, 0.55), vUv - vec2(0.5, 0.55)) * 0.025 * (1.0 - uWhiteBackground);
 
     vec2 field = texture2D(uDensity, vUv).rg;
     float density = field.r;
@@ -367,7 +370,7 @@ export class FreeSurfaceRenderer {
     private readonly mount: HTMLElement,
     private readonly layout: FluidLayout,
     private readonly quality: 'low' | 'high',
-    private readonly sculpture?: 'terraced-fountain',
+    private readonly sculpture?: 'terraced-fountain' | 'extruded-flow',
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 1.5 : 1))
@@ -473,6 +476,8 @@ export class FreeSurfaceRenderer {
         uAbsorption: { value: new THREE.Vector3(0.045, 0.045, 0.045) },
         uScatter: { value: new THREE.Vector3(0, 0, 0) },
         uFloor: { value: new THREE.Color(getWaterTheme(DEFAULT_WATER_LOOK.theme).floor).convertLinearToSRGB() },
+        uWhiteBackground: { value: 0 },
+        uGridColor: { value: new THREE.Color('#dce3e8').convertLinearToSRGB() },
         uBackdrop: { value: new THREE.Color(getWaterTheme(DEFAULT_WATER_LOOK.theme).background).convertLinearToSRGB() },
         uLightDirection: { value: new THREE.Vector3(...WATER_LIGHTS.daylight.direction).normalize() },
         uLightColor: { value: new THREE.Color(WATER_LIGHTS.daylight.color).convertLinearToSRGB() },
@@ -553,9 +558,9 @@ export class FreeSurfaceRenderer {
       }
     }
     const palette = getWaterTheme(this.look.theme)
-    const top = new THREE.Color(palette.wall)
-    const bottom = new THREE.Color(palette.wallSide)
-    const rim = new THREE.Color(palette.wall).lerp(new THREE.Color('#ffffff'), 0.45)
+    const top = new THREE.Color(this.look.wallColor2d ?? '#526b7a')
+    const bottom = top.clone().multiplyScalar(0.82)
+    const rim = top.clone().lerp(new THREE.Color('#ffffff'), 0.45)
     const shadow = new THREE.Color(palette.edge)
     for (const wall of this.layout.walls) {
       if (wall.kind === 'funnel') continue
@@ -587,6 +592,19 @@ export class FreeSurfaceRenderer {
     addMesh(fillPositions, fillColors, false)
   }
 
+  captureParticles(diagnostics: FluidDiagnostics): FluidSnapshot {
+    const count = this.particleGeometry.instanceCount
+    return { count, positions: new Float32Array(this.positionAttribute.array.slice(0, count * 2)),
+      velocities: new Float32Array(this.velocityAttribute.array.slice(0, count * 2)), diagnostics: { ...diagnostics } }
+  }
+
+  pointAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    if (this.viewMode !== 'free-surface') return null
+    const bounds = this.canvas.getBoundingClientRect()
+    const point = new THREE.Vector3((clientX - bounds.left) / bounds.width * 2 - 1, 1 - (clientY - bounds.top) / bounds.height * 2, 0).unproject(this.camera)
+    return { x: point.x, y: -point.y }
+  }
+
   render(snapshot: FluidSnapshot): void {
     if (this.disposed) return
     this.waterMaterial.uniforms.uTime.value = snapshot.diagnostics.time
@@ -612,9 +630,12 @@ export class FreeSurfaceRenderer {
       this.positionAttribute.needsUpdate = true
       this.velocityAttribute.needsUpdate = true
     }
+    this.canvas.dataset.particleTime = String(snapshot.diagnostics.time)
+    this.canvas.dataset.particleCount = String(count)
+    this.canvas.dataset.particleStoredVolume = String(snapshot.diagnostics.stored)
     this.particleGeometry.instanceCount = count
     this.fieldDirty = true
-    if (this.viewMode === 'free-surface') this.draw()
+    if (this.viewMode === 'free-surface' || this.sculpture === 'extruded-flow') this.draw()
   }
 
   setBasinSnapshot(snapshot: BasinSnapshot): void {
@@ -695,6 +716,7 @@ export class FreeSurfaceRenderer {
   setLook(next: Partial<WaterLook>): void {
     if (this.disposed) return
     const previousTheme = this.look.theme
+    const previousWallColor = this.look.wallColor2d
     this.look = normalizeWaterLook(next, this.look)
     const palette = getWaterTheme(this.look.theme)
     const lighting = WATER_LIGHTS[this.look.light]
@@ -703,8 +725,13 @@ export class FreeSurfaceRenderer {
     this.waterMaterial.uniforms.uLightDirection.value.set(...lighting.direction).normalize()
     this.waterMaterial.uniforms.uLightColor.value.set(lighting.color).convertLinearToSRGB()
     this.waterMaterial.uniforms.uWallDepth.value = this.look.wallHeight
+    this.waterMaterial.uniforms.uWhiteBackground.value = this.look.background2d === 'white' ? 1 : 0
+    this.waterMaterial.uniforms.uGridColor.value.set(this.look.gridColor2d ?? '#dce3e8').convertLinearToSRGB()
+    this.canvas.dataset.wallColor2d = this.look.wallColor2d ?? '#526b7a'
+    this.canvas.dataset.gridColor2d = this.look.gridColor2d ?? '#dce3e8'
+    this.canvas.dataset.background2d = this.look.background2d ?? 'material'
     this.presentation3d?.setLook(this.look)
-    if (previousTheme !== this.look.theme) {
+    if (previousTheme !== this.look.theme || previousWallColor !== this.look.wallColor2d) {
       // Only appearance edits rebuild the two flat meshes; simulation buffers
       // and the filtered density/coverage targets remain untouched.
       for (const child of this.flatWalls.children) {
@@ -742,20 +769,33 @@ export class FreeSurfaceRenderer {
     this.fieldDirty = true
     this.canvas.dataset.viewMode = mode
     this.canvas.dataset.waterDetail = mode === 'surface-3d' ? 'multiband-ripples' : 'flat-meniscus'
-    this.canvas.dataset.waterModel = mode === 'surface-3d' ? 'hydraulic-basin' : 'position-based-free-surface'
+    this.canvas.dataset.waterModel = mode === 'surface-3d' && this.sculpture !== 'extruded-flow' ? 'hydraulic-basin' : 'position-based-free-surface'
     this.canvas.setAttribute('aria-label', mode === 'surface-3d'
       ? '벽 안에 담긴 미로의 물. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     if (mode === 'surface-3d' && !this.presentation3d) {
-      this.presentation3d = this.sculpture
+      this.presentation3d = this.sculpture === 'terraced-fountain'
         ? new CascadePresentation3D(this.layout, this.renderer)
-        : new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer)
+        : new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer, this.sculpture === 'extruded-flow')
+      if (this.sculpture === 'extruded-flow' && this.presentation3d instanceof FreeSurfacePresentation3D) {
+        const material = new THREE.ShaderMaterial({
+          vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+          fragmentShader: waterFragment.replace('gl_FragColor = vec4(background, 1.0); return;', 'discard;')
+            .replace('vec4(mix(background, water, coverage * uOpacity), 1.0)', 'vec4(water, coverage * uOpacity)'),
+          uniforms: { ...this.waterMaterial.uniforms, uPresentation3D: { value: 0 } },
+          transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, toneMapped: false,
+        })
+        this.materials.push(material)
+        this.presentation3d.setFlowMaterial(material, this.layout)
+      }
       this.presentation3d.addFunnel(this.funnel)
       this.presentation3d.setAppearance(this.appearance)
       this.presentation3d.setLook(this.look)
       if (this.basinSnapshot) this.presentation3d.setBasinSnapshot(this.basinSnapshot)
       this.presentation3d.setInflow(this.canvas.dataset.inflow !== 'disabled')
     }
+    if (mode === 'free-surface' && this.sculpture === 'extruded-flow') this.scene.add(this.funnel)
+    else if (this.sculpture === 'extruded-flow') this.presentation3d?.addFunnel(this.funnel)
     this.resetCamera()
   }
 
@@ -797,6 +837,7 @@ export class FreeSurfaceRenderer {
     this.panX = 0
     this.panY = 0
     this.trackball.reset()
+    if (this.sculpture === 'extruded-flow') this.trackball.orientation.setFromEuler(new THREE.Euler(0.22, -0.12, 0))
     this.updateCamera()
     this.draw()
   }
@@ -900,7 +941,7 @@ export class FreeSurfaceRenderer {
       this.cameraFrame = undefined
     }
     this.renderer.info.reset()
-    if (this.viewMode === 'free-surface' && this.weightsDirty) {
+    if ((this.viewMode === 'free-surface' || this.sculpture === 'extruded-flow') && this.weightsDirty) {
       this.weightsMaterial.uniforms.uStep.value.set(0.035 / this.viewWidth, 0)
       this.renderer.setRenderTarget(this.weightsX)
       this.renderer.render(this.weightsScene, this.camera)
@@ -910,7 +951,7 @@ export class FreeSurfaceRenderer {
       this.weightsDirty = false
       this.canvas.dataset.wallWeightBuilds = String(++this.weightBuilds)
     }
-    if (this.viewMode === 'free-surface' && this.fieldDirty) {
+    if ((this.viewMode === 'free-surface' || this.sculpture === 'extruded-flow') && this.fieldDirty) {
       this.renderer.setRenderTarget(this.densityTarget)
       this.renderer.setClearColor(0x000000, 0)
       this.renderer.render(this.densityScene, this.camera)
@@ -927,7 +968,7 @@ export class FreeSurfaceRenderer {
     }
     this.renderer.setClearColor(getWaterTheme(this.look.theme).background, 1)
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
-      this.presentation3d.updateWater(this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
+      this.presentation3d.updateWater(this.sculpture === 'extruded-flow' ? this.waterMaterial.uniforms.uTime.value : this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
       this.renderer.setRenderTarget(null)
       this.renderer.shadowMap.enabled = true
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ArrowUpRight, Check, ChevronDown, Droplets, Expand, FolderOpen, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Save, Shuffle, SlidersHorizontal, Waves, X, Square, Circle, Heart, Hexagon, Star, Diamond, Wand2, Pencil } from 'lucide-react'
-import type { MazeProject } from '../../core/maze'
+import { createDefaultProject, generateMaze, type MazeProject } from '../../core/maze'
+import { createImageMask, loadImageFile, DEFAULT_IMAGE_OPTIONS } from '../../core/masks/imageMask'
+import { editWaterMazeWall, resizeWaterMaze } from './liveEditing'
+import type { FluidResume } from '../waterSimulation/freeSurface/types'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/freeSurface/runtime'
 import { WATER_COLOR_PRESETS, type WaterAppearance } from '../waterSimulation/freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, WATER_THEMES, normalizeWaterLook, type WaterLook } from '../waterSimulation/freeSurface/lookdev'
@@ -74,6 +77,16 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const [customProject, setCustomProject] = useState<MazeProject | null>(initialProject ?? null)
   const [preferences, setPreferences] = useState(readPreferences)
   const [draft, setDraft] = useState<WaterMazeOptions>(() => readPreferences().generator)
+  const [resolutionPreview, setResolutionPreview] = useState<number | null>(null)
+  const resolutionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [wallEditing, setWallEditing] = useState(false)
+  const [imageSource, setImageSource] = useState<{ image: HTMLImageElement; dataUrl: string; name: string } | null>(null)
+  const [imageResolution, setImageResolution] = useState(96)
+  const [imageFill, setImageFill] = useState(false)
+  const [imageThreshold, setImageThreshold] = useState(150)
+  const [imageInverted, setImageInverted] = useState(false)
+  const [editError, setEditError] = useState('')
+  const flowResume = useRef<FluidResume | undefined>(undefined)
   const [paused, setPaused] = useState(false)
   const [inflow, setInflow] = useState(true)
   const [mode, setMode] = useState<'surface-3d' | 'free-surface'>('surface-3d')
@@ -94,11 +107,15 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     : createWaterStudioProject(preferences.preset, preferences.seed, preferences.size ? { rows: preferences.size, cols: preferences.size } : undefined),
     [preferences.source, preferences.generator, preferences.preset, preferences.seed, preferences.size])
   const project = customProject ?? generatedProject
+  useEffect(() => {
+    setResolutionPreview(null)
+    return () => { if (resolutionTimer.current) clearTimeout(resolutionTimer.current) }
+  }, [project])
   const sculpture = useMemo(() => preferences.source === 'flow'
     && (preferences.preset === 'atelier' || preferences.preset === 'cascade')
     && JSON.stringify(project.mazeGraph) === JSON.stringify(generatedProject.mazeGraph)
-    ? 'terraced-fountain' as const : undefined,
-  [preferences.source, preferences.preset, project.mazeGraph, generatedProject.mazeGraph])
+    ? 'terraced-fountain' as const : customProject || preferences.source === 'generated' ? 'extruded-flow' as const : undefined,
+  [preferences.source, preferences.preset, project.mazeGraph, generatedProject.mazeGraph, customProject])
   const onProjectChangeRef = useRef(onProjectChange)
   onProjectChangeRef.current = onProjectChange
   useEffect(() => { setCustomProject(initialProject ?? null) }, [initialProject])
@@ -118,7 +135,9 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     if (!mount) return
     let disposed = false
     let runtime: FreeSurfaceRuntime | null = null
-    setRenderState('loading'); setStatus(null); setPaused(false); setInflow(true); setSaveState('idle')
+    const resume = flowResume.current
+    flowResume.current = undefined
+    setRenderState('loading'); setStatus(null); setPaused(resume?.paused ?? false); setInflow(resume?.inflow ?? true); setSaveState('idle')
     try {
       const current = latest.current
       runtime = new FreeSurfaceRuntime(mount, project, 'high', current.preferences.surface,
@@ -126,7 +145,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
         next => { if (!disposed) setStatus(next) },
         message => { if (!disposed) { setError(message); setRenderState('error') } },
         () => undefined,
-        false, sculpture,
+        false, sculpture, resume,
       )
       runtime.setLook(current.preferences.look)
       runtime.setViewMode(current.mode)
@@ -158,10 +177,51 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
 
   const togglePlayback = () => { runtimeRef.current?.setPaused(!paused); setPaused(!paused) }
   const toggleInflow = () => { runtimeRef.current?.setInflow(!inflow); setInflow(!inflow) }
-  const restart = () => { runtimeRef.current?.restart(); setPaused(false); setInflow(true) }
+  const restart = () => { runtimeRef.current?.restart(); setPaused(true); setInflow(true) }
   const save = async () => {
     setSaveState('saving')
     try { await onSave(project); setSaveState('saved') } catch { setSaveState('error') }
+  }
+  const applyLiveProject = (next: MazeProject) => {
+    flowResume.current = runtimeRef.current?.captureFlowState()
+    setCustomProject(next)
+    setEditError('')
+  }
+  const resizeLive = (rows: number, cols: number) => {
+    if (!Number.isFinite(rows) || !Number.isFinite(cols) || rows < 4 || cols < 4 || rows > 128 || cols > 128) return
+    try { applyLiveProject(resizeWaterMaze(project, rows, cols)) } catch (reason) { setEditError(String(reason)) }
+  }
+  const changeResolution = (value: number) => {
+    setResolutionPreview(value)
+    if (resolutionTimer.current) clearTimeout(resolutionTimer.current)
+    const largest = Math.max(project.mazeGraph.rows, project.mazeGraph.cols)
+    resolutionTimer.current = setTimeout(() => {
+      resizeLive(Math.max(4, Math.round(project.mazeGraph.rows / largest * value)), Math.max(4, Math.round(project.mazeGraph.cols / largest * value)))
+      setResolutionPreview(null)
+    }, 240)
+  }
+  const imageRows = imageSource ? Math.max(4, Math.round(imageResolution * Math.min(1, imageSource.image.naturalHeight / imageSource.image.naturalWidth))) : imageResolution
+  const imageCols = imageSource ? Math.max(4, Math.round(imageResolution * Math.min(1, imageSource.image.naturalWidth / imageSource.image.naturalHeight))) : imageResolution
+  const imageMask = useMemo(() => imageSource ? createImageMask(imageSource.image, { ...DEFAULT_IMAGE_OPTIONS, threshold: imageThreshold, invert: imageInverted, fillInterior: imageFill, largestComponentOnly: false, noiseSize: 1 }, imageRows, imageCols, true) : null, [imageSource, imageThreshold, imageInverted, imageFill, imageRows, imageCols])
+  const uploadImage = async (file?: File) => {
+    if (!file) return
+    try {
+      const image = await loadImageFile(file)
+      const canvas = document.createElement('canvas'), scale = Math.min(1, 800 / Math.max(image.naturalWidth, image.naturalHeight))
+      canvas.width = Math.round(image.naturalWidth * scale); canvas.height = Math.round(image.naturalHeight * scale)
+      canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height)
+      setImageSource({ image, dataUrl: canvas.toDataURL('image/png'), name: file.name }); setEditError('')
+    } catch { setEditError('이미지를 읽지 못했습니다. PNG, JPG, WebP 또는 SVG 파일을 선택해 주세요.') }
+  }
+  const createFromImage = () => {
+    if (!imageSource || !imageMask) return
+    const mask = { rows: imageRows, cols: imageCols, cells: imageMask.flat() }
+    if (mask.cells.filter(Boolean).length < 2) { setEditError('선택된 윤곽이 너무 작습니다. 인식 기준이나 반전을 조정해 주세요.'); return }
+    const maze = generateMaze({ rows: imageRows, cols: imageCols, mask, seed: draft.seed, algorithm: draft.algorithm })
+    const next = createDefaultProject({ title: imageSource.name.replace(/\.[^.]+$/, '') + ' 물 미로', grid: { rows: imageRows, cols: imageCols, minimumCellPixels: 4 },
+      mask, mazeGraph: maze.graph, startCell: maze.start, endCell: maze.end, mazeMetrics: maze.metrics,
+      shape: { kind: 'image', settings: { mediaType: 'image/png', dataUrl: imageSource.dataUrl, crop: { x: 0, y: 0, width: 1, height: 1 }, scale: 1, rotation: 0, grayscale: true, threshold: imageThreshold, inverted: imageInverted, smoothing: 1, noiseRemoval: 1, fillInterior: imageFill, largestComponentOnly: false } } })
+    setCustomProject(next); setMode('free-surface'); setTuningOpen(false); setEditError('')
   }
   const isDesigned = customProject || preferences.source === 'generated'
   const openCreation = () => { setTab('maze'); setTuningOpen(true); setFocus(false) }
@@ -169,7 +229,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const sceneLabel = paused ? '일시정지' : !inflow ? '배수 중' : status?.saturated ? '유입 조절 중' : status?.reachedExit ? '흐르는 중' : '물을 붓는 중'
   const slider = (label: string, value: number, min: number, max: number, step: number, onChange: (n: number) => void, display: string) => <label className="ws-slider"><span>{label}<output>{display}</output></span><input type="range" aria-label={label} min={min} max={max} step={step} value={value} onChange={event => onChange(Number(event.target.value))} /></label>
 
-  return <main className={`water-studio${focus ? ' is-focused' : ''}${tuningOpen ? ' tuning-open' : ''}`} data-testid="water-studio" data-theme-name={preferences.look.theme}
+  return <main className={`water-studio${focus ? ' is-focused' : ''}${tuningOpen ? ' tuning-open' : ''}${mode === 'free-surface' ? ' is-2d' : ''}`} data-testid="water-studio" data-theme-name={preferences.look.theme}
     style={{ '--ws-scene': selectedTheme.background, '--ws-material': selectedTheme.color } as CSSProperties}>
     <header className="ws-header">
       <div className="ws-brand"><Waves size={25} strokeWidth={1.8} /><div><strong>MAZECRAFT</strong><span>WATER ATELIER</span></div></div>
@@ -180,10 +240,18 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
       <section className="ws-view" aria-label="물 미로 작업 공간">
         <div className="ws-scene-heading"><span className="ws-eyebrow">WATER ATELIER / {project.mazeGraph.cols} × {project.mazeGraph.rows}</span><h1>{isDesigned ? project.title : selectedPreset.name}</h1><p>{isDesigned ? '나의 모양, 나의 물길' : selectedPreset.caption}</p></div>
         <div className="ws-status"><i className={paused ? 'is-paused' : ''} />{renderState === 'ready' ? sceneLabel : renderState === 'error' ? '실행 오류' : '준비 중'}</div>
-        <div className="ws-canvas" ref={mountRef} data-testid="water-studio-canvas" data-renderer={renderState} data-view-mode={mode} data-particle-count={status?.particleCount ?? 0} data-simulation-time={status?.simulationTime ?? 0} />
+        <div className="ws-canvas" ref={mountRef} data-testid="water-studio-canvas" data-renderer={renderState} data-view-mode={mode} data-particle-count={status?.particleCount ?? 0} data-simulation-time={status?.simulationTime ?? 0}
+          onPointerDownCapture={event => {
+            if (!wallEditing || mode !== 'free-surface') return
+            event.stopPropagation(); event.preventDefault()
+            const point = runtimeRef.current?.pointAt(event.clientX, event.clientY)
+            if (point) { const next = editWaterMazeWall(project, point.x, point.y); if (next) applyLiveProject(next) }
+          }} />
         {renderState === 'loading' && <div className="ws-stage-message" role="status"><Waves size={30} /><span>수로를 준비하고 있습니다</span></div>}
         {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>화면을 시작하지 못했습니다</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
-        <div className="ws-view-controls"><div className="ws-segment" aria-label="보기 방식"><button aria-pressed={mode === 'surface-3d'} onClick={() => setMode('surface-3d')}>3D</button><button aria-pressed={mode === 'free-surface'} onClick={() => setMode('free-surface')}>2D</button></div><button className="ws-icon" aria-label="축소" onClick={() => runtimeRef.current?.zoomCamera(1 / 1.2)}><Minus size={17} /></button><button className="ws-icon" aria-label="확대" onClick={() => runtimeRef.current?.zoomCamera(1.2)}><Plus size={17} /></button><button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button></div>
+        {wallEditing && mode === 'free-surface' && <button className="ws-edit-done" onClick={() => setWallEditing(false)}>벽 편집 중 · 완료</button>}
+        {mode === 'free-surface' && <label className="ws-resolution-bar"><span>해상도</span><input aria-label="미로 해상도" type="range" min={4} max={128} step={1} value={resolutionPreview ?? Math.max(project.mazeGraph.rows, project.mazeGraph.cols)} onChange={event => changeResolution(Number(event.target.value))} /><output>{resolutionPreview ? `${resolutionPreview}칸` : `${project.mazeGraph.cols} × ${project.mazeGraph.rows}`}</output></label>}
+        <div className="ws-control-dock"><div className="ws-view-controls"><div className="ws-segment" aria-label="보기 방식"><button aria-pressed={mode === 'surface-3d'} onClick={() => setMode('surface-3d')}>3D</button><button aria-pressed={mode === 'free-surface'} onClick={() => setMode('free-surface')}>2D</button></div><button className="ws-icon" aria-label="축소" onClick={() => runtimeRef.current?.zoomCamera(1 / 1.2)}><Minus size={17} /></button><button className="ws-icon" aria-label="확대" onClick={() => runtimeRef.current?.zoomCamera(1.2)}><Plus size={17} /></button><button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button></div>
         <div className="ws-transport">
           <button className="ws-play" aria-label={paused ? '재생' : '일시정지'} disabled={renderState !== 'ready'} onClick={togglePlayback}>{paused ? <Play size={20} fill="currentColor" /> : <Pause size={20} fill="currentColor" />}</button>
           <button className="ws-icon" aria-label="물 다시 붓기" disabled={renderState !== 'ready'} onClick={restart}><RotateCcw size={19} /></button>
@@ -191,6 +259,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
           <span className="ws-transport-divider" />
           <button className="ws-pour" aria-label={inflow ? '물 붓기 켜짐' : '물 붓기 꺼짐'} aria-pressed={inflow} onClick={toggleInflow}><Droplets size={18} /><span>{inflow ? '물 붓기 켜짐' : '물 붓기 꺼짐'}</span></button>
           <button className="ws-mobile-tune ws-icon" aria-label="튜닝 열기" aria-expanded={tuningOpen} aria-controls="water-tuning" onClick={() => setTuningOpen(!tuningOpen)}><SlidersHorizontal size={18} /></button>
+        </div>
         </div>
         <span className="ws-camera-hint">드래그하여 회전 · 두 손가락으로 확대</span>
         {focus && <button className="ws-focus-exit" onClick={() => setFocus(false)}><X size={16} />몰입 화면 닫기</button>}
@@ -214,9 +283,17 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
             {slider('물의 농도', preferences.opacity, 0.2, 0.9, 0.01, opacity => update({ opacity }), `${Math.round(preferences.opacity * 100)}%`)}
             <div className="ws-section-label"><span>수면의 움직임</span></div><div className="ws-option-row">{([['calm', '잔잔하게'], ['natural', '자연스럽게'], ['dynamic', '생동감 있게']] as const).map(([id, label]) => <button key={id} aria-pressed={preferences.surface === id} onClick={() => update({ surface: id })}>{label}</button>)}</div>
           </>}
-          {tab === 'material' && <><div className="ws-section-label"><span>미로의 재질</span><span>MATERIAL</span></div><div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>{slider('벽 높이', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}</>}
-          {tab === 'light' && <><div className="ws-section-label"><span>빛의 분위기</span><span>LIGHTING</span></div><div className="ws-light-options">{([['daylight', '맑은 낮', '부드럽고 선명한 빛'], ['golden', '오후의 햇살', '따뜻한 색감과 음영'], ['studio', '스튜디오', '재질을 드러내는 차분한 빛']] as const).map(([id, label, caption]) => <button key={id} data-light={id} aria-pressed={preferences.look.light === id} onClick={() => updateLook({ light: id })}><i /><span><strong>{label}</strong><small>{caption}</small></span>{preferences.look.light === id && <Check size={15} />}</button>)}</div></>}
+          {tab === 'material' && <><div className="ws-section-label"><span>2D 선 색상</span></div><label className="ws-custom-color">벽 색상<input type="color" aria-label="2D 벽 색상" value={preferences.look.wallColor2d ?? '#526b7a'} onChange={event => updateLook({ wallColor2d: event.target.value })} /></label><label className="ws-custom-color">격자 색상<input type="color" aria-label="2D 격자 색상" value={preferences.look.gridColor2d ?? '#dce3e8'} onChange={event => updateLook({ gridColor2d: event.target.value })} /></label><div className="ws-section-label"><span>미로의 재질</span><span>MATERIAL</span></div><div className="ws-material-grid">{WATER_THEMES.map(theme => <button key={theme.id} aria-pressed={preferences.look.theme === theme.id} onClick={() => updateLook({ theme: theme.id })}><i style={{ '--material-color': theme.color } as CSSProperties} data-material={theme.id} /><span>{theme.label}</span>{preferences.look.theme === theme.id && <Check size={13} />}</button>)}</div>{slider('벽 높이', preferences.look.wallHeight, 0.55, 1.75, 0.05, wallHeight => updateLook({ wallHeight }), `${preferences.look.wallHeight.toFixed(2)}×`)}</>}
+          {tab === 'light' && <><div className="ws-section-label"><span>2D 배경</span></div><div className="ws-option-row"><button aria-pressed={preferences.look.background2d === 'white'} onClick={() => updateLook({ background2d: 'white' })}>흰색 배경</button><button aria-pressed={preferences.look.background2d !== 'white'} onClick={() => updateLook({ background2d: 'material' })}>재질 배경</button></div><div className="ws-section-label"><span>빛의 분위기</span><span>LIGHTING</span></div><div className="ws-light-options">{([['daylight', '맑은 낮', '부드럽고 선명한 빛'], ['golden', '오후의 햇살', '따뜻한 색감과 음영'], ['studio', '스튜디오', '재질을 드러내는 차분한 빛']] as const).map(([id, label, caption]) => <button key={id} data-light={id} aria-pressed={preferences.look.light === id} onClick={() => updateLook({ light: id })}><i /><span><strong>{label}</strong><small>{caption}</small></span>{preferences.look.light === id && <Check size={15} />}</button>)}</div></>}
           {tab === 'maze' && <>
+            <div className="ws-section-label"><span>2D 실시간 편집</span></div>
+            <button className="ws-live-edit" aria-pressed={wallEditing} onClick={() => { setMode('free-surface'); setWallEditing(!wallEditing); setTuningOpen(false) }}>{wallEditing ? '벽 편집 마치기' : '벽 직접 편집'}</button>
+            <p className="ws-help">벽 또는 칸 사이를 누르면 통로가 열리거나 닫힙니다.</p>
+            <div className="ws-dimensions"><label>현재 가로 칸 수<input disabled={renderState !== 'ready'} aria-label="현재 가로 칸 수" type="number" min={4} max={128} value={project.mazeGraph.cols} onChange={event => { setMode('free-surface'); resizeLive(project.mazeGraph.rows, Number(event.target.value)) }} /></label><span>×</span><label>현재 세로 칸 수<input disabled={renderState !== 'ready'} aria-label="현재 세로 칸 수" type="number" min={4} max={128} value={project.mazeGraph.rows} onChange={event => { setMode('free-surface'); resizeLive(Number(event.target.value), project.mazeGraph.cols) }} /></label></div>
+            <div className="ws-section-label ws-image-heading"><span>이미지 모양으로 만들기</span></div>
+            <label className="ws-image-upload">이미지 업로드<input aria-label="미로 모양 이미지 업로드" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={event => { void uploadImage(event.target.files?.[0]); event.target.value = '' }} /></label>
+            {imageMask && <div className="ws-image-mask"><label>이미지 해상도<select aria-label="이미지 해상도" value={imageResolution} onChange={event => setImageResolution(Number(event.target.value))}>{[32, 64, 96, 128].map(value => <option key={value} value={value}>{value}칸</option>)}</select></label><svg viewBox={`0 0 ${imageCols} ${imageRows}`} role="img" aria-label="이미지 모양 미리보기">{imageMask.flatMap((row, y) => row.map((active, x) => active ? <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} /> : null))}</svg>{slider('이미지 인식 기준', imageThreshold, 1, 254, 1, setImageThreshold, String(imageThreshold))}<label><input type="checkbox" checked={imageInverted} onChange={event => setImageInverted(event.target.checked)} />밝은 부분을 모양으로 사용</label><label><input type="checkbox" checked={imageFill} onChange={event => setImageFill(event.target.checked)} />내부 빈 곳 채우기</label><button className="ws-live-edit" onClick={createFromImage}>이 이미지로 미로 만들기</button></div>}
+            {editError && <p role="alert" className="ws-help">{editError}</p>}
             <div className="ws-section-label"><span>미로의 모양</span></div>
             <div className="ws-shape-grid">{WATER_MAZE_SHAPES.map(([id, name], index) => {
               const Icon = [Square, Circle, Hexagon, Heart, Star, Diamond][index]

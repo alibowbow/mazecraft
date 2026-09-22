@@ -383,3 +383,63 @@
 }
 /* Keep the lit tabletop continuous behind overlays on every screen size. */
 .water-studio .ws-canvas { inset:0; }
+
+/* Reserve actual rows for the title and controls: neither covers the maze. */
+.water-studio { grid-template-rows:58px minmax(0,1fr) 70px; }
+.ws-view { display:grid; grid-template-rows:44px minmax(0,1fr) 52px; }
+.water-studio .ws-canvas { position:relative; inset:auto; grid-row:2; min-height:0; }
+.ws-scene-heading { top:11px; left:18px; }
+.ws-scene-heading h1 { margin:0; font-size:17px; letter-spacing:-.035em; }
+.ws-scene-heading .ws-eyebrow, .ws-scene-heading p, .ws-camera-hint { display:none; }
+.ws-status { top:16px; right:18px; font-size:10px; }
+.ws-control-dock { grid-row:3; display:flex; align-items:center; justify-content:center; gap:16px; padding:5px 12px; background:#fffdfa; border-top:1px solid #e7e3da; z-index:3; }
+.ws-control-dock .ws-transport, .ws-control-dock .ws-view-controls { position:static; transform:none; margin:0; padding:0; background:none; border:0; border-radius:0; backdrop-filter:none; box-shadow:none; max-width:none; gap:3px; }
+.ws-control-dock .ws-transport { order:0; }
+.ws-control-dock .ws-view-controls { order:1; }
+.ws-control-dock .ws-icon, .water-studio .ws-control-dock .ws-play { width:36px; height:36px; }
+.ws-control-dock .ws-pour { padding:8px; }
+.ws-control-dock .ws-segment { padding:2px; }
+.ws-control-dock .ws-segment button { padding:8px 10px; }
+.ws-control-dock .ws-transport-divider { margin:0 4px; }
+.ws-collection { padding:6px 16px; }
+.water-studio .ws-preset { height:54px; }
+.ws-miniature, .ws-miniature svg { height:38px; }
+.ws-tuning .ws-option-row { margin-bottom:22px; }
+.is-focused .ws-view { grid-template-rows:0 minmax(0,1fr) 52px; }
+.is-focused .ws-scene-heading { display:none; }
+@media(max-width:800px) {
+  .water-studio { grid-template-rows:52px minmax(0,1fr) 54px; }
+  .ws-view { grid-template-rows:38px minmax(0,1fr) 48px; }
+  .ws-scene-heading { top:10px; left:14px; }
+  .ws-scene-heading h1 { font-size:15px; }
+  .ws-status { top:12px; right:14px; }
+  .ws-control-dock { gap:10px; padding:5px 8px; }
+  .ws-control-dock .ws-pour span, .ws-control-dock .ws-transport-divider { display:none; }
+  .ws-control-dock .ws-icon, .water-studio .ws-control-dock .ws-play { width:34px; height:34px; }
+  .ws-control-dock .ws-view-controls > button[aria-label="축소"], .ws-control-dock .ws-view-controls > button[aria-label="확대"] { display:none; }
+  .ws-control-dock .ws-pour { width:32px; height:34px; padding:7px; }
+  .ws-control-dock .ws-speed select { font-size:11px; padding:8px 13px 8px 2px; }
+  .ws-collection { padding:6px 8px; }
+  .water-studio .ws-preset { height:40px; min-width:82px; padding:5px 9px; justify-content:center; }
+  .ws-preset .ws-miniature, .ws-preset small { display:none; }
+  .ws-preset strong { margin:0; font-size:11px; }
+  .ws-tuning { top:52px; bottom:54px; }
+}
+@media(max-width:540px) { .ws-tuning { top:auto; bottom:54px; height:60dvh; max-height:60dvh; } }
+.ws-help { font-size:11px; line-height:1.6; color:#607078; margin:8px 0 16px; }
+.water-studio .ws-live-edit, .ws-image-upload { display:block; width:100%; padding:11px 12px; background:#edf4f5; border:1px solid #a9c9d0; border-radius:6px; font-size:12px; cursor:pointer; }
+.ws-live-edit[aria-pressed=true] { background:#146e7c; color:white; }
+.ws-image-heading { margin-top:24px; }
+.ws-image-upload input { display:block; width:100%; font-size:10px; margin-top:8px; }
+.ws-image-mask { margin:12px 0 24px; }
+.ws-image-mask svg { width:100%; height:110px; background:white; fill:#237a85; border:1px solid #e3e7e9; }
+.ws-image-mask > label { font-size:12px; display:block; margin:12px 0; }
+.ws-image-mask .ws-slider { margin:10px 0; }
+.ws-edit-done { position:absolute; left:50%; top:6px; transform:translateX(-50%); z-index:3; padding:8px 12px; border-radius:18px; background:#176b78!important; color:white!important; font-size:11px!important; }
+.is-2d .ws-view { grid-template-rows:44px minmax(0,1fr) 34px 52px; }
+.is-2d .ws-control-dock { grid-row:4; }
+.ws-resolution-bar { grid-row:3; display:flex; align-items:center; justify-content:center; gap:12px; padding:4px 16px; background:#fffdfa; font-size:11px; border-top:1px solid #e7e3da; }
+.ws-resolution-bar input { width:min(320px,55%); accent-color:#187787; height:22px; }
+.ws-resolution-bar output { min-width:60px; font-variant-numeric:tabular-nums; }
+.is-focused.is-2d .ws-view { grid-template-rows:0 minmax(0,1fr) 34px 52px; }
+@media(max-width:800px) { .is-2d .ws-view { grid-template-rows:38px minmax(0,1fr) 34px 48px; } }

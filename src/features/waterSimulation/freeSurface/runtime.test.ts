@@ -123,6 +123,9 @@ describe('free-surface runtime clock and snapshot scheduling', () => {
     runtime.restart()
     worker.complete()
     renderFrame(400)
+    expect(worker.commands.at(-1)?.type).toBe('reset')
+    runtime.setPaused(false)
+    renderFrame(500)
     expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', inflow: 0.4, generation: 1 })
   })
 
@@ -272,6 +275,9 @@ describe('free-surface runtime clock and snapshot scheduling', () => {
     expect(rendering.render.mock.calls.at(-1)![0].diagnostics.time).toBe(0)
     expect(status.mock.calls.at(-1)![0].simulationTime).toBe(0)
     renderFrame(300)
+    expect(worker.commands.at(-1)?.type).toBe('reset')
+    runtime.setPaused(false)
+    renderFrame(400)
     expect(worker.commands.at(-1)).toMatchObject({ type: 'advance', generation: 1, steps: 12 })
   })
 

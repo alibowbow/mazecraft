@@ -108,33 +108,34 @@ export const createImageMask = (
   options: ImageMaskOptions,
   rows: number,
   cols: number,
+  preserveGridAspect = false,
 ): BooleanMask => {
   const resolution = Math.max(256, Math.min(1024, Math.max(rows, cols) * 6))
   const canvas = document.createElement('canvas')
-  canvas.width = resolution
-  canvas.height = resolution
+  canvas.width = preserveGridAspect ? Math.max(1, Math.round(resolution * cols / Math.max(rows, cols))) : resolution
+  canvas.height = preserveGridAspect ? Math.max(1, Math.round(resolution * rows / Math.max(rows, cols))) : resolution
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) return Array.from({ length: rows }, () => Array(cols).fill(true))
   context.fillStyle = '#fff'
-  context.fillRect(0, 0, resolution, resolution)
+  context.fillRect(0, 0, canvas.width, canvas.height)
   context.imageSmoothingEnabled = options.smoothing > 0
   context.imageSmoothingQuality = options.smoothing > 1 ? 'high' : 'medium'
   const sourceWidth = 'width' in image ? Number(image.width) : resolution
   const sourceHeight = 'height' in image ? Number(image.height) : resolution
-  const baseScale = Math.min(resolution / sourceWidth, resolution / sourceHeight) * options.scale
+  const baseScale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight) * options.scale
   const width = sourceWidth * baseScale
   const height = sourceHeight * baseScale
-  context.translate(resolution / 2 + options.offsetX * resolution, resolution / 2 + options.offsetY * resolution)
+  context.translate(canvas.width / 2 + options.offsetX * canvas.width, canvas.height / 2 + options.offsetY * canvas.height)
   context.rotate((options.rotation * Math.PI) / 180)
   context.drawImage(image, -width / 2, -height / 2, width, height)
   context.setTransform(1, 0, 0, 1, 0, 0)
 
-  const pixels = context.getImageData(0, 0, resolution, resolution).data
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
   let mask = Array.from({ length: rows }, (_, row) =>
     Array.from({ length: cols }, (_, col) => {
-      const px = Math.min(resolution - 1, Math.floor(((col + 0.5) / cols) * resolution))
-      const py = Math.min(resolution - 1, Math.floor(((row + 0.5) / rows) * resolution))
-      const offset = (py * resolution + px) * 4
+      const px = Math.min(canvas.width - 1, Math.floor(((col + 0.5) / cols) * canvas.width))
+      const py = Math.min(canvas.height - 1, Math.floor(((row + 0.5) / rows) * canvas.height))
+      const offset = (py * canvas.width + px) * 4
       const luminance = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114
       const sample = options.grayscale
         ? luminance

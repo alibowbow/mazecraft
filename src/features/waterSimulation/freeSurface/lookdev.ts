@@ -7,6 +7,9 @@ export interface WaterLook {
   light: WaterLight;
   /** Visual depth multiplier; the fluid solver retains its original solid cells. */
   wallHeight: number;
+  background2d?: 'white' | 'material';
+  wallColor2d?: string;
+  gridColor2d?: string;
 }
 
 export interface WaterThemePalette {
@@ -27,7 +30,7 @@ export interface WaterThemePalette {
 export const WATER_THEMES: readonly WaterThemePalette[] = [
   {
     id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#f6f8f5',
-    floor: '#f8f1e7', wall: '#f8f1e5', wallSide: '#f3e8d8', slab: '#e8ddcb',
+    floor: '#f7f5f0', wall: '#f7f5f0', wallSide: '#f7f5f0', slab: '#e8ddcb',
     edge: '#c7b99f', accent: '#72bfb2', roughness: 0.16, metalness: 0.0,
   },
   {
@@ -69,6 +72,9 @@ export function getWaterTheme(theme: WaterTheme): WaterThemePalette {
 
 export function normalizeWaterLook(next: Partial<WaterLook>, current: WaterLook = DEFAULT_WATER_LOOK): WaterLook {
   return {
+    wallColor2d: /^#[0-9a-f]{6}$/i.test(next.wallColor2d ?? '') ? next.wallColor2d : current.wallColor2d ?? '#526b7a',
+    gridColor2d: /^#[0-9a-f]{6}$/i.test(next.gridColor2d ?? '') ? next.gridColor2d : current.gridColor2d ?? '#dce3e8',
+    ...(next.background2d || current.background2d ? { background2d: next.background2d === 'white' || next.background2d === 'material' ? next.background2d : current.background2d } : {}),
     theme: WATER_THEMES.some((palette) => palette.id === next.theme) ? next.theme! : current.theme,
     light: next.light === 'daylight' || next.light === 'golden' || next.light === 'studio' ? next.light : current.light,
     wallHeight: typeof next.wallHeight === 'number' && Number.isFinite(next.wallHeight)

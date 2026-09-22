@@ -120,7 +120,7 @@ export class SculptedSurface {
   readonly water: THREE.Mesh
   readonly body: THREE.Mesh
   readonly foundation: THREE.Mesh
-  readonly waterMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.065, metalness: 0, ior: 1.333, transmission: 1, thickness: 0.42, clearcoat: 0, envMapIntensity: 1.05, side: THREE.FrontSide })
+  readonly waterMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.065, metalness: 0, ior: 1.333, transmission: 0.92, thickness: 0.42, clearcoat: 0, envMapIntensity: 0.8, side: THREE.FrontSide })
   readonly floorMaterial = new THREE.MeshPhysicalMaterial({ roughness: 0.28, clearcoat: 0.65, clearcoatRoughness: 0.2, envMapIntensity: 0.5 })
   readonly sideMaterial = new THREE.MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.48, clearcoatRoughness: 0.24, envMapIntensity: 0.55 })
   readonly baseMaterial = new THREE.MeshPhysicalMaterial({ roughness: 0.4, clearcoat: 0.25, envMapIntensity: 0.4 })
@@ -344,7 +344,7 @@ export class SculptedSurface {
     this.water.position.set(bounds.x + width / 2, bounds.y + height / 2, 0)
     this.water.name = 'physical-displaced-water'
     this.water.frustumCulled = false
-    this.water.receiveShadow = true
+    this.water.receiveShadow = false
     // VSM also draws receivers into its depth pass. Clear liquid transmits
     // light, and its unclipped carrier plane must never cast a solid shadow.
     this.water.customDepthMaterial = this.waterDepth
@@ -385,17 +385,17 @@ export class SculptedSurface {
   }
   setAppearance(appearance: WaterAppearance) {
     const tint = new THREE.Color(appearance.color ?? '#ffffff')
-    this.waterMaterial.color.copy(tint).lerp(new THREE.Color('#ffffff'), appearance.color ? 0.83 : 1)
+    this.waterMaterial.color.copy(tint).lerp(new THREE.Color('#ffffff'), appearance.color ? 0.72 : 1)
     ;(this.uniforms.uLiquidTint.value as THREE.Color).copy(tint)
     if (appearance.color) {
-      this.waterMaterial.attenuationColor.copy(tint).lerp(new THREE.Color('#ffffff'), 0.035)
-      this.waterMaterial.attenuationDistance = Math.max(0.45, (1 - appearance.opacity) * 1.9)
+      this.waterMaterial.attenuationColor.copy(tint).lerp(new THREE.Color('#ffffff'), 0.05)
+      this.waterMaterial.attenuationDistance = 0.75 + (1 - appearance.opacity) * 1.8
     } else {
-      // Neutral shallow absorption makes clear water legible on pale ceramic
-      // while preserving the floor's hue and physical transmission.
+      // Clear shallow water must not lay a gray absorption veil over the bed.
+      // Its visibility comes from refraction, moving reflections and caustics.
       this.waterMaterial.color.set('#ffffff')
-      this.waterMaterial.attenuationColor.set('#858585')
-      this.waterMaterial.attenuationDistance = 0.6 + (1 - appearance.opacity) * 2.6
+      this.waterMaterial.attenuationColor.set('#d9d9d9')
+      this.waterMaterial.attenuationDistance = 1.7 + (1 - appearance.opacity) * 4.0
     }
     this.waterMaterial.thickness = 0.24 + appearance.opacity * 0.44
   }

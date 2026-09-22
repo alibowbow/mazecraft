@@ -22,9 +22,9 @@ export class CascadePresentation3D {
   private readonly falls: CascadeFalls
   private readonly stage: StudioStage
   private readonly water: THREE.Mesh[] = []
-  private readonly ambient = new THREE.AmbientLight('#f4fbff', 0.45)
+  private readonly ambient = new THREE.AmbientLight('#fffdfa', 0.25)
   private readonly sun = new THREE.DirectionalLight('#fff9ed', 3.0)
-  private readonly bounce = new THREE.DirectionalLight('#f1e7d7', 0.65)
+  private readonly bounce = new THREE.DirectionalLight('#fff6e8', 0.35)
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
   private state: CascadeState | null = null
   private style = 1
@@ -55,21 +55,21 @@ export class CascadePresentation3D {
     this.content.add(this.falls.group)
     this.scene.add(this.content)
     this.stage = new StudioStage(0, -0.3, 9.7, 10)
-    this.stage.material.color.set('#fbfcf6')
+    this.stage.material.color.set('#ffe5c9')
     this.stage.material.roughness = 0.88
     this.stage.material.shadowSide = THREE.BackSide
     this.scene.add(this.stage.group)
 
     this.sun.castShadow = true
-    this.sun.position.set(-7, -4, 11)
+    this.sun.position.set(-6, -4, 8)
     this.sun.target.position.set(0, 0, 0)
     this.sun.shadow.mapSize.set(2048, 2048)
     Object.assign(this.sun.shadow.camera, { left: -8.5, right: 8.5, top: 8.5, bottom: -8.5, near: 0.5, far: 35 })
     this.sun.shadow.camera.updateProjectionMatrix()
     this.sun.shadow.bias = -0.0003
     this.sun.shadow.normalBias = 0.035
-    this.sun.shadow.radius = 4
-    this.sun.shadow.blurSamples = 8
+    this.sun.shadow.radius = 2.5
+    this.sun.shadow.blurSamples = 6
     this.sun.shadow.autoUpdate = false
     this.bounce.position.set(6, 2, 7)
     this.bounce.target.position.set(0, 0, 1)
@@ -98,7 +98,7 @@ export class CascadePresentation3D {
       this.sun.color.set('#ffffff'); this.sun.position.set(-4, -5, 12); this.sun.intensity = 2.8
       this.ambient.color.set('#f3f9ff')
     } else {
-      this.sun.color.set('#fff9ed'); this.sun.position.set(-7, -4, 11); this.sun.intensity = 3.0
+      this.sun.color.set('#fff9ed'); this.sun.position.set(-6, -4, 8); this.sun.intensity = 2.8
       this.ambient.color.set('#f4fbff')
     }
     this.sun.shadow.needsUpdate = true
@@ -131,10 +131,10 @@ export class CascadePresentation3D {
   updateView(width: number, height: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
     if (this.disposed) return
     const aspect = Math.max(1, width) / Math.max(1, height)
-    const viewHeight = Math.max(12.3, 14.3 / aspect) / Math.max(0.1, zoom)
+    const viewHeight = Math.max(13.2, 14.8 / aspect) / Math.max(0.1, zoom)
     this.viewSize.set(viewHeight * aspect, viewHeight)
     const offset = new THREE.Vector3(panX, panY, 0).applyQuaternion(orientation)
-    this.target.set(0, -0.7, 1.1).add(offset)
+    this.target.set(0, -0.25, 1.45).add(offset)
     this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
     this.camera.left = -this.viewSize.x / 2; this.camera.right = this.viewSize.x / 2
     this.camera.top = viewHeight / 2; this.camera.bottom = -viewHeight / 2
