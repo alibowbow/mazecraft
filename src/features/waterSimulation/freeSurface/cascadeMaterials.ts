@@ -215,7 +215,7 @@ export function createCascadeMaterials(renderer: THREE.WebGLRenderer): CascadeMa
     setAppearance(appearance) {
       const clear = appearance.profile === 'clear' || !appearance.color
       const opacity = THREE.MathUtils.clamp(Number.isFinite(appearance.opacity) ? appearance.opacity : 0.72, 0.1, 0.9)
-      water.color.set(clear ? 0xffffff : appearance.profile === 'aqua' ? 0x38b6d3 : appearance.color!)
+      water.color.set(clear ? 0xffffff : appearance.color!)
       water.attenuationColor.set(clear ? 0xf5fcff : 0xc4f2f7)
       water.attenuationDistance = clear ? 5 + (1 - opacity) * 8 : 1.8 + (1 - opacity) * 6
       // The required surface transmission remains physical for every dye.

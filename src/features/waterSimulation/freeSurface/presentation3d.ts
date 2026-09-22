@@ -170,7 +170,7 @@ export class FreeSurfacePresentation3D {
     this.wallTop.metalness = palette.metalness
     this.wallSide.roughness = Math.min(0.85, palette.roughness + 0.04)
     this.wallSide.metalness = palette.metalness * 0.5
-    const mineral = this.look.theme === 'terrace' || this.look.theme === 'basalt'
+    const mineral = palette.roughness >= 0.5
     this.wallTop.clearcoat = mineral ? 0.08 : 1
     this.wallSide.clearcoat = mineral ? 0.08 : 0.9
     this.wallTop.clearcoatRoughness = 0.10
@@ -196,7 +196,7 @@ export class FreeSurfacePresentation3D {
     // Only uniforms change on look edits; geometry and the fluid field stay
     // untouched, including when the height slider moves continuously.
     this.wallUniforms.uCeramicHeight.value = this.look.wallHeight
-    this.wallUniforms.uCeramicMineral.value = this.look.theme === 'terrace' || this.look.theme === 'basalt' ? 1.0 : 0.55
+    this.wallUniforms.uCeramicMineral.value = mineral ? 1.0 : 0
   }
 
   private fitShadowCamera(): void {

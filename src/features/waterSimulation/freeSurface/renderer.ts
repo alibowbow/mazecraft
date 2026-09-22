@@ -673,10 +673,7 @@ export class FreeSurfaceRenderer {
     const profile = appearance.profile === 'aqua' ? 'aqua' : color ? 'tinted' : 'clear'
     const absorption = this.waterMaterial.uniforms.uAbsorption.value as THREE.Vector3
     const scatter = this.waterMaterial.uniforms.uScatter.value as THREE.Vector3
-    if (profile === 'aqua') {
-      absorption.set(1.15, 0.20, 0.12)
-      scatter.set(0.04, 0.32, 0.38)
-    } else if (color) {
+    if (color) {
       // This compositor outputs display RGB directly, so use display RGB for
       // the dye too; linearized picker colors excessively darken midtones.
       const tint = new THREE.Color(color).convertLinearToSRGB()

@@ -33,31 +33,32 @@ export interface WaterThemePalette {
   metalness: number;
 }
 
+// Keep the stored IDs stable while presenting distinct, bright ceramic colors.
 export const WATER_THEMES: readonly WaterThemePalette[] = [
   {
-    id: 'porcelain', label: '포슬린', color: '#ebe3d7', background: '#f6f8f5',
-    floor: '#f7f5f0', wall: '#f7f5f0', wallSide: '#f7f5f0', slab: '#e8ddcb',
-    edge: '#c7b99f', accent: '#72bfb2', roughness: 0.16, metalness: 0.0,
+    id: 'porcelain', label: '아이보리', color: '#f7f5f0', background: STUDIO_BACKGROUND,
+    floor: '#f7f5f0', wall: '#f7f5f0', wallSide: '#f7f5f0', slab: '#eee8dc',
+    edge: '#c5bba7', accent: '#00c8df', roughness: 0.16, metalness: 0,
   },
   {
-    id: 'glacier', label: '글레이셔', color: '#bce5ed', background: '#dfe6ef',
-    floor: '#e0f2f4', wall: '#c9eaf0', wallSide: '#8cc7d3', slab: '#b8d9e2',
-    edge: '#7ba8b8', accent: '#4bafcb', roughness: 0.13, metalness: 0.10,
+    id: 'glacier', label: '스카이', color: '#30baff', background: STUDIO_BACKGROUND,
+    floor: '#effaff', wall: '#30baff', wallSide: '#159fe8', slab: '#1099e0',
+    edge: '#087dca', accent: '#00cde8', roughness: 0.13, metalness: 0.04,
   },
   {
-    id: 'terrace', label: '테라스', color: '#deb79c', background: '#e8d4b6',
-    floor: '#f0dccc', wall: '#ebc3a5', wallSide: '#c68f70', slab: '#d6a585',
-    edge: '#bb8768', accent: '#41aaaf', roughness: 0.68, metalness: 0,
+    id: 'terrace', label: '코랄', color: '#ff7848', background: STUDIO_BACKGROUND,
+    floor: '#fff3eb', wall: '#ff7848', wallSide: '#f45c32', slab: '#ec572e',
+    edge: '#d94323', accent: '#00bed4', roughness: 0.22, metalness: 0,
   },
   {
-    id: 'sage', label: '세이지', color: '#c7d4bb', background: '#eff2e7',
-    floor: '#edf1df', wall: '#d8e3c8', wallSide: '#a3b69b', slab: '#bdcdb0',
-    edge: '#93a88a', accent: '#72b9ab', roughness: 0.42, metalness: 0.01,
+    id: 'sage', label: '에메랄드', color: '#19d98b', background: STUDIO_BACKGROUND,
+    floor: '#effff6', wall: '#19d98b', wallSide: '#08bc70', slab: '#08b76c',
+    edge: '#009d5b', accent: '#00c5e8', roughness: 0.18, metalness: 0,
   },
   {
-    id: 'basalt', label: '바솔트', color: '#778288', background: '#e8eef0',
-    floor: '#acb8bd', wall: '#788b91', wallSide: '#4e656e', slab: '#61777f',
-    edge: '#c5d9df', accent: '#72d9cb', roughness: 0.48, metalness: 0.12,
+    id: 'basalt', label: '코발트', color: '#397eff', background: STUDIO_BACKGROUND,
+    floor: '#f0f5ff', wall: '#397eff', wallSide: '#2365ed', slab: '#215ddd',
+    edge: '#194bc8', accent: '#00d4ec', roughness: 0.18, metalness: 0.02,
   },
 ];
 
