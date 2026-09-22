@@ -123,7 +123,9 @@ test('자유수면 입자가 실제로 흐르고 공급 중지·일시정지·�
   await expect(stage).toHaveAttribute('data-inflow', 'enabled')
   const reset = await resetPromise
   expect(reset).toEqual({ elapsed: 0, injected: 0, discharged: 0, escaped: 0, particles: 0 })
+  await expect(page.getByRole('button', { name: '물 시뮬레이션 재생' })).toBeVisible()
   await page.getByLabel('물 흐름 속도').selectOption('1')
+  await page.getByRole('button', { name: '물 시뮬레이션 재생' }).click()
   await expect.poll(() => numberAttribute(stage, 'data-particle-count')).toBeGreaterThan(0)
   expect(errors).toEqual([])
 })
@@ -236,4 +238,3 @@ test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기
     })
   }
 })
-

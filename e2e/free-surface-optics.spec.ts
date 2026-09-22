@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { visitProjectLibrary } from './helpers/navigation'
 import { expect, test } from '@playwright/test'
 import { build } from 'esbuild'
@@ -269,7 +270,7 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
         }
         const contrast = Math.abs(delta[0] * 0.2126 + delta[1] * 0.7152 + delta[2] * 0.0722)
         samples++; difference += contrast
-        if (contrast >= 8) contrasted++
+        if (contrast >= 1) contrasted++
         chromaShift += Math.max(...delta) - Math.min(...delta)
       }
       const material = internals.presentation3d.sculpted.waterMaterial
@@ -290,6 +291,8 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
     }
   }, { project, layout: { ...layout, activeCells: Array.from(layout.activeCells) } })
   const { dryImage, wetImage, ...measurements } = result
+  await writeFile(test.info().outputPath('basin-clear-water.png'), Buffer.from(wetImage.split(',')[1], 'base64'))
+  await writeFile(test.info().outputPath('basin-clear-measurements.json'), JSON.stringify(measurements, null, 2))
   await test.info().attach('basin-optics-dry', { body: Buffer.from(dryImage.split(',')[1], 'base64'), contentType: 'image/png' })
   await test.info().attach('basin-optics-clear-water', { body: Buffer.from(wetImage.split(',')[1], 'base64'), contentType: 'image/png' })
   await test.info().attach('basin-optics-measurements', { body: JSON.stringify(measurements, null, 2), contentType: 'application/json' })
@@ -306,8 +309,13 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
   expect(result.maxDepth).toBeCloseTo(BASIN_INITIAL_DEPTH, 6)
   expect(result.sampledWaterZ).toBeCloseTo(BASIN_FLOOR_Z + BASIN_INITIAL_DEPTH, 6)
   expect(result.samples, 'broad interior on the actual liquid plane').toBeGreaterThan(60)
-  expect(result.meanContrast, 'clear water is visible against pale ceramic').toBeGreaterThanOrEqual(12)
-  expect(result.visibleFraction, 'contrast spans the wet body').toBeGreaterThanOrEqual(0.65)
+  // Clear shallow water should modulate the floor through refraction without
+  // recreating the old gray absorption layer merely to satisfy contrast.
+  expect(result.meanContrast, 'refraction changes the clear water interior').toBeGreaterThanOrEqual(1)
+  expect(result.visibleFraction, 'optical changes span the wet body').toBeGreaterThanOrEqual(0.5)
+  const luminance = (color: number[]) => color[0] * .2126 + color[1] * .7152 + color[2] * .0722
+  expect(luminance(result.wetColor), 'clear water keeps the bright ceramic backing').toBeGreaterThan(220)
+  expect(luminance(result.dryColor) - luminance(result.wetColor), 'no gray absorption veil').toBeLessThan(8)
   expect(result.meanChromaShift, 'clear water retains the neutral backing hue').toBeLessThan(8)
   expect(result.attenuationColor[0]).toBe(result.attenuationColor[1])
   expect(result.attenuationColor[1]).toBe(result.attenuationColor[2])

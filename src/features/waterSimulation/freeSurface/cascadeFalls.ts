@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { RaisedInlet } from './raisedInlet'
 import { CASCADE_FLOORS, CASCADE_SPILLS, type CascadeState } from './cascadeTypes'
 
 interface Curtain {
@@ -19,7 +20,7 @@ export class CascadeFalls {
   private readonly particleState = new Float32Array(120 * 4)
   private readonly foamTexture: THREE.DataTexture
   private readonly foamPatchTexture: THREE.DataTexture
-  private readonly sourceWater: THREE.Mesh
+  private readonly inlet: RaisedInlet
   private readonly fountainWater: THREE.Mesh
   private readonly receiverWater: THREE.Mesh
   private readonly fountainChannel: THREE.Mesh
@@ -83,7 +84,9 @@ export class CascadeFalls {
       this.group.add(mesh); this.geometries.push(geometry)
       return mesh
     }
-    this.sourceWater = addPool('upper-fountain-reservoir-water', 0, 3.65, 3.13, 0.36, 0.33)
+    this.inlet = new RaisedInlet(0.90, 1.65, 4.18, -0.65)
+    this.inlet.group.position.set(0, 3.60, 0)
+    this.group.add(this.inlet.group)
     this.fountainWater = addPool('central-fountain-cup-water', 0, 0, 2.06, 0.22, 0.22)
     this.receiverWater = addPool('lower-receiving-trough-water', 0, -5.15, -0.42, 1.18, 0.58)
     const channelGeometry = new THREE.PlaneGeometry(0.14, 0.47)
@@ -216,8 +219,8 @@ export class CascadeFalls {
       this.curtain(index, spill.x, spill.y + 0.075, spill.landingY, levels[index], bottom, width, state.discharge[index], dt, state.time)
       this.impact(index, spill.x, spill.landingY, bottom, state.discharge[index], width, state.time)
     }
-    this.curtain(3, 0, 3.10, 2.72, 3.12, levels[0], 0.25, state.sourceRate, dt, state.time)
-    this.impact(3, 0, 2.72, levels[0], state.sourceRate, 0.28, state.time)
+    this.inlet.update(state.time, state.sourceRate, levels[0])
+    this.inlet.setAppearance(this.water.color)
     const pumpRate = state.depths[1] > 0.05 ? Math.min(0.09, state.sourceRate * 0.55) : 0
     this.curtain(4, 0, -0.66, -0.97, 2.065, levels[1], 0.15, pumpRate, dt, state.time)
     this.impact(4, 0, -0.97, levels[1], pumpRate, 0.20, state.time)
@@ -230,7 +233,6 @@ export class CascadeFalls {
     this.fountainTravel -= dt * (0.26 + Math.sqrt(pumpRate) * 0.8)
     this.fountainUniforms.uFallTravel.value = this.fountainTravel
     this.fountainUniforms.uFallStrength.value = Math.min(1, pumpRate / 0.07)
-    this.sourceWater.visible = true
     this.fountainWater.visible = state.depths[1] > 0.005
     this.receiverWater.visible = state.depths[2] > 0.005
     for (const curtain of this.curtains) {
@@ -247,9 +249,10 @@ export class CascadeFalls {
 
   // Spill lips and fountain bowls have fixed elevations; only the surrounding
   // retaining walls respond to the wall-height control.
-  setWallHeight(_multiplier: number): void {}
+  setWallHeight(multiplier: number): void { this.inlet.setWallHeight(multiplier) }
 
   dispose(): void {
+    this.inlet.dispose()
     this.foamTexture.dispose(); this.foamPatchTexture.dispose(); this.particles.dispose()
     this.geometries.forEach(geometry => geometry.dispose())
     this.materials.forEach(material => material.dispose())

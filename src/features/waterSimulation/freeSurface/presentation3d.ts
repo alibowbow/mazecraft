@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { FluidLayout } from './types'
 import { SurfaceTrackball } from './camera3d'
-import { ceramicBasinWallGeometry } from './ceramicWalls'
+import { ceramicBasinWallGeometry, ceramicWallGeometry } from './ceramicWalls'
 import { applyCeramicGlaze } from './ceramicGlaze'
 import { createTerraceElevation, createTerraceUniforms, splitTerraceGeometry, terraceElevationSlopeAt, type TerraceElevationProfile } from './terraceElevation'
 import { StudioStage, createAtelierEnvironment } from './studioStage'
@@ -56,22 +56,22 @@ export class FreeSurfacePresentation3D {
   private look: WaterLook = { ...DEFAULT_WATER_LOOK }
   private disposed = false
 
-  constructor(layout: FluidLayout, texture: THREE.Texture, renderer?: THREE.WebGLRenderer) {
+  constructor(layout: FluidLayout, texture: THREE.Texture, renderer?: THREE.WebGLRenderer, private readonly extrudedFlow = false) {
     this.renderer = renderer
     this.environment = null
     if (renderer) {
       this.environment = createAtelierEnvironment(renderer)
       this.scene.environment = this.environment.texture
-      this.scene.environmentIntensity = 0.65
+      this.scene.environmentIntensity = 0.8
     }
     this.boardWidth = layout.maxX - layout.minX + 2 * SURFACE_FIELD_PADDING
     this.boardHeight = layout.maxY - layout.minY + 2 * SURFACE_FIELD_PADDING
     const activeColumns = Array.from(layout.activeCells, (active, i) => active ? i % layout.cols : -1).filter(col => col >= 0)
     const left = Math.min(...activeColumns), right = Math.max(...activeColumns) + 1
     this.sculptureWidth = right - left + 0.7
-    this.sculptureHeight = layout.bottomY - layout.topY + 1.7
+    this.sculptureHeight = extrudedFlow ? this.boardHeight : layout.bottomY - layout.topY + 1.7
     this.centerX = (left + right) * 0.5
-    this.centerY = -(layout.topY + layout.bottomY) * 0.5 + 0.25
+    this.centerY = extrudedFlow ? -(layout.minY + layout.maxY) * 0.5 : -(layout.topY + layout.bottomY) * 0.5 + 0.25
     this.distance = Math.hypot(this.boardWidth, this.boardHeight) * 1.6 + 4
     this.content.name = 'free-surface-3d-board'
     this.scene.add(this.content)
@@ -85,7 +85,7 @@ export class FreeSurfacePresentation3D {
     // Union the entire network before rounding it: each T/L/cross junction is
     // part of one ceramic surface, with no intersecting boxes or cap seams.
     const terrace = this.terrace = createTerraceElevation(layout)
-    const sourceWallGeometry = ceramicBasinWallGeometry(layout)
+    const sourceWallGeometry = extrudedFlow ? ceramicWallGeometry(layout.walls.filter(wall => wall.kind !== 'funnel')) : ceramicBasinWallGeometry(layout)
     const wallGeometry = splitTerraceGeometry(sourceWallGeometry, terrace)
     sourceWallGeometry.dispose()
     const wallPositions = wallGeometry.getAttribute('position')
@@ -117,9 +117,10 @@ export class FreeSurfacePresentation3D {
     this.materials.push(this.wallTop, this.wallSide, depthMaterial)
 
     this.fixtures = new BasinFixtures(layout)
-    this.content.add(this.fixtures.group)
+    if (!extrudedFlow) this.content.add(this.fixtures.group)
     this.stage = new StudioStage(this.centerX, this.centerY, this.sculptureWidth, this.sculptureHeight)
     this.scene.add(this.stage.group)
+    this.ambient.position.set(0, 0, 1)
     this.key.castShadow = true
     this.key.shadow.mapSize.set(2048, 2048)
     this.key.shadow.bias = -0.00012; this.key.shadow.normalBias = 0.01
@@ -131,8 +132,28 @@ export class FreeSurfacePresentation3D {
     this.fill.position.set(this.centerX + 6, this.centerY - 2, 5)
     this.fill.target.position.set(this.centerX, this.centerY, 0)
     this.scene.add(this.ambient, this.key, this.key.target, this.fill, this.fill.target)
+    if (this.environment) this.scene.traverse(object => {
+      const mesh = object as THREE.Mesh
+      if (!mesh.isMesh) return
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (material instanceof THREE.MeshStandardMaterial) material.envMap = this.environment!.texture
+      }
+    })
     this.setLook(this.look)
     this.updateView(1, 1, 1, 0, 0, new SurfaceTrackball().orientation)
+  }
+
+  /** A raised-wall view of the existing 2D water, including its real funnel.
+   * This plane uses the same compositor and particle field as the flat view. */
+  setFlowMaterial(material: THREE.ShaderMaterial, layout: FluidLayout): void {
+    if (!this.extrudedFlow) return
+    this.sculpted.water.visible = false
+    const geometry = new THREE.PlaneGeometry(this.boardWidth, this.boardHeight)
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.name = 'same-particle-water-in-3d'
+    mesh.position.set((layout.minX + layout.maxX) / 2, -(layout.minY + layout.maxY) / 2, 0.23)
+    mesh.renderOrder = 2
+    this.content.add(mesh); this.geometries.push(geometry)
   }
 
   setLook(next: Partial<WaterLook>): void {
@@ -152,18 +173,18 @@ export class FreeSurfacePresentation3D {
     this.wallSide.clearcoat = mineral ? 0.08 : 0.9
     this.wallTop.clearcoatRoughness = 0.10
     this.wallSide.clearcoatRoughness = 0.13
-    this.wallTop.envMapIntensity = 1.1
-    this.wallSide.envMapIntensity = 0.95
+    this.wallTop.envMapIntensity = 0.75
+    this.wallSide.envMapIntensity = 0.65
     this.sculpted.setLook(this.look)
     this.fixtures.setWallHeight(this.look.wallHeight)
-    this.stage.material.color.set(palette.background)
+    this.stage.material.color.set(this.look.theme === 'porcelain' ? '#fff0dd' : palette.background)
     this.key.shadow.needsUpdate = true
     if (this.renderer) this.renderer.shadowMap.needsUpdate = true
     this.ambient.color.set(lighting.sky)
     this.ambient.groundColor.set(lighting.ground)
-    this.ambient.intensity = lighting.ambient * 0.45
+    this.ambient.intensity = lighting.ambient * 0.35
     this.key.color.set(lighting.color)
-    this.key.intensity = lighting.intensity * 1.15
+    this.key.intensity = lighting.intensity * 1.0
     const lightDistance = Math.max(16, this.sculptureHeight * 1.4)
     this.key.position.set(this.centerX + lighting.direction[0] * lightDistance, this.centerY + lighting.direction[1] * lightDistance, lighting.direction[2] * lightDistance)
     this.fill.color.set(lighting.fill)
@@ -206,8 +227,8 @@ export class FreeSurfacePresentation3D {
   }
   updateWater(time: number, style: number): void { this.sculpted.update(time, style) }
   // The 2D funnel remains owned by the particle renderer. The horizontal
-  // basin has its own raised copper supply and a real retaining outlet sill.
-  addFunnel(_source: THREE.Group): void {}
+  // basin has its own raised porcelain channel and a real retaining outlet sill.
+  addFunnel(source: THREE.Group): void { if (this.extrudedFlow) this.content.add(source) }
 
   updateView(widthPx: number, heightPx: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
     if (this.disposed) return
@@ -215,10 +236,10 @@ export class FreeSurfacePresentation3D {
     // Keep the original front-view framing at every orbit angle. Refitting
     // rotated bounds on each touch made rotation unexpectedly zoom the board.
     // Corners can leave the viewport during free roll; zoom remains explicit.
-    const width = this.sculptureWidth + 0.45
-    const height = this.sculptureHeight + 0.45
-    const depth = 1.65
-    const basis = new THREE.Matrix4().makeRotationFromQuaternion(new SurfaceTrackball().orientation.invert()).elements
+    const width = (this.extrudedFlow ? this.boardWidth : this.sculptureWidth) + 0.45
+    const height = this.sculptureHeight + 1.10
+    const depth = 2.65
+    const basis = new THREE.Matrix4().makeRotationFromQuaternion((this.extrudedFlow ? new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, -0.12, 0)) : new SurfaceTrackball().orientation).invert()).elements
     const frontWidth = Math.abs(basis[0]) * width + Math.abs(basis[4]) * height + Math.abs(basis[8]) * depth
     const frontHeight = Math.abs(basis[1]) * width + Math.abs(basis[5]) * height + Math.abs(basis[9]) * depth
     const viewHeight = Math.max(frontHeight, frontWidth / aspect) / Math.max(0.1, zoom)
@@ -231,7 +252,7 @@ export class FreeSurfacePresentation3D {
     this.camera.near = 0.01
     this.camera.far = this.distance * 3
     this.screenOffset.set(panX, panY, 0).applyQuaternion(orientation)
-    this.target.set(this.centerX, this.centerY, 0.44).add(this.screenOffset)
+    this.target.set(this.centerX, this.centerY + 0.25, 0.75).add(this.screenOffset)
     this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
     // A single sheet has no volume back face. DoubleSide makes Three rebuild
     // the transmission buffer twice; select the visible side for free orbit.

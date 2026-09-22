@@ -111,35 +111,32 @@ describe('physical horizontal basin', () => {
     field.dispose()
   })
 
-  it('keeps the inlet pipe over the tallest rim and its jet joined to both nozzle and water', () => {
+  it('keeps the elevated channel above tall rims and the sheet joined to the water', () => {
     const project = createTestProject(), layout = buildFluidLayout(project)
     const basin = new BasinSimulation(project, layout), fixtures = new BasinFixtures(layout)
     basin.advance(0.25, 1)
     const snapshot = basin.snapshot()
     fixtures.update(snapshot)
-    const foot = fixtures.group.getObjectByName('basin-supply-foot')!
-    const footPosition = foot.position.clone()
-    const pipe = fixtures.group.getObjectByName('basin-supply-pipe') as THREE.Mesh
-    const opening = fixtures.group.getObjectByName('basin-supply-opening')!
-    const jet = fixtures.group.getObjectByName('supply-glint')!
+    const support = fixtures.group.getObjectByName('inlet-rear-pier')!
+    const footZ = support.position.z
+    const channel = fixtures.group.getObjectByName('inlet-moving-channel-water')!
+    const sheet = fixtures.group.getObjectByName('inlet-falling-water') as THREE.Mesh
     for (const height of [1.75, 0.55, 1.75]) {
       fixtures.setWallHeight(height)
       fixtures.group.updateMatrixWorld(true)
-      const rim = height * 1.05 + 0.014
-      const positions = pipe.geometry.getAttribute('position')
-      let crossingVertices = 0
-      for (let i = 0; i < positions.count; i++) {
-        if (Math.abs(positions.getY(i) + layout.topY) > 0.14) continue
-        crossingVertices++
-        expect(positions.getZ(i)).toBeGreaterThan(rim)
-      }
-      expect(crossingVertices).toBeGreaterThan(0)
-      const bounds = new THREE.Box3().setFromObject(jet)
-      expect(bounds.max.z).toBeCloseTo(opening.position.z, 6)
-      expect(bounds.min.z).toBeCloseTo(snapshot.depth[layout.topY * layout.cols + Math.floor(layout.inletX)] + BASIN_FLOOR_Z, 6)
+      expect(channel.position.z).toBeGreaterThan(height * 1.05 + 0.014)
+      sheet.geometry.computeBoundingBox()
+      const bounds = new THREE.Box3().setFromObject(sheet)
+      expect(bounds.max.z).toBeCloseTo(channel.position.z, 5)
+      expect(bounds.min.z).toBeCloseTo(snapshot.depth[layout.topY * layout.cols + Math.floor(layout.inletX)] + BASIN_FLOOR_Z, 1)
       expect(bounds.max.y).toBeLessThan(-layout.topY - 0.14)
-      expect(foot.position.equals(footPosition)).toBe(true)
+      expect(support.position.z).toBe(footZ)
     }
+    const before = Array.from(sheet.geometry.getAttribute('position').array)
+    fixtures.update(snapshot)
+    expect(Array.from(sheet.geometry.getAttribute('position').array)).toEqual(before)
+    fixtures.setInflow(false)
+    expect(sheet.visible).toBe(false)
     fixtures.dispose()
   })
 })

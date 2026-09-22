@@ -1,4 +1,4 @@
-import type { FluidLayout, FluidSnapshot, FluidSnapshotBuffers } from './types'
+import type { FluidLayout, FluidSnapshot, FluidSnapshotBuffers, FluidResume } from './types'
 
 const FIXED_DT = 1 / 120
 const GRAVITY = 12
@@ -162,6 +162,54 @@ export class FreeSurfaceSolver {
     this.admitted = 0; this.dischargedCount = 0; this.escapedCount = 0; this.fallingCount = 0
     this.outletRate = 0; this.saturated = false; this.spawnSequence = 0
     this.crossed.fill(0)
+  }
+
+  /** Rebuild wall acceleration data in the constructor, then carry the accepted
+   * water into it. New solid walls displace water to their nearest free side. */
+  restore(resume: FluidResume): void {
+    this.reset()
+    const { snapshot } = resume, d = snapshot.diagnostics, area = this.layout.particleArea
+    this.count = Math.min(snapshot.count, this.layout.capacity)
+    this.ticks = Math.round(d.time / FIXED_DT)
+    this.admitted = Math.round(d.injected / area)
+    this.dischargedCount = Math.round(d.discharged / area)
+    this.escapedCount = Math.round(d.escaped / area) + snapshot.count - this.count
+    const sx = this.layout.cols / resume.cols, sy = this.layout.rows / resume.rows
+    for (let i = 0; i < this.count; i++) {
+      const originalX = snapshot.positions[i * 2], originalY = snapshot.positions[i * 2 + 1]
+      let x = originalX * sx, y = originalY * sy
+      if (originalY < resume.topY) {
+        x = this.layout.inletX + originalX - resume.inletX
+        y = this.layout.topY + originalY - resume.topY
+      } else if (originalY > resume.bottomY) {
+        x = this.layout.outletX + originalX - resume.outletX
+        y = this.layout.bottomY + originalY - resume.bottomY
+      }
+      for (let pass = 0; pass < 8; pass++) {
+        const col = Math.floor(x - this.layout.minX), row = Math.floor(y - this.layout.minY)
+        if (col < 0 || col >= this.wallCols || row < 0 || row >= this.wallRows) break
+        let moved = false
+        for (const index of this.wallBuckets[row * this.wallCols + col]) {
+          const g = index * 8, x0 = this.wallGeometry[g + 4], x1 = this.wallGeometry[g + 5], y0 = this.wallGeometry[g + 6], y1 = this.wallGeometry[g + 7]
+          if (x <= x0 || x >= x1 || y <= y0 || y >= y1) continue
+          const distances = [x - x0, x1 - x, y - y0, y1 - y]
+          const side = distances.indexOf(Math.min(...distances))
+          if (side === 0) x = x0 - 0.00001
+          else if (side === 1) x = x1 + 0.00001
+          else if (side === 2) y = y0 - 0.00001
+          else y = y1 + 0.00001
+          moved = true
+        }
+        if (!moved) break
+      }
+      this.x[i] = this.oldX[i] = x; this.y[i] = this.oldY[i] = y
+      this.vx[i] = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, snapshot.velocities[i * 2] * sx))
+      this.vy[i] = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, snapshot.velocities[i * 2 + 1] * sy))
+      this.crossed[i] = originalY > resume.outletY ? 1 : 0
+      this.fallingCount += this.crossed[i]
+    }
+    this.outletRate = d.outletRate
+    this.spawnSequence = this.admitted
   }
 
   step(dt: number, inflow = 1): void {

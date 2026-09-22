@@ -234,7 +234,8 @@ export default function WaterSimulationDialog({
 
   const restart = useCallback(() => {
     runtimeRef.current?.restart()
-    setPaused(false)
+    runtimeRef.current?.setPaused(true)
+    setPaused(true)
     setInflow(true)
   }, [])
 

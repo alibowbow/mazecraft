@@ -57,3 +57,17 @@ export interface FluidSnapshot extends FluidSnapshotBuffers {
   count: number
   diagnostics: FluidDiagnostics
 }
+
+/** A one-time copy when editing topology; steady frames keep pooled buffers. */
+export interface FluidResume {
+  snapshot: FluidSnapshot
+  rows: number
+  cols: number
+  inletX: number
+  outletX: number
+  topY: number
+  bottomY: number
+  outletY: number
+  paused: boolean
+  inflow: boolean
+}

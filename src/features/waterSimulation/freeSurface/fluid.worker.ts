@@ -1,8 +1,8 @@
 import { FreeSurfaceSolver } from './solver'
-import type { FluidLayout, FluidSnapshotBuffers } from './types'
+import type { FluidLayout, FluidSnapshotBuffers, FluidResume } from './types'
 
 type Request =
-  | { type: 'init'; layout: FluidLayout; generation: number }
+  | { type: 'init'; layout: FluidLayout; generation: number; resume?: FluidResume }
   | { type: 'advance'; steps: number; inflow: number; generation: number; publish: boolean; buffers?: FluidSnapshotBuffers }
   | { type: 'reset'; generation: number; buffers?: FluidSnapshotBuffers }
 
@@ -16,6 +16,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
     if (request.type === 'init') {
       generation = request.generation
       solver = new FreeSurfaceSolver(request.layout)
+      if (request.resume) solver.restore(request.resume)
       capacity = request.layout.capacity * 2
       recycledBuffers.length = 0
     } else if (request.type === 'reset') {

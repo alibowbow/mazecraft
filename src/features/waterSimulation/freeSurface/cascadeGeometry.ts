@@ -134,8 +134,6 @@ function createDesign(): BasinDesign[] {
     for (const partition of level.partitions) level.water.holes.push(hole(ribbon(partition.path, partition.width + PARTITION_BEVEL * 2)))
     for (const circle of level.circles) level.water.holes.push(hole(ellipse(circle.x, circle.y, circle.radius)))
   }
-  // The source pedestal occupies actual upper-basin floor area.
-  levels[0].water.holes.push(hole(ellipse(0, 3.65, 0.25)))
   return levels
 }
 
@@ -218,11 +216,10 @@ export class CascadeGeometry {
       const lip = vesselOutline(spill.width - 0.16, spill.y - 0.10, spill.y + 0.36)
       this.mesh(this.extrusion(lip, CASCADE_SILL_DEPTH, 0.09), porcelain, `cascade-spill-${i}-rounded-sill`, level.floor).position.x = spill.x
     }
-    this.addSource(porcelain)
     this.addFountainBowl(porcelain)
     this.addReceivingTrough(porcelain, floorMaterials[2] ?? porcelain)
     this.group.userData.cascadeCoordinates = {
-      sourceWater: [0, 3.65, 3.13], sourceSpout: [0, 3.10, 3.12],
+      sourceWater: [0, 4.425, 4.18], sourceSpout: [0, 3.60, 4.18],
       fountainWater: [0, 0, 2.06], fountainWaterRadius: 0.22,
       receiverWater: [0, -5.15, -0.42], receiverWaterRadii: [1.18, 0.58],
     }
@@ -252,14 +249,6 @@ export class CascadeGeometry {
     mesh.position.z = z; mesh.name = name; mesh.castShadow = true; mesh.receiveShadow = true
     this.group.add(mesh)
     return mesh
-  }
-
-  private addSource(material: THREE.MeshPhysicalMaterial): void {
-    this.mesh(this.extrusion(ellipse(0, 3.65, 0.16), 1.10, 0.09), material, 'cascade-source-sculpted-pedestal', 1.90)
-    this.mesh(this.extrusion(ellipse(0, 3.65, 0.48, 0.42), 0.22, 0.10), material, 'cascade-source-cup-base', 2.78)
-    const rim = ellipseRibbon(0, 3.65, 0.47, 0.40, 0.10, p => p.y < 3.40 && Math.abs(p.x) < 0.24)
-    this.mesh(this.extrusion(rim, 0.42, 0.09), material, 'cascade-source-open-ivory-cup', 3.00)
-    this.mesh(this.extrusion(vesselOutline(0.31, 3.08, 3.44), 0.10, 0.09), material, 'cascade-source-ivory-spout', 3.02)
   }
 
   private addFountainBowl(material: THREE.MeshPhysicalMaterial): void {
