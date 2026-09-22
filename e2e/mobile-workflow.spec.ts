@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { visitProjectLibrary, openProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -168,7 +169,7 @@ test('15.3 모바일에서 도구 선택 즉시 캔버스로 돌아가고 한 �
 })
 
 test('15.4 모바일 그리기는 벽 도구가 아니라 실루엣 획으로 저장된다', async ({ page }) => {
-  test.setTimeout(30_000)
+  test.setTimeout(e2eTimeout(30_000))
   await createBasic(page)
   await page.locator('.mobile-tabs').getByRole('button', { name: '형태', exact: true }).click()
   await page.getByRole('button', { name: '그리기', exact: true }).click()

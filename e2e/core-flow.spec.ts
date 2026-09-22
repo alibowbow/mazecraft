@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { visitProjectLibrary, enterProjectEditor, openProjectLibrary } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 import { createDefaultProject, solveMaze, type CellPosition, type MazeProject } from '../src/core/maze'
@@ -304,7 +305,7 @@ test('14. 정답 경로를 출발점부터 점진적으로 그리고 다시 재�
 })
 
 test('15. 3D 수조의 물이 출구로 배출되고 실제 물량을 보존한다', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   await page.setViewportSize({ width: 360, height: 800 })
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))

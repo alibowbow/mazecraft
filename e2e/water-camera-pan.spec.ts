@@ -1,8 +1,9 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test } from '@playwright/test'
 import { branchingWaterProject, importWaterProject, numberAttribute, openParticleWater, pauseWater, readWaterState } from './helpers/waterHarness'
 
 test('3D 미로를 확대하고 드래그해도 멈춘 물리 상태는 변하지 않는다', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   await importWaterProject(page, branchingWaterProject, 'low')
   const stage = await openParticleWater(page, 'surface-3d')
   await expect.poll(() => numberAttribute(stage, 'data-stored-volume')).toBeGreaterThan(0)

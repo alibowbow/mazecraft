@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test } from '@playwright/test'
 import {
   fallingWaterProject, importWaterProject, installWorkerProbe, numberAttribute,
@@ -7,7 +8,7 @@ import {
 // The historical atlas UI was replaced by a conserved 3D basin.
 // Keep its real-browser shader/asset-loading gate on the current visible mode.
 test('고화질 3D 수조는 2D Worker를 보존하고 레거시 atlas 없이 렌더링된다', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   const errors: string[] = []
   const legacyRequests: string[] = []
   page.on('pageerror', error => errors.push(error.message))

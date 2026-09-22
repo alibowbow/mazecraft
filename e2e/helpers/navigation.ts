@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test'
+import { waterStartupTimeout } from './runtimeBudget'
 
 /** The collection/editor remains available behind the new simulation home. */
 export async function openProjectLibrary(page: Page): Promise<void> {
@@ -18,7 +19,7 @@ export async function visitProjectLibrary(page: Page): Promise<void> {
 export async function enterProjectEditor(page: Page): Promise<void> {
   const editor = page.getByLabel('프로젝트 제목')
   const studio = page.getByTestId('water-studio')
-  await expect(editor.or(studio)).toBeVisible()
+  await expect(editor.or(studio)).toBeVisible({ timeout: process.env.CI ? waterStartupTimeout : 5_000 })
   if (await editor.isVisible()) return
   const mazeTab = page.getByRole('tab', { name: '미로', exact: true })
   if (!(await mazeTab.isVisible())) {

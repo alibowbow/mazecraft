@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { expect, test } from '@playwright/test'
 import {
   branchingWaterProject, fallingWaterProject, importWaterProject, installWorkerProbe,
@@ -5,7 +6,7 @@ import {
 } from './helpers/waterHarness'
 
 test('2D와 3D 전환이 각 모드의 물 상태와 공유 Worker·canvas·일시정지를 유지한다', async ({ page }, testInfo) => {
-  test.setTimeout(90_000)
+  test.setTimeout(e2eTimeout(90_000))
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
@@ -73,7 +74,7 @@ test('2D와 3D 전환이 각 모드의 물 상태와 공유 Worker·canvas·일�
 })
 
 test('low와 high가 같은 미로 입력을 사용하고 3D 초기 물량·유입·유출을 보존한다', async ({ page }) => {
-  test.setTimeout(75_000)
+  test.setTimeout(e2eTimeout(75_000))
   await installWorkerProbe(page)
   const layouts: string[] = []
   for (const quality of ['low', 'high'] as const) {
@@ -102,7 +103,7 @@ test('low와 high가 같은 미로 입력을 사용하고 3D 초기 물량·유�
 })
 
 test('15. 모바일 2D·3D 전환과 반복 닫기가 하나의 Worker와 WebGL을 회수한다', async ({ page }, testInfo) => {
-  test.setTimeout(75_000)
+  test.setTimeout(e2eTimeout(75_000))
   await page.setViewportSize({ width: 360, height: 800 })
   await installWorkerProbe(page)
   await importWaterProject(page, fallingWaterProject, 'low', true)

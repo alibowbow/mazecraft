@@ -260,8 +260,11 @@ export function App() {
         if (isLastWaterSelection(recovered.id)) setWaterProject(recovered)
         dispatch({ type: 'OPEN' })
       }
-      // A bookmarked collection does not need to initialize the 3D workspace.
-      setRoute(location.hash === '#/library' ? 'home' : 'water')
+      // Restore a classic editor project in its editor. Mounting the default
+      // water preset here would replace the recovered project through the
+      // WaterStudio onProjectChange effect before the user could resume it.
+      const recoveredRoute = recovered && !isLastWaterSelection(recovered.id) ? 'studio' : 'water'
+      setRoute(location.hash === '#/library' ? 'home' : recoveredRoute)
     })()
     return () => {
       active = false

@@ -1,3 +1,4 @@
+import { e2eTimeout } from './helpers/runtimeBudget'
 import { visitProjectLibrary, enterProjectEditor } from './helpers/navigation'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createDefaultProject, type MazeProject } from '../src/core/maze'
@@ -49,7 +50,7 @@ async function pause(page: Page, stage: Locator) {
 }
 
 test('자유수면 입자가 실제로 흐르고 공급 중지·일시정지·재시작이 구분된다', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => {
@@ -128,7 +129,7 @@ test('자유수면 입자가 실제로 흐르고 공급 중지·일시정지·�
 })
 
 test('수직 수로에서 물이 출구로 떨어지고 입자 질량이 보존된다', async ({ page }) => {
-  test.setTimeout(45_000)
+  test.setTimeout(e2eTimeout(45_000))
   await importProject(page, verticalChannel)
   const stage = await openDefaultWater(page)
   await expect(stage).toHaveAttribute('data-start-edge', 'top')
@@ -163,7 +164,7 @@ test('수직 수로에서 물이 출구로 떨어지고 입자 질량이 보존�
 })
 
 test('15. 좁은 모바일 자유수면 화면이 잘리지 않고 반복 열기에서 Worker를 회수한다', async ({ page }, testInfo) => {
-  test.setTimeout(60_000)
+  test.setTimeout(e2eTimeout(60_000))
   await page.setViewportSize({ width: 360, height: 800 })
   await page.addInitScript(() => {
     const state = { active: 0, created: 0, terminated: 0 }

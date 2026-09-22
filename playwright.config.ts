@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { e2eTimeout } from './e2e/helpers/runtimeBudget'
 
 const testPort = Number(process.env.PLAYWRIGHT_PORT ?? 4173)
 
@@ -8,6 +9,8 @@ export default defineConfig({
   // blender-water-runtime.spec.ts, which performs the awaited DOM assertions.
   testIgnore: ['**/blender-water.spec.ts'],
   fullyParallel: false,
+  timeout: e2eTimeout(30_000),
+  expect: { timeout: e2eTimeout(5_000) },
   // GitHub runners use software WebGL. Serializing there prevents the two 3D
   // quality scenarios from starving each other's lazy-loaded renderers.
   workers: process.env.CI ? 1 : undefined,
