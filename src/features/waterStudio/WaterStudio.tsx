@@ -94,6 +94,11 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     : createWaterStudioProject(preferences.preset, preferences.seed, preferences.size ? { rows: preferences.size, cols: preferences.size } : undefined),
     [preferences.source, preferences.generator, preferences.preset, preferences.seed, preferences.size])
   const project = customProject ?? generatedProject
+  const sculpture = useMemo(() => preferences.source === 'flow'
+    && (preferences.preset === 'atelier' || preferences.preset === 'cascade')
+    && JSON.stringify(project.mazeGraph) === JSON.stringify(generatedProject.mazeGraph)
+    ? 'terraced-fountain' as const : undefined,
+  [preferences.source, preferences.preset, project.mazeGraph, generatedProject.mazeGraph])
   const onProjectChangeRef = useRef(onProjectChange)
   onProjectChangeRef.current = onProjectChange
   useEffect(() => { setCustomProject(initialProject ?? null) }, [initialProject])
@@ -121,6 +126,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
         next => { if (!disposed) setStatus(next) },
         message => { if (!disposed) { setError(message); setRenderState('error') } },
         () => undefined,
+        false, sculpture,
       )
       runtime.setLook(current.preferences.look)
       runtime.setViewMode(current.mode)
@@ -137,7 +143,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
       setRenderState('error')
     }
     return () => { disposed = true; runtime?.dispose(); if (runtimeRef.current === runtime) runtimeRef.current = null }
-  }, [project, retry])
+  }, [project, retry, sculpture])
   useEffect(() => { runtimeRef.current?.setLook(preferences.look) }, [preferences.look])
   useEffect(() => { runtimeRef.current?.setAppearance(appearance) }, [appearance])
   useEffect(() => { runtimeRef.current?.setInflowRate(preferences.flow) }, [preferences.flow])

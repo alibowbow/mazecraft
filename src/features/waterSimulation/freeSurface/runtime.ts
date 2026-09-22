@@ -5,6 +5,8 @@ import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
 import { BasinSimulation, type BasinSnapshot } from './basinSimulation'
+import { CascadeSimulation } from './cascadeSimulation'
+import { createCascadeSurfaces } from './cascadeGeometry'
 import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers } from './types'
 import type { WaterAppearance } from './appearance'
 import type { WaterLook } from './lookdev'
@@ -24,7 +26,7 @@ const EMPTY_PARTICLE_DIAGNOSTICS: FluidDiagnostics = {
 export class FreeSurfaceRuntime {
   private readonly layout
   private readonly renderer: FreeSurfaceRenderer
-  private readonly basin: BasinSimulation
+  private readonly basin: BasinSimulation | CascadeSimulation
   private basinSnapshot: BasinSnapshot
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private worker: Worker | null = null
@@ -62,11 +64,14 @@ export class FreeSurfaceRuntime {
     private readonly onError: (message: string) => void,
     private readonly onMetrics: (metrics: WaterRuntimeMetrics) => void,
     _reducedMotion = false,
+    sculpture?: 'terraced-fountain',
   ) {
     this.layout = buildFluidLayout(project)
-    this.basin = new BasinSimulation(project, this.layout)
+    this.basin = sculpture
+      ? new CascadeSimulation(this.layout, createCascadeSurfaces().map(surface => surface.area) as [number, number, number])
+      : new BasinSimulation(project, this.layout)
     this.basinSnapshot = this.basin.snapshot()
-    this.renderer = new FreeSurfaceRenderer(mount, this.layout, quality)
+    this.renderer = new FreeSurfaceRenderer(mount, this.layout, quality, sculpture)
     this.renderer.setBasinSnapshot(this.basinSnapshot)
     this.renderer.setSurfaceStyle(style)
     try {

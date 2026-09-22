@@ -14,7 +14,9 @@ permissions:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Five GPU scenarios now include three moving cascade frames and reversible
+    # material changes, rendered serially on the runner's software WebGL.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

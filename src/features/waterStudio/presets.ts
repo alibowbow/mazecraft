@@ -24,8 +24,8 @@ export interface WaterStudioPreset extends WaterStudioSize {
 }
 
 export const WATER_STUDIO_PRESETS: readonly WaterStudioPreset[] = [
-  { id: 'atelier', name: '포슬린 가든', caption: '둥근 회랑과 작은 섬을 감싸는 청록빛 수로', rows: 10, cols: 10 },
-  { id: 'cascade', name: '캐스케이드', caption: '넓은 수조 사이로 이어지는 낙수', rows: 8, cols: 6 },
+  { id: 'atelier', name: '포슬린 가든', caption: '원형 분수와 나선 수로를 품은 세 단의 도자기 정원', rows: 10, cols: 10 },
+  { id: 'cascade', name: '캐스케이드', caption: '상단 수원에서 세 개의 수조를 따라 내려오는 낙수', rows: 8, cols: 6 },
   { id: 'split', name: '트윈 플로우', caption: '둘로 갈라져 다시 만나는 흐름', rows: 8, cols: 8 },
   { id: 'serpentine', name: '리본', caption: '좌우를 가로지르는 긴 물길', rows: 8, cols: 6 },
   { id: 'garden', name: '워터 가든', caption: '작은 섬을 감싸는 열린 수조', rows: 8, cols: 8 },
