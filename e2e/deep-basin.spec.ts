@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test('deep porcelain basin renders conserved water, pauses and drains without losing its maze', async ({ page }, testInfo) => {
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => {
@@ -12,8 +12,10 @@ test('deep porcelain basin renders conserved water, pauses and drains without lo
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 45_000 })
   const canvas = stage.locator('canvas.water-simulation-canvas')
   await expect(canvas).toHaveAttribute('data-water-model', 'hydraulic-basin')
-  await expect.poll(async () => Number(await canvas.getAttribute('data-basin-wet-cells'))).toBeGreaterThan(80)
-  await expect.poll(async () => Number(await canvas.getAttribute('data-basin-time'))).toBeGreaterThan(0.5)
+  // Software WebGL can occupy the main thread while compiling transmission;
+  // allow that first state read to finish before evaluating the same thresholds.
+  await expect.poll(async () => Number(await canvas.getAttribute('data-basin-wet-cells')), { timeout: 30_000 }).toBeGreaterThan(80)
+  await expect.poll(async () => Number(await canvas.getAttribute('data-basin-time')), { timeout: 30_000 }).toBeGreaterThan(0.5)
   await page.getByRole('button', { name: '일시정지', exact: true }).click()
   const time = await canvas.getAttribute('data-basin-time')
   const stored = Number(await canvas.getAttribute('data-basin-stored-volume'))
@@ -38,12 +40,12 @@ test('deep porcelain basin renders conserved water, pauses and drains without lo
 })
 
 test('15.7 deep basin stays visible on a compact screen', async ({ page }, testInfo) => {
-  test.setTimeout(90_000)
+  test.setTimeout(120_000)
   await page.goto('/')
   const stage = page.getByTestId('water-studio-canvas')
   await expect(stage).toHaveAttribute('data-renderer', 'ready', { timeout: 45_000 })
   const canvas = stage.locator('canvas.water-simulation-canvas')
-  await expect.poll(async () => Number(await canvas.getAttribute('data-basin-time'))).toBeGreaterThan(0.3)
+  await expect.poll(async () => Number(await canvas.getAttribute('data-basin-time')), { timeout: 30_000 }).toBeGreaterThan(0.3)
   await page.getByRole('button', { name: '일시정지', exact: true }).click()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('deep-basin-mobile.png') })

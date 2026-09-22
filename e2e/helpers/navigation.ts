@@ -7,8 +7,11 @@ export async function openProjectLibrary(page: Page): Promise<void> {
 }
 
 export async function visitProjectLibrary(page: Page): Promise<void> {
-  await page.goto('/')
-  await openProjectLibrary(page)
+  // Collection/editor tests exercise their real entry route. The water-studio
+  // suite separately covers the home-to-collection navigation and round trip.
+  await page.goto('/#/library')
+  await expect(page.locator('input[type="file"][accept*=".mazecraft"]')).toHaveCount(1)
+  await expect(page.getByTestId('water-studio')).toHaveCount(0)
 }
 
 /** Imported/recovered projects can open in the simulation before editing. */

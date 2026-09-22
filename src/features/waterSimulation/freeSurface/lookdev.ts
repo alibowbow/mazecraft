@@ -56,7 +56,9 @@ export const DEFAULT_WATER_LOOK: WaterLook = { theme: 'porcelain', light: 'dayli
 
 /** Shared direction keeps the fluid highlights, wall bevels and contact shade coherent. */
 export const WATER_LIGHTS = {
-  daylight: { direction: [-0.42, 0.58, 0.86], color: '#fff4df', fill: '#dceef3', sky: '#ffffff', ground: '#dbceba', intensity: 2.0, ambient: 1.55 },
+  // Keep the sun away from the default orthographic camera's mirror angle:
+  // a parallel view otherwise turns the entire flat pool into one white glint.
+  daylight: { direction: [-0.72, 0.28, 0.95], color: '#fff4df', fill: '#dceef3', sky: '#ffffff', ground: '#dbceba', intensity: 2.0, ambient: 1.55 },
   golden: { direction: [-0.76, 0.30, 0.60], color: '#ffd5a5', fill: '#eadfe6', sky: '#fff1dc', ground: '#d3ac87', intensity: 2.25, ambient: 1.4 },
   studio: { direction: [0.46, 0.72, 0.96], color: '#f2faff', fill: '#d5e7f0', sky: '#f1f8ff', ground: '#c6d6dd', intensity: 1.9, ambient: 1.7 },
 } as const;

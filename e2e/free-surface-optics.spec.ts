@@ -247,12 +247,15 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
       view.setAppearance({ profile: 'clear', color: null, opacity: 0.82 })
       view.setBasinSnapshot(drySnapshot)
       const dry = readColor()
+      const dryImage = view.canvas.toDataURL('image/png')
       view.setBasinSnapshot(filled)
       const wet = readColor()
+      const wetImage = view.canvas.toDataURL('image/png')
       const eye = internals.presentation3d.camera
       const direction = eye.getWorldDirection(eye.position.clone())
       const waterZ = fixture.BASIN_FLOOR_Z + fixture.BASIN_INITIAL_DEPTH
       let samples = 0, contrasted = 0, difference = 0, chromaShift = 0
+      const dryColor = [0, 0, 0], wetColor = [0, 0, 0]
       for (let row = 0; row < wet.height; row++) for (let col = 0; col < wet.width; col++) {
         const point = eye.position.clone().set((col + 0.5) / wet.width * 2 - 1, (row + 0.5) / wet.height * 2 - 1, 0).unproject(eye)
         point.addScaledVector(direction, (waterZ - point.z) / direction.z)
@@ -260,6 +263,10 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
         if (point.x < 1.5 || point.x > 3.5 || point.y < -3.5 || point.y > -1.5) continue
         const index = (row * wet.width + col) * 4
         const delta = [0, 1, 2].map(channel => wet.data[index + channel] - dry.data[index + channel])
+        for (const channel of [0, 1, 2]) {
+          dryColor[channel] += dry.data[index + channel]
+          wetColor[channel] += wet.data[index + channel]
+        }
         const contrast = Math.abs(delta[0] * 0.2126 + delta[1] * 0.7152 + delta[2] * 0.0722)
         samples++; difference += contrast
         if (contrast >= 8) contrasted++
@@ -267,7 +274,9 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
       }
       const material = internals.presentation3d.sculpted.waterMaterial
       return {
+        dryImage, wetImage,
         samples, sampledWaterZ: waterZ,
+        dryColor: dryColor.map(value => value / samples), wetColor: wetColor.map(value => value / samples),
         meanContrast: difference / samples, visibleFraction: contrasted / samples, meanChromaShift: chromaShift / samples,
         attenuationColor: material.attenuationColor.toArray(), materialColor: material.color.toArray(),
         storedVolume: filled.diagnostics.stored, initialStoredVolume: filled.initialStoredVolume,
@@ -280,7 +289,10 @@ test('3D clear basin water uses actual conserved depth and remains visible witho
       view.dispose(); mount.remove()
     }
   }, { project, layout: { ...layout, activeCells: Array.from(layout.activeCells) } })
-  await test.info().attach('basin-optics-measurements', { body: JSON.stringify(result, null, 2), contentType: 'application/json' })
+  const { dryImage, wetImage, ...measurements } = result
+  await test.info().attach('basin-optics-dry', { body: Buffer.from(dryImage.split(',')[1], 'base64'), contentType: 'image/png' })
+  await test.info().attach('basin-optics-clear-water', { body: Buffer.from(wetImage.split(',')[1], 'base64'), contentType: 'image/png' })
+  await test.info().attach('basin-optics-measurements', { body: JSON.stringify(measurements, null, 2), contentType: 'application/json' })
   // Report shader compilation failures directly before their missing pixels
   // produce a less useful contrast failure.
   expect(errors).toEqual([])
