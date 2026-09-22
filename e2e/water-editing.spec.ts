@@ -9,6 +9,21 @@ async function flow(page: Page) {
   return page.locator('canvas.water-simulation-canvas').evaluate((canvas: HTMLCanvasElement) => ({ time: Number(canvas.dataset.particleTime), count: Number(canvas.dataset.particleCount), stored: Number(canvas.dataset.particleStoredVolume) }))
 }
 
+async function savedProject(page: Page): Promise<MazeProject> {
+  await page.getByRole('button', { name: '미로 저장', exact: true }).click()
+  await expect(page.getByRole('button', { name: '미로 저장 완료', exact: true })).toBeVisible()
+  return page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => { const req = indexedDB.open('mazecraft-core'); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error) })
+    const projects = await new Promise<MazeProject[]>((resolve, reject) => { const req = database.transaction('projects').objectStore('projects').getAll(); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error) })
+    database.close()
+    return projects[0]
+  })
+}
+function wallDensity({ mazeGraph: g }: MazeProject) {
+  return g.cells.reduce((count, cell) => count + Number(cell.active && cell.col + 1 < g.cols && g.cells[cell.index + 1].active && cell.walls.right)
+    + Number(cell.active && cell.row + 1 < g.rows && g.cells[cell.index + g.cols].active && cell.walls.bottom), 0) / Math.max(g.rows, g.cols)
+}
+
 test('custom water retains the same gravity and inlet across 2D/3D, edits live, and resets paused', async ({ page }, info) => {
   test.setTimeout(240_000)
   const errors: string[] = []
@@ -45,11 +60,29 @@ test('custom water retains the same gravity and inlet across 2D/3D, edits live, 
   expect(edited.count).toBe(paused.count)
   expect(edited.stored).toBeCloseTo(paused.stored, 6)
   await page.getByRole('button', { name: '벽 편집 중 · 완료', exact: true }).click()
-  await page.getByRole('slider', { name: '미로 해상도', exact: true }).fill('10')
+  const original = await savedProject(page)
+  const budget = await canvas.getAttribute('data-particle-capacity')
+  const sampling = await canvas.getAttribute('data-particle-radius')
+  const surfaceResolution = await canvas.getAttribute('data-surface-resolution')
+  await page.screenshot({ path: info.outputPath('maze-density-8.png') })
+  await page.getByRole('slider', { name: '미로 해상도', exact: true }).fill('16')
   await ready(page)
-  await expect(page.getByLabel('현재 가로 칸 수', { exact: true })).toHaveValue('10')
+  await expect(page.getByLabel('현재 가로 칸 수', { exact: true })).toHaveValue('16')
   await ready(page)
-  expect((await flow(page)).count).toBe(paused.count)
+  expect(await flow(page)).toEqual(paused)
+  await expect(canvas).toHaveAttribute('data-particle-capacity', budget!)
+  await expect(canvas).toHaveAttribute('data-particle-radius', sampling!)
+  await expect(canvas).toHaveAttribute('data-surface-resolution', surfaceResolution!)
+  const finer = await savedProject(page)
+  expect(wallDensity(finer)).toBeGreaterThan(wallDensity(original) * 1.8)
+  expect(finer.mazeMetrics.solvable).toBe(true)
+  await page.screenshot({ path: info.outputPath('maze-density-16.png') })
+  await page.getByRole('slider', { name: '미로 해상도', exact: true }).fill('8')
+  await expect(page.getByLabel('현재 가로 칸 수', { exact: true })).toHaveValue('8')
+  await ready(page)
+  const restored = await savedProject(page)
+  expect(restored.mazeGraph).toEqual(original.mazeGraph)
+  expect(await flow(page)).toEqual(paused)
   await page.screenshot({ path: info.outputPath('white-2d-live-edit.png') })
   await page.getByRole('button', { name: '3D', exact: true }).click()
   await expect(page.locator('canvas.water-simulation-canvas')).toHaveAttribute('data-wall-color3d', '#243f60')

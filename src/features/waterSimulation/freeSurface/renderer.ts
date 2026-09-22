@@ -380,6 +380,8 @@ export class FreeSurfaceRenderer {
     this.canvas = this.renderer.domElement
     this.canvas.className = 'water-simulation-canvas free-surface-canvas'
     this.canvas.dataset.viewMode = 'free-surface'
+    this.canvas.dataset.particleCapacity = String(layout.capacity)
+    this.canvas.dataset.particleRadius = String(layout.radius)
     this.canvas.dataset.waterOpacity = String(DEFAULT_WATER_APPEARANCE.opacity)
     this.canvas.dataset.waterColor = 'transparent'
     this.canvas.dataset.waterOptics = 'clear'

@@ -67,7 +67,7 @@ export class FreeSurfaceRuntime {
     private readonly sculpture?: 'terraced-fountain' | 'extruded-flow',
     private readonly resume?: FluidResume,
   ) {
-    this.layout = buildFluidLayout(project)
+    this.layout = buildFluidLayout(project, resume?.capacity)
     if (resume) { this.layout.capacity = Math.max(this.layout.capacity, resume.snapshot.count); this.paused = resume.paused; this.inflowEnabled = resume.inflow; this.inflow = resume.inflow ? 1 : 0 }
     this.basin = sculpture === 'terraced-fountain'
       ? new CascadeSimulation(this.layout, createCascadeSurfaces().map(surface => surface.area) as [number, number, number])
@@ -344,7 +344,7 @@ export class FreeSurfaceRuntime {
   }
   captureFlowState(): FluidResume | undefined {
     if (this.basinMode || !this.diagnostics) return undefined
-    return { snapshot: this.renderer.captureParticles(this.diagnostics), rows: this.layout.rows, cols: this.layout.cols,
+    return { snapshot: this.renderer.captureParticles(this.diagnostics), capacity: this.layout.capacity, rows: this.layout.rows, cols: this.layout.cols,
       inletX: this.layout.inletX, outletX: this.layout.outletX, topY: this.layout.topY, bottomY: this.layout.bottomY,
       outletY: this.layout.outletY, paused: this.paused, inflow: this.inflowEnabled }
   }

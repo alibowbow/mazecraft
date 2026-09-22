@@ -1,11 +1,40 @@
 import { describe, expect, it } from 'vitest'
 import { createWaterStudioProject } from './presets'
+import { createGeneratedWaterMaze, DEFAULT_WATER_MAZE } from './createMaze'
+import type { MazeProject } from '../../core/maze'
 import { editWaterMazeWall, resizeWaterMaze } from './liveEditing'
 import { buildFluidLayout } from '../waterSimulation/freeSurface/layout'
 import { FreeSurfaceSolver } from '../waterSimulation/freeSurface/solver'
 import type { FluidResume } from '../waterSimulation/freeSurface/types'
 
 describe('live water topology', () => {
+  const wallDensity = ({ mazeGraph: g }: MazeProject) => g.cells.reduce((count, cell) => count + Number(cell.active && cell.col + 1 < g.cols && g.cells[cell.index + 1].active && cell.walls.right)
+    + Number(cell.active && cell.row + 1 < g.rows && g.cells[cell.index + g.cols].active && cell.walls.bottom), 0) / Math.max(g.rows, g.cols)
+  it('adds visible passages and branches instead of just subdividing the same maze', () => {
+    const original = createGeneratedWaterMaze({ ...DEFAULT_WATER_MAZE, rows: 8, cols: 8 })
+    const finer = resizeWaterMaze(original, 16, 16)
+    expect(wallDensity(finer)).toBeGreaterThan(wallDensity(original) * 1.8)
+    expect(finer.mazeMetrics.branches).toBeGreaterThan(original.mazeMetrics.branches)
+    expect(finer.mazeMetrics.solvable).toBe(true)
+    expect(resizeWaterMaze(original, 16, 16).mazeGraph).toEqual(finer.mazeGraph)
+  })
+  it('retains the original mask and walls after moving the slider down and back up', () => {
+    const original = createWaterStudioProject('garden')
+    const coarser = resizeWaterMaze(original, 4, 4)
+    const finer = resizeWaterMaze(coarser, 24, 24, original)
+    expect(finer.mazeGraph).toEqual(resizeWaterMaze(original, 24, 24).mazeGraph)
+    expect(resizeWaterMaze(finer, original.grid.rows, original.grid.cols, original)).toBe(original)
+    expect(resizeWaterMaze(finer, 24, 24, original)).toBe(finer)
+  })
+  it('retains liquid sampling and particle budget when maze density increases', () => {
+    const original = createGeneratedWaterMaze({ ...DEFAULT_WATER_MAZE, rows: 8, cols: 8 })
+    const before = buildFluidLayout(original)
+    const after = buildFluidLayout(resizeWaterMaze(original, 32, 32), before.capacity)
+    expect(after.walls.length).toBeGreaterThan(before.walls.length * 4)
+    expect(after.capacity).toBe(before.capacity)
+    expect(after.radius).toBe(before.radius)
+    expect(after.particleArea).toBe(before.particleArea)
+  })
   it('toggles both sides of an internal edge without modifying the original', () => {
     const original = createWaterStudioProject('garden')
     const changed = editWaterMazeWall(original, 1, .5)!
@@ -32,7 +61,7 @@ describe('live water topology', () => {
     const before = solver.snapshot()
     const resume: FluidResume = { snapshot: before, ...layout, paused: true, inflow: true }
     const resized = resizeWaterMaze(editWaterMazeWall(original, 3, .5)!, 10, 12)
-    const nextLayout = buildFluidLayout(resized)
+    const nextLayout = buildFluidLayout(resized, resume.capacity)
     nextLayout.capacity = Math.max(nextLayout.capacity, before.count)
     const afterSolver = new FreeSurfaceSolver(nextLayout)
     afterSolver.restore(resume)
