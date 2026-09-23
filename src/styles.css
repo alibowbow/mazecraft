@@ -1,59 +1,56 @@
 :root {
   color-scheme: light;
-  font-family: Pretendard, Inter, "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  /* MazeCraft · maze & water. Drafting paper, ink, and water teal, with a
-     clay accent for the maze's start and end marks. */
-  --bg: #f4f2ec;
-  --surface: #fffdf9;
-  --surface-2: #f9f7f2;
-  --surface-3: #efece5;
-  --ink: #1b2a30;
-  --muted: #66747a;
-  --line: #e3dfd6;
-  --line-strong: #cdc7bc;
-  --primary: #1f6f75;
-  --primary-hover: #185b60;
-  --primary-soft: #dcebe9;
-  --accent: #c46b45;
-  --clay-soft: #f4e4d9;
+  font-family: "Pretendard Variable", Pretendard, Inter, "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* MazeCraft follows the water atelier: warm ivory, deep ink-teal text,
+     one water-teal accent, hairline rules and light, spaced type. */
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --surface-2: #f6f5f0;
+  --surface-3: #eeede7;
+  --ink: #283d40;
+  --muted: #738183;
+  --line: #dedfd8;
+  --line-strong: #cfd4cc;
+  --primary: #267e87;
+  --primary-hover: #1f6b73;
+  --primary-soft: #e7f2f4;
+  --accent: #bb956c;
   --danger: #bf4a3f;
   --warning: #a8691a;
-  --focus: #2f7fa8;
-  /* Highlight chip colour: pale water, always read with dark text. */
-  --acid: #d3e8e4;
+  --focus: #55aaba;
+  /* Highlight chips: the atelier's pale water, read with dark text. */
+  --acid: #e0eff0;
   --violet: #6c63c7;
-  --water: #2a8f96;
-  --shadow: 0 22px 54px rgba(27, 42, 48, 0.10);
-  --panel-shadow: 0 12px 32px rgba(27, 42, 48, 0.07);
-  --radius: 14px;
-  --brand-ink: var(--ink);
-  --brand-water: var(--water);
-  --brand-paper: var(--surface);
+  --water: #388e85;
+  --shadow: 0 18px 44px rgba(40, 61, 64, 0.08);
+  --panel-shadow: 0 8px 24px rgba(40, 61, 64, 0.05);
+  --radius: 10px;
+  --eyebrow: #6e8180;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f171a;
-  --surface: #152024;
-  --surface-2: #1b282d;
-  --surface-3: #223238;
-  --ink: #edf2f1;
-  --muted: #9aabae;
-  --line: #2a3b40;
-  --line-strong: #3a4f55;
-  --primary: #62c1c4;
-  --primary-hover: #86d3d5;
-  --primary-soft: #163739;
-  --accent: #e39570;
-  --clay-soft: #3a2a22;
+  --bg: #121a1b;
+  --surface: #182224;
+  --surface-2: #1d2a2c;
+  --surface-3: #243335;
+  --ink: #e9efee;
+  --muted: #9aaaab;
+  --line: #2b3a3c;
+  --line-strong: #3a4c4e;
+  --primary: #6cc3c9;
+  --primary-hover: #8fd3d8;
+  --primary-soft: #1b3739;
+  --accent: #d6b28a;
   --danger: #ff8179;
   --warning: #efb55b;
-  --focus: #79b8e0;
-  --acid: #cfe7e3;
+  --focus: #79c1cf;
+  --acid: #d6eaec;
   --violet: #a39bff;
-  --water: #5cc7cc;
-  --shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
-  --panel-shadow: 0 14px 38px rgba(0, 0, 0, 0.26);
+  --water: #6cc3b8;
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  --panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  --eyebrow: #8fa3a4;
 }
 
 * {
@@ -5071,136 +5068,122 @@ svg {
 
 
 /* ==========================================================================
-   MazeCraft design system · maze & water
-   One visual language across the home, the maze studio and the water garden:
-   drafting paper, ink line work, water teal, and a clay accent.
+   MazeCraft design system, after the water atelier
+   Light ivory, hairline rules, one teal accent, and light headings with
+   spaced uppercase labels. The home and the maze studio share it.
    ========================================================================== */
 
-h1, h2, h3 { letter-spacing: -0.035em; }
+h1, h2, h3 { font-weight: 500; letter-spacing: -0.045em; }
 
-.button { border-radius: 10px; font-weight: 650; }
-.button.secondary { border-color: var(--line-strong); }
-.icon-button { border-radius: 10px; }
+.button { min-height: 44px; border-radius: 8px; font-size: 0.82rem; font-weight: 600; }
+.button.secondary { border-color: #d7ded6; background: var(--surface); }
+:root[data-theme="dark"] .button.secondary { border-color: var(--line-strong); }
+.icon-button { border-radius: 50%; border-color: transparent; background: transparent; }
+.icon-button:hover { background: var(--surface-3); }
 
-.brand { gap: 11px; }
-.brand .brand-logo { flex: none; }
-.brand strong { font-size: 1.02rem; font-weight: 750; letter-spacing: -0.02em; }
-.brand small { margin-top: 2px; color: var(--muted); font-size: 0.6rem; font-weight: 650; letter-spacing: 0.16em; }
+/* Brand: the atelier's waves and a spaced word mark */
+.brand { gap: 12px; }
+.brand-logo { flex: none; color: var(--primary); }
+.brand > span:last-child { display: grid; gap: 3px; line-height: 1; }
+.brand strong { font-size: 16px; font-weight: 650; letter-spacing: 0.18em; }
+.brand small { color: var(--muted); font-size: 8px; font-weight: 500; letter-spacing: 0.28em; }
 
-/* Home: the two doors */
-.home-shell::before {
-  top: -260px;
-  left: auto;
-  right: -220px;
-  width: 640px;
-  background: radial-gradient(circle, color-mix(in srgb, var(--water) 18%, transparent), transparent 70%);
-  filter: blur(20px);
-}
-
+/* Header: shared with the water studio */
 .home-header {
   display: flex;
-  align-items: center;
-  gap: 28px;
-  height: 72px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  align-items: stretch;
+  gap: 32px;
+  height: 70px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(14px);
 }
+.home-header .brand { align-self: center; }
+.home-header .home-header-actions { align-self: center; }
 
 .app-nav {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
+  gap: 30px;
   margin-left: auto;
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: 13px;
 }
-
 .app-nav a,
-.app-nav button,
-.app-nav > span {
-  display: inline-flex;
+.app-nav button {
+  display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 38px;
-  padding: 0 13px;
+  padding: 0 4px;
   color: var(--muted);
-  border-radius: 999px;
+  border-bottom: 2px solid transparent;
   background: transparent;
 }
-
 .app-nav a:hover,
-.app-nav button:hover { color: var(--ink); background: color-mix(in srgb, var(--surface-3) 70%, transparent); }
-.app-nav [aria-current="page"] { color: var(--ink); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.app-nav button:hover { color: var(--ink); }
+.app-nav [aria-current="page"] { color: var(--ink); border-bottom-color: var(--primary); font-weight: 650; }
 
-.home-header .home-header-actions { margin-left: 8px; }
-
-.hub-hero {
-  padding: clamp(34px, 5vw, 60px) 0 clamp(44px, 6vw, 72px);
+.home-header .local-badge {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
 }
+.home-header .local-badge i { width: 5px; height: 5px; background: #388e85; box-shadow: none; }
 
-.hub-intro {
-  max-width: 1100px;
-  margin-bottom: clamp(26px, 3.4vw, 40px);
-}
+.home-shell::before { display: none; }
 
-.hub-eyebrow {
-  margin: 0 0 18px;
-  color: var(--primary);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.2em;
+/* Home: the two doors */
+.hub-hero { padding: clamp(40px, 5.5vw, 70px) 0 clamp(44px, 6vw, 72px); }
+.hub-intro { max-width: 1100px; margin-bottom: clamp(28px, 3.6vw, 44px); }
+
+.hub-eyebrow,
+.hub-door-kicker,
+.section-kicker {
+  color: var(--eyebrow);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
 }
+.hub-eyebrow { margin: 0 0 16px; }
 
 .hub-intro h1 {
   margin: 0;
-  font-size: clamp(2.4rem, 4.4vw, 3.9rem);
-  font-weight: 760;
-  line-height: 1.04;
+  font-size: clamp(2.2rem, 4.1vw, 3.5rem);
+  font-weight: 400;
+  line-height: 1.12;
   letter-spacing: -0.055em;
 }
-
 .hub-intro h1 br { display: none; }
-
-@media (max-width: 1100px) {
-  .hub-intro h1 br { display: inline; }
-}
-
-.hub-intro h1 span {
-  color: var(--primary);
-  background: linear-gradient(90deg, var(--primary), var(--water));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
+@media (max-width: 1100px) { .hub-intro h1 br { display: inline; } }
+.hub-intro h1 span { color: var(--primary); }
 
 .hub-intro > p:last-child {
-  max-width: 560px;
-  margin: 22px 0 0;
+  max-width: 540px;
+  margin: 18px 0 0;
   color: var(--muted);
-  font-size: clamp(0.95rem, 1.3vw, 1.06rem);
+  font-size: 0.94rem;
   line-height: 1.75;
 }
 
 .hub-doors {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(16px, 2vw, 26px);
+  gap: clamp(16px, 2vw, 24px);
 }
 
 .hub-door {
-  position: relative;
   display: grid;
   grid-template-rows: auto 1fr;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 12px;
   background: var(--surface);
-  box-shadow: var(--panel-shadow);
-  transition: transform 220ms ease, box-shadow 220ms ease;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
 }
-
 @media (hover: hover) {
-  .hub-door:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+  .hub-door:hover { border-color: #c9d6d3; box-shadow: var(--shadow); }
 }
 
 .hub-door figure {
@@ -5208,89 +5191,34 @@ h1, h2, h3 { letter-spacing: -0.035em; }
   margin: 0;
   aspect-ratio: 2.3 / 1;
   overflow: hidden;
+  border-bottom: 1px solid var(--line);
   background: var(--surface-3);
 }
+.hub-door img { width: 100%; height: 100%; display: block; object-fit: cover; transition: transform 700ms ease; }
+@media (hover: hover) { .hub-door:hover img { transform: scale(1.025); } }
 
-.hub-door figure::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-  background: linear-gradient(180deg, transparent 55%, color-mix(in srgb, var(--surface) 55%, transparent));
-}
-
-.hub-door img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  transition: transform 600ms ease;
-}
-
-@media (hover: hover) {
-  .hub-door:hover img { transform: scale(1.03); }
-}
-
-.hub-door-copy {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  padding: clamp(20px, 2.4vw, 30px);
-}
-
-.hub-door-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-}
-
-.door-maze .hub-door-kicker svg { color: var(--accent); }
-.door-water .hub-door-kicker svg { color: var(--water); }
-
-.hub-door h2 {
-  margin: 0;
-  font-size: clamp(1.6rem, 2.4vw, 2.1rem);
-  font-weight: 740;
-}
-
-.hub-door p {
-  max-width: 460px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.92rem;
-  line-height: 1.7;
-}
-
-.hub-door-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 10px;
-}
-
-.hub-door-actions .button { min-height: 46px; border-radius: 11px; }
+.hub-door-copy { display: grid; align-content: start; gap: 10px; padding: clamp(20px, 2.2vw, 28px); }
+.hub-door-kicker { display: inline-flex; align-items: center; gap: 7px; }
+.hub-door-kicker svg { color: var(--primary); }
+.hub-door h2 { margin: 0; font-size: clamp(1.45rem, 2vw, 1.8rem); font-weight: 500; }
+.hub-door p { max-width: 440px; margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.7; }
+.hub-door-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
 .hero-primary,
-.hero-primary:hover {
-  color: var(--bg);
-  background: var(--ink);
+.water-primary {
+  color: #ffffff;
+  background: var(--primary);
 }
+.hero-primary:hover,
+.water-primary:hover { color: #ffffff; background: var(--primary-hover); }
+:root[data-theme="dark"] .hero-primary,
+:root[data-theme="dark"] .water-primary { color: #0f1718; }
 
-.hero-primary:hover { background: color-mix(in srgb, var(--ink) 86%, var(--primary)); }
+.section-heading h2 { font-weight: 500; }
+.template-card { border-radius: 12px; box-shadow: none; }
+.template-card:hover .template-open { color: var(--ink); }
 
-.water-primary { color: #fff; background: var(--primary); }
-.water-primary:hover { background: var(--primary-hover); }
-:root[data-theme="dark"] .water-primary { color: #0f171a; }
-
-.section-kicker { color: var(--primary); letter-spacing: 0.18em; }
-
-.template-card { border-radius: 16px; }
-.template-card:hover .template-open { color: #1b2a30; }
-
-.project-card { position: relative; border-radius: 16px; }
+.project-card { position: relative; border-radius: 12px; }
 .project-water {
   position: absolute;
   top: 10px;
@@ -5299,56 +5227,53 @@ h1, h2, h3 { letter-spacing: -0.035em; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 30px;
-  padding: 0 11px;
+  min-height: 28px;
+  padding: 0 10px;
   color: var(--primary);
-  border: 1px solid color-mix(in srgb, var(--primary) 26%, transparent);
+  border: 1px solid #cfe0df;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  backdrop-filter: blur(6px);
-  font-size: 0.72rem;
-  font-weight: 700;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  font-size: 11px;
+  font-weight: 600;
 }
-.project-water:hover { color: #fff; background: var(--primary); }
+.project-water:hover { color: #ffffff; background: var(--primary); }
 
-.home-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  color: var(--muted);
-}
+.home-footer { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.home-footer .brand-logo { width: 16px; height: 16px; }
 
-/* Maze studio: ink rail and the same header as home */
+/* Maze studio: a light rail and the atelier header */
+.studio-header { background: color-mix(in srgb, var(--bg) 94%, var(--surface)); }
+.studio-header .brand { color: var(--ink); background: transparent; }
+.studio-header .brand small { white-space: nowrap; }
+.studio-header .brand:hover { background: var(--surface-2); }
+
 .studio-stage-rail {
-  color: #dfe7e6;
-  border-color: color-mix(in srgb, var(--ink) 70%, #000);
-  background: #1b2a30;
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: none;
 }
-
-:root[data-theme="dark"] .studio-stage-rail { background: var(--surface-2); border-color: var(--line); }
-
-.studio-stage-rail button:hover { background: rgba(255, 255, 255, 0.06); }
+.studio-stage-rail .stage-rail-heading { color: var(--eyebrow); }
+.studio-stage-rail button { color: var(--muted); }
+.studio-stage-rail button > span { background: var(--surface-2); }
+.studio-stage-rail button:hover { color: var(--ink); background: var(--surface-2); }
+.studio-stage-rail button.active { color: var(--primary); border-color: var(--acid); background: var(--acid); }
+.studio-stage-rail button.active::before { color: color-mix(in srgb, var(--primary) 70%, transparent); }
+.studio-stage-rail button.active > span { background: rgba(255, 255, 255, 0.7); }
+:root[data-theme="dark"] .studio-stage-rail button.active { color: #1d4d52; }
 
 .loading-screen .brand-logo,
-.route-loading .brand-logo { margin-bottom: 6px; }
+.route-loading .brand-logo { width: 34px; height: 34px; margin-bottom: 6px; }
 
 @media (max-width: 900px) {
   .app-nav { display: none; }
 }
-
 @media (max-width: 760px) {
   .hub-doors { grid-template-columns: 1fr; }
 }
-
 @media (max-width: 560px) {
   .home-header .local-badge { display: none; }
-  .hub-intro h1 { font-size: 2.3rem; }
+  .brand small { display: none; }
 }
-
-.studio-header .brand {
-  color: var(--ink);
-  background: transparent;
-}
-.studio-header .brand small { white-space: nowrap; letter-spacing: 0.14em; }
-.studio-header .brand:hover { background: var(--surface-2); }
+.studio-header .brand strong { font-size: 14px; letter-spacing: 0.14em; }
+.studio-header .brand > span:last-child { justify-items: start; }

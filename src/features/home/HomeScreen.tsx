@@ -170,7 +170,7 @@ export function HomeScreen({
       <header className="home-header">
         <a className="brand" href="#" aria-label="메이즈크래프트 홈">
           <BrandMark />
-          <span><strong>MazeCraft</strong><small>MAZE &amp; WATER ATELIER</small></span>
+          <span><strong>MAZECRAFT</strong><small>MAZE &amp; WATER ATELIER</small></span>
         </a>
         <nav className="app-nav" aria-label="주 메뉴">
           <a href="#templates">미로 제작</a>

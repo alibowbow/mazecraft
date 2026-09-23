@@ -1304,7 +1304,7 @@ export function StudioScreen({
       <header className="studio-header no-print" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
         <button className="brand" onClick={onHome} aria-label="홈으로">
           <BrandMark />
-          <span><strong>MazeCraft</strong><small>MAZE STUDIO</small></span>
+          <span><strong>MAZECRAFT</strong><small>MAZE STUDIO</small></span>
         </button>
         <div className="studio-project-title">
           <small>현재 프로젝트</small>

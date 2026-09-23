@@ -4,6 +4,8 @@ import { waterStartupTimeout } from './runtimeBudget'
 /** The saved projects live on the home; studios reach them through "내 미로". */
 export async function openProjectLibrary(page: Page): Promise<void> {
   const importer = page.locator('input[type="file"][accept*=".mazecraft"]')
+  // Wait until either the home or the water studio has settled.
+  await expect(page.locator('.home-shell').or(page.getByTestId('water-studio'))).toBeVisible()
   if (!(await importer.count())) await page.getByRole('button', { name: '내 미로', exact: true }).click()
   await expect(importer).toHaveCount(1)
 }
