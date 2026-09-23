@@ -21,7 +21,7 @@ interface Glaze { glaze: string; bed: string; roughness: number; clearcoat: numb
 
 /** Glaze recipes per collection colour: real ceramic tones, not flat plastic. */
 export const GARDEN_GLAZES: Record<WaterTheme, Glaze> = {
-  porcelain: { glaze: '#f1ebe0', bed: '#f5f1e9', roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.045, sheen: 0.25 },
+  porcelain: { glaze: '#efe8dc', bed: '#f3eee4', roughness: 0.44, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0.12 },
   glacier: { glaze: '#a9d0e2', bed: '#e3f1f6', roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0.15 },
   terrace: { glaze: '#c6724e', bed: '#e8c3a6', roughness: 0.62, clearcoat: 0.12, clearcoatRoughness: 0.4, sheen: 0.35 },
   sage: { glaze: '#98c2a3', bed: '#e7f1e8', roughness: 0.26, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0.2 },
@@ -308,6 +308,12 @@ export class GardenPresentation3D {
       // Mean channel speed: through-flow over a typical channel section.
       flow[i] = THREE.MathUtils.clamp(state.throughflow[i] / (0.8 * depth) * 1.6, 0, 0.9)
     })
+    // One eased current for the whole garden: the route field already calms
+    // side bays, and ripples keep one speed across every step.
+    let sum = 0, wet = 0
+    this.layout.pools.forEach((_, i) => { if (state.fronts[i] >= 0) { sum += flow[i]; wet++ } })
+    const mean = wet ? sum / wet : 0
+    this.uniforms.uFlowMean.value += (mean - this.uniforms.uFlowMean.value) * 0.05
     this.uniforms.uGardenTime.value = state.time
     this.trackWater(state)
     this.falls.update(state, this.inflow)

@@ -27,6 +27,8 @@ export function createGardenUniforms(field: GardenField) {
     uLevels: { value: new Float32Array(MAX_POOLS).fill(-10) },
     uFloors: { value: new Float32Array(MAX_POOLS) },
     uPoolFlow: { value: new Float32Array(MAX_POOLS) },
+    /** Garden-wide current: one speed for every pool, so ripples never jump at a step. */
+    uFlowMean: { value: 0 },
     uGardenTime: { value: 0 },
     uGardenStyle: { value: 1 },
     uImpacts: { value: Array.from({ length: MAX_IMPACTS }, () => new THREE.Vector4()) },
@@ -74,6 +76,32 @@ export const GARDEN_COMMON_GLSL = /* glsl */ `
     vec2 u = f * f * (3.0 - 2.0 * f);
     return mix(mix(gardenHash(i), gardenHash(i + vec2(1.0, 0.0)), u.x),
       mix(gardenHash(i + vec2(0.0, 1.0)), gardenHash(i + vec2(1.0, 1.0)), u.x), u.y);
+  }
+  // Craquelure: the fine crackle of a fired glaze. F2 − F1 of a jittered
+  // cell grid gives the distance to the nearest crack.
+  vec2 gardenCell(vec2 i) {
+    return vec2(gardenHash(i), gardenHash(i + vec2(17.3, 9.1))) * 0.8 + 0.1;
+  }
+  float gardenCrack(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    float d1 = 8.0, d2 = 8.0;
+    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+      vec2 g = vec2(float(x), float(y));
+      float d = length(g + gardenCell(i + g) - f);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+    }
+    return d2 - d1;
+  }
+  // Cracks on the face's dominant plane, faded out once finer than a pixel.
+  float gardenCraquelure(vec3 p, vec3 n) {
+    vec3 a = abs(n);
+    vec2 uv = a.z > max(a.x, a.y) ? p.xy : (a.x > a.y ? p.yz : p.xz);
+    vec2 coarse = uv * 7.5, fine = uv * 19.0 + 3.7;
+    float fadeCoarse = 1.0 - smoothstep(0.25, 0.8, length(fwidth(coarse)));
+    float fadeFine = 1.0 - smoothstep(0.25, 0.8, length(fwidth(fine)));
+    float c = (1.0 - smoothstep(0.012, 0.06, gardenCrack(coarse))) * fadeCoarse;
+    float f = (1.0 - smoothstep(0.0, 0.04, gardenCrack(fine))) * fadeFine * 0.55;
+    return max(c, f);
   }
   // Refracted-sunlight network: the classic tileable iterated-domain caustic
   // (period 2π in p). Band-limited by the pixel footprint so distant beds
@@ -130,6 +158,9 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
     shader.vertexShader = FORCE_WORLDPOS + shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vGardenNormal;')
+      .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\nvGardenNormal = normalize(mat3(modelMatrix) * objectNormal);')
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vGardenNormal;')
     if (kind === 'wall') {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float aFloor;\nuniform float uWallScale;')
@@ -140,12 +171,27 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
     }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
-        // Glaze pools thicker (slightly deeper tone) in hollows and thins on
-        // crowns; a faint mottling breaks up the uniform, moulded look.
-        float glazeCloud = gardenNoise(vGardenWorld.xy * 1.7 + vGardenWorld.z * 0.9) * 0.6 + gardenNoise(vGardenWorld.xy * 5.3) * 0.4;
-        diffuseColor.rgb *= 0.965 + glazeCloud * 0.05;
-        float speck = step(0.985, gardenHash(floor(vGardenWorld.xy * 140.0) + floor(vGardenWorld.z * 140.0)));
-        diffuseColor.rgb *= 1.0 - speck * 0.08;`)
+        // Fired glaze over a stoneware body. The glaze pools deeper (richer
+        // tone) in hollows and thins over rounded crowns, where the warm body
+        // shows through; soft mottling, iron specks and a fine craquelure
+        // make it read as ceramic rather than moulded plastic.
+        vec3 glazeNormal = normalize(vGardenNormal);
+        float glazeCloud = gardenNoise(vGardenWorld.xy * 1.7 + vGardenWorld.z * 0.9) * 0.6 + gardenNoise(vGardenWorld.xy * 5.3 + vGardenWorld.z * 2.1) * 0.4;
+        diffuseColor.rgb *= 0.93 + glazeCloud * 0.1;
+        // Glaze thickness shifts the tone a little, as a real firing does.
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.97, 1.0, 1.02), smoothstep(0.45, 0.8, gardenNoise(vGardenWorld.xy * 0.8 - vGardenWorld.z * 0.6)));
+        float crown = smoothstep(0.12, 0.45, glazeNormal.z) * (1.0 - smoothstep(0.72, 0.96, glazeNormal.z));
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.03, 0.985, 0.94), crown * 0.55);
+        float speck = step(0.988, gardenHash(floor(vGardenWorld.xy * 150.0) + floor(vGardenWorld.z * 150.0)));
+        diffuseColor.rgb *= 1.0 - speck * 0.12;
+        float crackle = gardenCraquelure(vGardenWorld, glazeNormal);
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.72, 0.71, 0.68), crackle * 0.48);`)
+      .replace('#include <clearcoat_normal_fragment_maps>', `#include <clearcoat_normal_fragment_maps>
+        // Orange peel: the gentle waviness of a real glaze surface bends the
+        // mirrored sky, where a moulded surface would reflect it flat.
+        vec2 peel = vec2(gardenNoise(vGardenWorld.xy * 11.0 + vGardenWorld.z * 7.0), gardenNoise(vGardenWorld.yx * 11.0 - vGardenWorld.z * 5.0)) - 0.5;
+        vec2 swell = vec2(gardenNoise(vGardenWorld.xy * 2.3 + vGardenWorld.z), gardenNoise(vGardenWorld.yx * 2.3 - vGardenWorld.z)) - 0.5;
+        clearcoatNormal = normalize(clearcoatNormal + mat3(viewMatrix) * vec3(peel * 0.05 + swell * 0.07, 0.0));`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(roughnessFactor * (0.85 + gardenNoise(vGardenWorld.xy * 3.1) * 0.3), 0.04, 1.0);`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
@@ -176,7 +222,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         reflectedLight.indirectSpecular *= mix(1.0, gardenAo, 0.75);
       `)
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v1`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v2`
   return material
 }
 
@@ -215,6 +261,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform float uLevels[GARDEN_MAX_POOLS];
         uniform float uFloors[GARDEN_MAX_POOLS];
         uniform float uPoolFlow[GARDEN_MAX_POOLS];
+        uniform float uFlowMean;
         uniform float uFront[GARDEN_MAX_POOLS];
         uniform float uGardenTime;
         uniform float uGardenStyle;
@@ -237,7 +284,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         int gardenPoolIndex = int(aPool + 0.5);
         float poolLevel = uLevels[gardenPoolIndex];
         vec4 waveField = texture2D(uGardenField, (position.xy - uGardenBounds.xy) / uGardenBounds.zw);
-        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uPoolFlow[gardenPoolIndex];
+        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uFlowMean;
         float waveSpeed = length(waveFlow);
         float wallDistance = waveField.b < 0.499 ? waveField.b : 0.5;
         float settled = step(9000.0, uFront[gardenPoolIndex]);
@@ -275,7 +322,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
       .replace('#include <begin_vertex>', `
         vec3 transformed = vec3(position.xy, poolLevel + waveHeight);
         vPoolDepth = poolLevel - uFloors[gardenPoolIndex];
-        vPoolFlow = uPoolFlow[gardenPoolIndex];
+        vPoolFlow = uFlowMean;
         vPoolFront = uFront[gardenPoolIndex];`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -357,9 +404,9 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         // the true depth below.
         .replace('material.thickness = thickness;', 'material.thickness = 0.04;')
         .replace('totalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );',
-          'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3(max(0.02, vPoolDepth) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
+          'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3((0.2 + 0.25 * clamp(vPoolDepth, 0.0, 0.6)) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
   }
-  material.customProgramCacheKey = () => 'garden-water-v1'
+  material.customProgramCacheKey = () => 'garden-water-v2'
   return material
 }
 

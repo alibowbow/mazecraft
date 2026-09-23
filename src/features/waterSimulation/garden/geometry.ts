@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { TessellateModifier } from 'three/addons/modifiers/TessellateModifier.js'
 import type { GardenLayout } from './layout'
-import { offset, regionContains, regions, shapeOf, type Region, type Vec2 } from './polygon'
+import { offset, regionContains, regions, shapeOf, strokes, union, type Region, type Vec2 } from './polygon'
 import type { Vec3 } from './designs'
 
 /** No wall-height scaling for solids tagged with this floor. */
@@ -194,7 +194,13 @@ export function buildGardenSolids(layout: GardenLayout): GardenSolids {
   // shader can raise real waves; lifted to the pool's level on the GPU.
   const tessellate = new TessellateModifier(0.14, 9)
   for (const pool of layout.pools) {
-    const flatSheet = new THREE.ShapeGeometry(toShape(pool.region), 4)
+    // Each pool's sheet reaches over the steps it spills across, so water
+    // meets water at every step instead of leaving a dry seam of bed.
+    const steps = layout.edges.filter(edge => edge.kind === 'sill' && edge.a === pool.index)
+    const sheet = steps.length
+      ? regions(union(shapeOf(pool.region), strokes(steps.map(edge => ({ points: edge.points })), 0.035)))
+      : [pool.region]
+    const flatSheet = mergeGeometries(sheet.map(region => new THREE.ShapeGeometry(toShape(region), 4).toNonIndexed()), false)!
     flatSheet.deleteAttribute('uv'); flatSheet.deleteAttribute('normal')
     const geometry = tessellate.modify(flatSheet)
     flatSheet.dispose()

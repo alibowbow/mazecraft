@@ -77,6 +77,14 @@ interface Props {
   onShare(project: MazeProject): void
 }
 
+/**
+ * The 2D flow and the plain 3D mazes run at twice real time by default so
+ * the water reaches the exit briskly; the water gardens keep real time.
+ */
+function speedFactor(mode: 'surface-3d' | 'free-surface', sculpture: string | undefined): number {
+  return mode === 'surface-3d' && sculpture?.startsWith('garden:') ? 1 : 2
+}
+
 export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onHome, onEdit, onSave, onShare }: Props) {
   const [customProject, setCustomProject] = useState<MazeProject | null>(initialProject ?? null)
   const [preferences, setPreferences] = useState(readPreferences)
@@ -158,7 +166,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
       runtime.setViewMode(current.mode)
       runtime.setAppearance({ color: current.preferences.color, profile: current.preferences.color === AQUA_WATER_APPEARANCE.color ? 'aqua' : current.preferences.color ? 'tinted' : 'clear', opacity: current.preferences.opacity })
       runtime.setInflowRate(current.preferences.flow)
-      runtime.setSpeed(current.preferences.speed)
+      runtime.setSpeed(current.preferences.speed * speedFactor(current.mode, sculpture))
       // A fresh scene waits, dry, until the viewer starts the water.
       if (!resume) runtime.setPaused(true)
       runtimeRef.current = runtime
@@ -176,7 +184,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   useEffect(() => { runtimeRef.current?.setAppearance(appearance) }, [appearance])
   useEffect(() => { runtimeRef.current?.setInflowRate(preferences.flow) }, [preferences.flow])
   useEffect(() => { runtimeRef.current?.setSurfaceStyle(preferences.surface) }, [preferences.surface])
-  useEffect(() => { runtimeRef.current?.setSpeed(preferences.speed) }, [preferences.speed])
+  useEffect(() => { runtimeRef.current?.setSpeed(preferences.speed * speedFactor(mode, sculpture)) }, [preferences.speed, mode, sculpture])
   useEffect(() => { runtimeRef.current?.setViewMode(mode) }, [mode])
   useEffect(() => {
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { setFocus(false); setTuningOpen(false) } }
