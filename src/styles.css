@@ -5334,8 +5334,11 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .route-loading .brand-logo { margin-bottom: 6px; }
 
 @media (max-width: 900px) {
-  .hub-doors { grid-template-columns: 1fr; }
   .app-nav { display: none; }
+}
+
+@media (max-width: 760px) {
+  .hub-doors { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 560px) {

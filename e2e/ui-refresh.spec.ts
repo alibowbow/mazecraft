@@ -103,9 +103,10 @@ test('소형 태블릿 홈에서 간결한 히어로와 템플릿 선반을 제�
     await page.setViewportSize({ width, height: 900 })
     await visitProjectLibrary(page)
 
-    await expect.poll(() => page.locator('.home-hero').evaluate((element) =>
-      getComputedStyle(element).display,
-    )).toBe('grid')
+    // The two doors (maze studio, water garden) stay side by side on tablets.
+    await expect.poll(() => page.locator('.hub-doors').evaluate((element) =>
+      getComputedStyle(element).gridTemplateColumns.split(' ').length,
+    )).toBe(2)
     await expect.poll(() => page.locator('.template-grid').evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(' ').length,
     )).toBe(3)
