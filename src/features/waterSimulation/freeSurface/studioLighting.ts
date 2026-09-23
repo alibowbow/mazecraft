@@ -27,7 +27,7 @@ export class StudioShadows {
           shader.uniforms.uStudioShadowScale = this.scale
           shader.fragmentShader = shader.fragmentShader.replace('#include <shadowmap_pars_fragment>', shadowChunk)
         }
-        material.customProgramCacheKey = () => `${key}:studio-contact-shadows-v1`
+        material.customProgramCacheKey = () => `${key}:studio-contact-shadows-v2`
       }
     })
   }
@@ -41,12 +41,24 @@ const shadowChunk = baseChunk.slice(0, baseChunk.indexOf(signature)) + `
     float angle = i * 2.39996323 + rotation;
     return vec2(cos(angle), sin(angle)) * sqrt((i + 0.5) / count);
   }
+  // Bilinear depth comparison: a smooth edge between shadow texels instead
+  // of a hard step, so penumbrae stay clean without per-pixel noise.
+  float studioCompare(sampler2D depths, vec2 size, vec2 uv, float compare) {
+    vec2 texel = uv * size - 0.5;
+    vec2 f = fract(texel), base = (floor(texel) + 0.5) / size, unit = 1.0 / size;
+    float a = texture2DCompare(depths, base, compare);
+    float b = texture2DCompare(depths, base + vec2(unit.x, 0.0), compare);
+    float c = texture2DCompare(depths, base + vec2(0.0, unit.y), compare);
+    float d = texture2DCompare(depths, base + unit, compare);
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
   float studioShadow(sampler2D depths, vec2 size, float bias, vec4 coordinate) {
     vec3 p = coordinate.xyz / coordinate.w;
     p.z += bias;
     if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
     vec2 texel = 1.0 / size;
-    // Fixed per-pixel orientation avoids animated noise on a paused scene.
+    // Interleaved gradient noise turns the kernel per pixel; with filtered
+    // taps it only dissolves banding and never shows as grain or dots.
     float rotation = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;
     vec2 search = vec2(0.32) / uStudioShadowScale.yz;
     float sum = 0.0, count = 0.0;
@@ -54,14 +66,14 @@ const shadowChunk = baseChunk.slice(0, baseChunk.indexOf(signature)) + `
       float depth = unpackRGBAToDepth(texture2D(depths, p.xy + studioDisk(float(i), 12.0, rotation) * search));
       if (depth < p.z - 0.00005) { sum += depth; count += 1.0; }
     }
-    if (count < 0.5) return texture2DCompare(depths, p.xy, p.z);
+    if (count < 0.5) return studioCompare(depths, size, p.xy, p.z);
     float separation = max(0.0, p.z - sum / count) * uStudioShadowScale.x;
-    vec2 radius = max(texel * 0.8, vec2(min(0.45, separation * 0.10)) / uStudioShadowScale.yz);
+    vec2 radius = max(texel * 1.5, vec2(min(0.45, separation * 0.10)) / uStudioShadowScale.yz);
     float visibility = 0.0;
-    for (int i = 0; i < 24; i++) {
-      visibility += texture2DCompare(depths, p.xy + studioDisk(float(i), 24.0, rotation) * radius, p.z);
+    for (int i = 0; i < 20; i++) {
+      visibility += studioCompare(depths, size, p.xy + studioDisk(float(i), 20.0, rotation) * radius, p.z);
     }
-    return visibility / 24.0;
+    return visibility / 20.0;
   }
   ${signature}
     return mix(1.0, studioShadow(shadowMap, shadowMapSize, shadowBias, shadowCoord), shadowIntensity);

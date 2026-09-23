@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { GardenField } from './flowField'
-import { createLeafShadowTexture, createRippleNormals } from './environment'
+import { createRippleNormals } from './environment'
 
 export const MAX_POOLS = 16
 export const MAX_IMPACTS = 24
@@ -41,7 +41,6 @@ export function createGardenUniforms(field: GardenField) {
     uWallScale: { value: 1 },
     uRipplesA: { value: createRippleNormals(17, 256, 14, 4.6) },
     uRipplesB: { value: createRippleNormals(63, 256, 18, 3.4) },
-    uLeafShade: { value: createLeafShadowTexture() },
     uCaustics: { value: 1 },
     uSunDirection: { value: new THREE.Vector3(-0.5, 0.35, 0.8).normalize() },
   }
@@ -119,6 +118,42 @@ export interface CeramicLook {
 }
 
 /**
+ * Wall faces: glossy hand-glazed tiles in running bond. Each tile carries its
+ * own faint tint and a slight hand-made wave, so the clear coat breaks its
+ * reflections tile by tile; pillowed edges meet in fine grout joints. The
+ * relief fades out before it is finer than a pixel, so it never shimmers.
+ */
+const WALL_TILE_GLSL = /* glsl */ `
+  float wallFade = 0.0;
+  vec2 wallSlope = vec2(0.0);
+  {
+    vec2 tileSize = vec2(0.2, 0.08);
+    float across = abs(stoneNormal.x) > abs(stoneNormal.y) ? vGardenWorld.y * sign(stoneNormal.x) : -vGardenWorld.x * sign(stoneNormal.y);
+    vec2 tileUv = vec2(across, vGardenWorld.z) / tileSize;
+    tileUv.x += mod(floor(tileUv.y), 2.0) * 0.5;
+    vec2 cell = floor(tileUv), f = fract(tileUv);
+    vec2 footprint = fwidth(tileUv);
+    float face = 1.0 - smoothstep(0.3, 0.5, abs(stoneNormal.z));
+    wallFade = (1.0 - smoothstep(0.25, 0.7, max(footprint.x, footprint.y))) * face;
+    float h = gardenHash(cell + 17.0), k = gardenHash(cell + 3.1);
+    // Box-filtered grout lines: exact up close, their mean shade far away.
+    vec2 d = min(f, 1.0 - f), joint = vec2(0.0045, 0.011) / tileSize;
+    vec2 line = clamp((joint - d) / max(footprint, vec2(1e-4)) + 0.5, 0.0, 1.0);
+    line = mix(line, joint * 2.0, smoothstep(0.2, 0.5, footprint));
+    float grout = max(line.x, line.y) * face;
+    vec3 glaze = mix(vec3(0.95, 0.975, 0.99), vec3(1.0, 0.975, 0.93), h);
+    glaze = mix(glaze, vec3(0.9, 0.955, 0.94), step(0.82, k)) * (0.955 + 0.07 * k);
+    diffuseColor.rgb *= mix(vec3(0.985), glaze, face);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.84, 0.845, 0.83), grout * 0.8);
+    // Pillowed edges and a gentle hand-made wave on each glazed face.
+    vec2 edge = d * tileSize;
+    vec2 pillow = vec2(1.0 - smoothstep(0.004, 0.022, edge.x), 1.0 - smoothstep(0.004, 0.022, edge.y)) * sign(f - 0.5) * 0.45;
+    vec2 wave = vec2(sin(f.y * 6.2832 + h * 6.0), cos(f.x * 6.2832 + k * 5.0)) * 0.05 + (vec2(h, k) - 0.5) * 0.09;
+    wallSlope = (wave - pillow) * wallFade;
+  }
+`
+
+/**
  * Glazed stoneware. Colour and gloss come from the look; cavity shading comes
  * from the plan field, so corners, wall feet and submerged faces read as a
  * single cast object sitting in real light instead of a flat plastic panel.
@@ -159,8 +194,8 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         ` : `
           // Polished vitreous china: one clean, even white. Its luxury is in
           // the crisp mirror reflections of the clear coat, not in pattern.
+          ${kind === 'wall' ? WALL_TILE_GLSL : ''}
         `}`)
-
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec3 gardenNormal = inverseTransformDirection(normal, viewMatrix);
         ${kind === 'bed' ? `
@@ -188,8 +223,32 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         reflectedLight.indirectDiffuse *= gardenAo;
         reflectedLight.indirectSpecular *= mix(1.0, gardenAo, 0.75);
       `)
+    // Specular anti-aliasing: where the normal turns faster than a pixel
+    // (rounded crowns, tile edges far away) widen the highlight instead of
+    // letting it break into a stair-stepped line of sparkles.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+      {
+        vec3 gardenDx = dFdx(normal), gardenDy = dFdy(normal);
+        float gardenKernel = min(0.5 * (dot(gardenDx, gardenDx) + dot(gardenDy, gardenDy)), 0.14);
+        material.roughness = min(1.0, sqrt(material.roughness * material.roughness + gardenKernel));
+        #ifdef USE_CLEARCOAT
+          material.clearcoatRoughness = min(1.0, sqrt(material.clearcoatRoughness * material.clearcoatRoughness + gardenKernel));
+        #endif
+      }`)
+    if (kind === 'wall') {
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          if (wallFade > 0.0) {
+            vec3 wallAxis = abs(stoneNormal.x) > abs(stoneNormal.y) ? vec3(0.0, sign(stoneNormal.x), 0.0) : vec3(-sign(stoneNormal.y), 0.0, 0.0);
+            normal = normalize(normal + (viewMatrix * vec4(-wallAxis * wallSlope.x - vec3(0.0, 0.0, wallSlope.y), 0.0)).xyz);
+          }`)
+        .replace('#include <clearcoat_normal_fragment_begin>', `#include <clearcoat_normal_fragment_begin>
+          #ifdef USE_CLEARCOAT
+            clearcoatNormal = normal;
+          #endif`)
+    }
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v4`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v7`
   return material
 }
 
@@ -519,30 +578,15 @@ export function createDropletMaterial(uniforms: GardenUniforms): THREE.MeshStand
 export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color> } {
   const background = { value: new THREE.Color(0xf0e7da) }
   const material = new THREE.MeshStandardMaterial({ color: 0xd9c8b0, roughness: 0.93, metalness: 0, envMapIntensity: 0.6 })
-  const shadeRects = { value: [new THREE.Vector4(center.x - radius * 1.35, center.y + radius * 0.2, radius * 1.3, radius * 1.3), new THREE.Vector4(center.x + radius * 0.45, center.y - radius * 1.25, radius * 1.1, radius * 1.1)] }
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
-    Object.assign(shader.uniforms, { uBackgroundColor: background, uShadeRects: shadeRects, uGroundCenter: { value: center }, uGroundRadius: { value: radius } })
+    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius } })
     shader.vertexShader = FORCE_WORLDPOS + shader.vertexShader
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <dithering_pars_fragment>', `#include <dithering_pars_fragment>
-        uniform sampler2D uLeafShade;
         uniform vec3 uBackgroundColor;
-        uniform vec4 uShadeRects[2];
         uniform vec2 uGroundCenter;
-        uniform float uGroundRadius;
-        float leafShade(vec2 p) {
-          float light = 1.0;
-          for (int i = 0; i < 2; i++) {
-            vec4 r = uShadeRects[i];
-            vec2 uv = (p - r.xy) / r.zw;
-            if (i == 1) uv = vec2(1.0) - uv.yx;
-            float sway = sin(uGardenTime * 0.7 + float(i) * 2.0) * 0.004;
-            float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-            light *= mix(1.0, texture2D(uLeafShade, uv + sway).r, inside);
-          }
-          return light;
-        }`)
+        uniform float uGroundRadius;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec2 sandP = vGardenWorld.xy;
         float sand = gardenNoise(sandP * 0.6) * 0.5 + gardenNoise(sandP * 2.3) * 0.3 + gardenNoise(sandP * 9.0) * 0.2;
@@ -552,7 +596,6 @@ export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vec
         vec4 groundField = gardenField(vGardenWorld.xy);
         float outside = groundField.b >= 0.5 ? (groundField.b - 0.5) * 2.0 * 2.0 : 0.0;
         float contact = mix(0.45, 1.0, smoothstep(0.0, 0.9, outside));
-        reflectedLight.directDiffuse *= leafShade(vGardenWorld.xy);
         reflectedLight.indirectDiffuse *= contact;
         reflectedLight.directDiffuse *= mix(1.0, contact, 0.3);`)
       .replace('#include <colorspace_fragment>', `#include <colorspace_fragment>
