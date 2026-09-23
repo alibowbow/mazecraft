@@ -1,14 +1,25 @@
 import type { BasinSnapshot } from '../freeSurface/basinSimulation'
 import type { FluidLayout } from '../freeSurface/types'
 import type { GardenLayout } from './layout'
+import { gardenField, FAR, type GardenField } from './flowField'
 
 const STEP = 1 / 120
 /** Rectangular sharp-crested weir, Q = C·w·h^1.5 (SI, Cd ≈ 0.62). */
 export const WEIR_COEFFICIENT = 1.84
 /** Supply at 1× inflow, m³/s. */
-export const GARDEN_SOURCE_FLOW = 0.09
-/** Water standing above the lowest outgoing crest when a garden is reset. */
-export const GARDEN_INITIAL_HEAD = 0.03
+export const GARDEN_SOURCE_FLOW = 0.14
+/**
+ * A dry bed wets progressively: new water first spreads as a thin film from
+ * the pool's inflow along the channels (in geodesic order), and only once
+ * the whole bed is wet does the level rise towards the weirs.
+ */
+export const WETTING_FILM = 0.02
+/**
+ * Time-lapse: the pools fill at garden scale (tens of cubic metres), which
+ * would take minutes in real time. Hydraulics advance this many seconds per
+ * displayed second; ripples, falls and spray keep the real clock.
+ */
+export const HYDRAULIC_TIME_LAPSE = 4
 const FREEBOARD = 0.04
 
 export interface GardenState {
@@ -19,6 +30,8 @@ export interface GardenState {
   readonly discharge: Float32Array
   /** Water passing through each pool (m³/s): the larger of in- and outflow. */
   readonly throughflow: Float32Array
+  /** Wetting front: entry distance (m) reached so far; FAR once the bed is wet, -1 when dry. */
+  readonly fronts: Float32Array
   readonly sourceRate: number
 }
 
@@ -50,6 +63,8 @@ export class GardenSimulation {
   private readonly levels: Float32Array
   private readonly discharge: Float32Array
   private readonly throughflow: Float32Array
+  private readonly fronts: Float32Array
+  private readonly field: GardenField
   private readonly depth: Float32Array
   private readonly velocity: Float32Array
   private readonly connections: Uint8Array
@@ -68,13 +83,10 @@ export class GardenSimulation {
     this.areas = Float64Array.from(layout.pools, pool => pool.area)
     this.maxLevels = Float64Array.from(layout.pools, pool => pool.brim - FREEBOARD)
     this.totalArea = this.areas.reduce((sum, area) => sum + area, 0)
+    // Every garden starts dry; the only water is what the source supplies.
     this.initialVolumes = new Float64Array(count)
-    for (const pool of layout.pools) {
-      const crests = layout.edges.filter(edge => edge.a === pool.index).map(edge => edge.crest)
-      const level = Math.min(pool.brim - 0.1, Math.max(pool.floor + 0.05, Math.min(...crests) + GARDEN_INITIAL_HEAD))
-      this.initialVolumes[pool.index] = (level - pool.floor) * pool.area
-    }
-    this.initialStoredVolume = this.initialVolumes.reduce((sum, volume) => sum + volume, 0)
+    this.initialStoredVolume = 0
+    this.field = gardenField(layout)
     this.volumes = this.initialVolumes.slice()
     this.flow = new Float64Array(layout.edges.length)
     this.outflow = new Float64Array(count)
@@ -82,6 +94,7 @@ export class GardenSimulation {
     this.levels = new Float32Array(count)
     this.discharge = new Float32Array(layout.edges.length)
     this.throughflow = new Float32Array(count)
+    this.fronts = new Float32Array(count)
     const cells = grid.rows * grid.cols
     this.depth = new Float32Array(cells)
     this.velocity = new Float32Array(cells * 2)
@@ -131,7 +144,7 @@ export class GardenSimulation {
     if (!Number.isFinite(seconds) || seconds <= 0) return
     const requested = Number.isFinite(inflow) ? Math.max(0, Math.min(2.5, inflow)) : 0
     const { edges, source } = this.layout
-    this.accumulator += Math.min(0.5, seconds)
+    this.accumulator += Math.min(0.5, seconds) * HYDRAULIC_TIME_LAPSE
     while (this.accumulator + 1e-10 >= STEP) {
       this.computeFlows()
       this.outflow.fill(0)
@@ -163,7 +176,7 @@ export class GardenSimulation {
         if (this.volumes[i] > limit) { this.escaped += this.volumes[i] - limit; this.volumes[i] = limit }
         if (this.volumes[i] < 0) this.volumes[i] = 0
       }
-      this.time += STEP
+      this.time += STEP / HYDRAULIC_TIME_LAPSE
       this.accumulator = Math.max(0, this.accumulator - STEP)
     }
   }
@@ -192,15 +205,29 @@ export class GardenSimulation {
     }
     let stored = 0, wetArea = 0
     for (let i = 0; i < this.volumes.length; i++) {
-      this.levels[i] = this.level(i)
+      const film = this.areas[i] * WETTING_FILM
+      const volume = this.volumes[i]
+      if (volume <= 1e-9) {
+        this.levels[i] = this.floors[i] - 0.01; this.fronts[i] = -1
+      } else if (volume < film) {
+        // Spreading: the wet footprint holds the film, in wetting order.
+        const order = this.field.wettingOrder[i]
+        const k = Math.min(order.length - 1, Math.floor(volume / film * order.length))
+        this.fronts[i] = order.length ? order[k] : FAR
+        this.levels[i] = this.floors[i] + WETTING_FILM
+        wetArea += this.areas[i] * volume / film
+      } else {
+        this.fronts[i] = FAR
+        this.levels[i] = this.level(i)
+        wetArea += this.areas[i]
+      }
       this.throughflow[i] = Math.max(this.inflowSum[i], this.outflow[i])
-      stored += this.volumes[i]
-      if (this.volumes[i] / this.areas[i] > 0.002) wetArea += this.areas[i]
+      stored += volume
     }
     return {
       rows: this.grid.rows, cols: this.grid.cols, depth: this.depth, velocity: this.velocity, connections: this.connections,
       initialStoredVolume: this.initialStoredVolume, sourceRate: this.sourceRate,
-      garden: { time: this.time, levels: this.levels, discharge: this.discharge, throughflow: this.throughflow, sourceRate: this.sourceRate },
+      garden: { time: this.time, levels: this.levels, discharge: this.discharge, throughflow: this.throughflow, fronts: this.fronts, sourceRate: this.sourceRate },
       diagnostics: {
         time: this.time, count: 0, injected: this.injected, discharged: this.drained, escaped: this.escaped, stored,
         massError: Math.abs(this.initialStoredVolume + this.injected - this.drained - this.escaped - stored),

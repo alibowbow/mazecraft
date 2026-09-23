@@ -6,7 +6,7 @@ import type { WaterAppearance } from '../freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, normalizeWaterLook, WATER_LIGHTS, type WaterLook, type WaterTheme } from '../freeSurface/lookdev'
 import type { GardenId } from './designs'
 import { gardenLayout, type GardenLayout } from './layout'
-import { buildGardenField } from './flowField'
+import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
@@ -73,7 +73,7 @@ export class GardenPresentation3D {
   constructor(id: GardenId, private readonly renderer: THREE.WebGLRenderer) {
     const layout = this.layout = gardenLayout(id)
     this.scene.name = `water-garden-${id}`
-    this.uniforms = createGardenUniforms(buildGardenField(layout))
+    this.uniforms = createGardenUniforms(gardenField(layout))
     layout.pools.forEach((pool, i) => { this.uniforms.uFloors.value[i] = pool.floor })
     const { bounds } = layout
     this.center = new THREE.Vector3((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2, layout.height * 0.35)
@@ -236,9 +236,10 @@ export class GardenPresentation3D {
   setBasinSnapshot(snapshot: BasinSnapshot): void {
     if (this.disposed || !('garden' in snapshot)) return
     const state = this.state = (snapshot as GardenSnapshot).garden
-    const levels = this.uniforms.uLevels.value, flow = this.uniforms.uPoolFlow.value
+    const levels = this.uniforms.uLevels.value, flow = this.uniforms.uPoolFlow.value, fronts = this.uniforms.uFront.value
     this.layout.pools.forEach((pool, i) => {
       levels[i] = state.levels[i]
+      fronts[i] = state.fronts[i] >= FAR ? 1e5 : state.fronts[i]
       const depth = Math.max(0.05, state.levels[i] - pool.floor)
       // Mean channel speed: through-flow over a typical channel section.
       flow[i] = THREE.MathUtils.clamp(state.throughflow[i] / (0.8 * depth) * 1.6, 0, 0.9)
@@ -282,7 +283,7 @@ export class GardenPresentation3D {
     this.falls.dispose(); this.plants.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
-    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uLeafShade]) uniform.value.dispose()
+    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uLeafShade]) uniform.value.dispose()
     this.environment?.dispose()
     this.sun.shadow.dispose()
     this.scene.clear()

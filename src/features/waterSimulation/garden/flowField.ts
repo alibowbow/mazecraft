@@ -10,7 +10,13 @@ export interface GardenField {
   /** World bounds covered: x0, y0, width, height. */
   bounds: [number, number, number, number]
   cell: number
+  /** Geodesic distance from each pool's inflows (m); FAR outside pools. */
+  entry: Float32Array
+  /** Per pool: its cells' entry distances, ascending — the wetting order. */
+  wettingOrder: Float32Array[]
 }
+
+export const FAR = 1e4
 
 const SQRT2 = Math.SQRT2
 const NEIGHBOURS: [number, number, number][] = [
@@ -210,5 +216,33 @@ export function buildGardenField(layout: GardenLayout, cell = 0.05, margin = 2.2
       : footprint[i] ? 0 : byte(0.5 + Math.min(2, outsideDistance[i] * cell) / 2 * 0.5)
     data[i * 4 + 3] = nearest[i] >= 0 ? nearest[i] + 1 : 0
   }
-  return { data, width, height, bounds: [x0, y0, width * cell, height * cell], cell }
+  const entry = new Float32Array(count).fill(FAR)
+  const orders: number[][] = layout.pools.map(() => [])
+  for (let i = 0; i < count; i++) if (pool[i] >= 0) {
+    const d = Number.isFinite(fromEntry[i]) ? fromEntry[i] : 0
+    entry[i] = d
+    orders[pool[i]].push(d)
+  }
+  const wettingOrder = orders.map(list => Float32Array.from(list).sort())
+  // Extend distances a few cells under the walls so bilinear filtering of
+  // the wetting front never mixes a channel edge with the far sentinel.
+  for (let pass = 0; pass < 4; pass++) {
+    const source = entry.slice()
+    for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x
+      if (source[i] < FAR) continue
+      const best = Math.min(source[i - 1], source[i + 1], source[i - width], source[i + width])
+      if (best < FAR) entry[i] = best + cell
+    }
+  }
+  return { data, width, height, bounds: [x0, y0, width * cell, height * cell], cell, entry, wettingOrder }
+}
+
+const cache = new WeakMap<GardenLayout, GardenField>()
+
+/** One field per compiled garden, shared by the simulation and the renderer. */
+export function gardenField(layout: GardenLayout): GardenField {
+  let field = cache.get(layout)
+  if (!field) { field = buildGardenField(layout); cache.set(layout, field) }
+  return field
 }

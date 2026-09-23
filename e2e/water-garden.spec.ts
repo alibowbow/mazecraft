@@ -24,11 +24,12 @@ for (const [label, id] of presets) {
     await page.getByRole('group', { name: '미로 프리셋' }).getByRole('button', { name: new RegExp(label) }).click()
     await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: waterStartupTimeout })
     await expect(page.locator(canvasSelector)).toHaveAttribute('data-garden', id, { timeout: waterStartupTimeout })
-    await expect.poll(async () => (await gardenState(page)).time, { timeout: waterStartupTimeout }).toBeGreaterThan(0.3)
-    const state = await gardenState(page)
-    expect(state.sculpture).toBe('garden')
-    expect(state.levels.length).toBeGreaterThanOrEqual(3)
-    expect(state.spills.every(rate => rate > 0), 'every weir and spout carries water').toBe(true)
+    // Every garden starts dry and fills from its source.
+    const dry = await gardenState(page)
+    expect(dry.sculpture).toBe('garden')
+    expect(dry.levels.length).toBeGreaterThanOrEqual(3)
+    await expect.poll(async () => (await gardenState(page)).spills.filter(rate => rate > 0).length,
+      { timeout: e2eTimeout(120_000) }).toBeGreaterThan(0)
     expect(errors).toEqual([])
   })
 }

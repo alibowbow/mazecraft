@@ -5,6 +5,16 @@ import { createLeafShadowTexture, createRippleNormals } from './environment'
 export const MAX_POOLS = 16
 export const MAX_IMPACTS = 24
 
+function entryTexture(field: GardenField): THREE.DataTexture {
+  const data = new Uint16Array(field.entry.length)
+  for (let i = 0; i < data.length; i++) data[i] = THREE.DataUtils.toHalfFloat(Math.min(60000, field.entry[i]))
+  const texture = new THREE.DataTexture(data, field.width, field.height, THREE.RedFormat, THREE.HalfFloatType)
+  texture.minFilter = texture.magFilter = THREE.LinearFilter
+  texture.needsUpdate = true
+  texture.name = 'garden-wetting-order'
+  return texture
+}
+
 /** Uniform objects shared (by reference) by every garden material. */
 export function createGardenUniforms(field: GardenField) {
   const texture = new THREE.DataTexture(field.data, field.width, field.height, THREE.RGBAFormat)
@@ -22,6 +32,8 @@ export function createGardenUniforms(field: GardenField) {
     uImpacts: { value: Array.from({ length: MAX_IMPACTS }, () => new THREE.Vector4()) },
     uImpactZ: { value: new Float32Array(MAX_IMPACTS) },
     uImpactCount: { value: 0 },
+    uFront: { value: new Float32Array(MAX_POOLS).fill(-1) },
+    uGardenEntry: { value: entryTexture(field) },
     uWallScale: { value: 1 },
     uRipplesA: { value: createRippleNormals(17, 256, 14, 4.6) },
     uRipplesB: { value: createRippleNormals(63, 256, 18, 3.4) },
@@ -195,17 +207,65 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float aPool;
-        ${GARDEN_COMMON_GLSL.replace(/uniform sampler2D uGardenField;[\s\S]*$/, '')}
+        #define GARDEN_MAX_POOLS ${MAX_POOLS}
+        uniform sampler2D uGardenField;
+        uniform vec4 uGardenBounds;
         uniform float uLevels[GARDEN_MAX_POOLS];
         uniform float uFloors[GARDEN_MAX_POOLS];
         uniform float uPoolFlow[GARDEN_MAX_POOLS];
+        uniform float uFront[GARDEN_MAX_POOLS];
+        uniform float uGardenTime;
+        uniform float uGardenStyle;
+        uniform vec4 uImpacts[${MAX_IMPACTS}];
+        uniform float uImpactZ[${MAX_IMPACTS}];
+        uniform int uImpactCount;
         varying float vPoolDepth;
-        varying float vPoolFlow;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        varying float vPoolFlow;
+        varying float vPoolFront;
+        // Real surface undulation: deep-water wave trains (ω² = g·k), one
+        // aligned with the local current, plus rings spreading from falls.
+        float waterWave(vec2 p, vec2 dir, float k, float amplitude, float phase, inout vec2 grad) {
+          float omega = sqrt(9.81 * k);
+          float arg = dot(dir, p) * k - omega * uGardenTime + phase;
+          grad += dir * (amplitude * k * cos(arg));
+          return amplitude * sin(arg);
+        }`)
+      .replace('#include <beginnormal_vertex>', `
         int gardenPoolIndex = int(aPool + 0.5);
-        transformed.z = uLevels[gardenPoolIndex];
-        vPoolDepth = uLevels[gardenPoolIndex] - uFloors[gardenPoolIndex];
-        vPoolFlow = uPoolFlow[gardenPoolIndex];`)
+        float poolLevel = uLevels[gardenPoolIndex];
+        vec4 waveField = texture2D(uGardenField, (position.xy - uGardenBounds.xy) / uGardenBounds.zw);
+        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uPoolFlow[gardenPoolIndex];
+        float waveSpeed = length(waveFlow);
+        float wallDistance = waveField.b < 0.499 ? waveField.b : 0.5;
+        float settled = step(9000.0, uFront[gardenPoolIndex]);
+        float amplitude = (0.004 + 0.016 * smoothstep(0.02, 0.5, waveSpeed)) * (0.4 + 0.6 * uGardenStyle)
+          * smoothstep(0.02, 0.16, wallDistance) * mix(0.25, 1.0, settled);
+        vec2 along = waveSpeed > 1e-4 ? waveFlow / waveSpeed : vec2(0.6, 0.8);
+        vec2 waveGrad = vec2(0.0);
+        float waveHeight = waterWave(position.xy, along, 11.0, amplitude, 0.0, waveGrad)
+          + waterWave(position.xy, normalize(vec2(0.83, -0.56)), 17.0, amplitude * 0.55, 1.7, waveGrad)
+          + waterWave(position.xy, normalize(vec2(-0.37, 0.93)), 26.0, amplitude * 0.35, 4.1, waveGrad)
+          + waterWave(position.xy, normalize(vec2(-0.9, -0.44)), 7.0, amplitude * 0.5, 2.9, waveGrad);
+        for (int i = 0; i < ${MAX_IMPACTS}; i++) {
+          if (i >= uImpactCount) break;
+          vec4 impact = uImpacts[i];
+          if (abs(uImpactZ[i] - poolLevel) > 0.03) continue;
+          vec2 d = position.xy - impact.xy;
+          float r = length(d) + 1e-4;
+          float envelope = exp(-r * 2.2) * impact.w * 0.022;
+          float arg = r * 16.0 - uGardenTime * 9.0;
+          waveHeight += sin(arg) * envelope;
+          waveGrad += d / r * (cos(arg) * 16.0 * envelope - sin(arg) * 2.2 * envelope);
+        }
+        vec3 objectNormal = normalize(vec3(-waveGrad, 1.0));
+        #ifdef USE_TANGENT
+          vec3 objectTangent = vec3(1.0, 0.0, 0.0);
+        #endif`)
+      .replace('#include <begin_vertex>', `
+        vec3 transformed = vec3(position.xy, poolLevel + waveHeight);
+        vPoolDepth = poolLevel - uFloors[gardenPoolIndex];
+        vPoolFlow = uPoolFlow[gardenPoolIndex];
+        vPoolFront = uFront[gardenPoolIndex];`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D uRipplesA;
@@ -213,9 +273,15 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform vec4 uImpacts[${MAX_IMPACTS}];
         uniform float uImpactZ[${MAX_IMPACTS}];
         uniform int uImpactCount;
+        uniform sampler2D uGardenEntry;
         varying float vPoolDepth;
-        varying float vPoolFlow;`)
+        varying float vPoolFlow;
+        varying float vPoolFront;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
+        // Wetting front: a dry bed is uncovered in the order water reaches it.
+        float entryDistance = texture2D(uGardenEntry, gardenUv(vGardenWorld.xy)).r;
+        if (vPoolFront < 0.0 || entryDistance > vPoolFront + 0.02) discard;
+        float leadingEdge = vPoolFront > 9000.0 ? 0.0 : 1.0 - smoothstep(0.0, 0.3, vPoolFront - entryDistance);
         vec4 waterField = gardenField(vGardenWorld.xy);
         vec2 waterFlow = (waterField.rg * 2.0 - 1.0) * vPoolFlow;
         float waterSpeed = length(waterFlow);
@@ -232,6 +298,9 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         float wallDistance = waterField.b < 0.499 ? waterField.b : 0.5;
         float waterFoam = 0.0;
         vec2 impactSlope = vec2(0.0);
+        // Fine, drifting bubble texture for foam (two scales, opposite drift).
+        float foamNoise = texture2D(uRipplesB, vGardenWorld.xy * 3.1 + vec2(0.05, 0.03) * uGardenTime).a * 0.55
+          + texture2D(uRipplesA, vGardenWorld.xy * 5.3 - vec2(0.04, 0.06) * uGardenTime).a * 0.45;
         for (int i = 0; i < ${MAX_IMPACTS}; i++) {
           if (i >= uImpactCount) break;
           vec4 impact = uImpacts[i];
@@ -239,13 +308,15 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
           vec2 d = vGardenWorld.xy - impact.xy;
           float r = length(d) / max(impact.z, 0.05);
           float core = exp(-r * r * 1.6) * impact.w;
-          waterFoam += core * smoothstep(0.35, 0.75, flowSample.a + core * 0.35);
+          waterFoam += core * mix(0.62, 1.0, smoothstep(0.35, 0.7, foamNoise)) * smoothstep(0.0, 0.25, core + foamNoise * 0.2 - 0.1);
           // Expanding rings from the falling water.
           float ring = sin(r * 9.0 - uGardenTime * 7.0) * exp(-r * 1.2) * impact.w;
           impactSlope += normalize(d + 1e-4) * ring * 0.16;
         }
         // Meniscus/flow foam along walls where the current is strong.
-        waterFoam += (1.0 - smoothstep(0.015, 0.07, wallDistance)) * smoothstep(0.15, 0.6, waterSpeed) * smoothstep(0.55, 0.8, flowSample.a) * 0.55;
+        waterFoam += (1.0 - smoothstep(0.015, 0.06, wallDistance)) * smoothstep(0.15, 0.6, waterSpeed) * mix(0.25, 0.7, foamNoise) * 0.5;
+        // The advancing tongue of water is aerated and bright.
+        waterFoam += leadingEdge * mix(0.3, 1.0, smoothstep(0.42, 0.62, foamNoise)) * 0.75;
         waterFoam = clamp(waterFoam, 0.0, 1.0);
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), waterFoam);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
@@ -298,8 +369,8 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
     uStrength: { value: 0 }, uAeration: { value: 0.6 }, uTravel: { value: 0 }, uCurtainTint: { value: new THREE.Color(0.75, 0.93, 0.95) },
   }
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, roughness: 0.12, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    envMapIntensity: 1.1, clearcoat: 0, ior: 1.333, specularIntensity: 1,
+    color: 0xffffff, roughness: 0.1, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    envMapIntensity: 1.3, ior: 1.333, specularIntensity: 1, sheen: 0.4, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffffff),
   })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
@@ -312,23 +383,35 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         uniform float uDrop;
         uniform float uWidth;
         uniform float uFlare;
-        varying vec2 vCurtainUv;`)
+        uniform float uTravel;
+        varying vec2 vCurtainUv;
+        varying float vCurtainFacing;`)
       .replace('#include <beginnormal_vertex>', `
+        // A rounded sheet: the cross-section bulges like a real pouring
+        // lip (thicker in the middle), which catches light across its width.
         float cv = uv.y;
+        float theta = (uv.x - 0.5) * 3.14159;
         vec3 curtainDir = vec3(uDirection, 0.0);
         vec3 curtainAcross = vec3(-uDirection.y, uDirection.x, 0.0);
         vec3 curtainTangent = normalize(curtainDir * uReach - vec3(0.0, 0.0, 2.0 * uDrop * cv));
-        vec3 objectNormal = normalize(cross(curtainAcross, curtainTangent));
+        vec3 sheetNormal = normalize(cross(curtainAcross, curtainTangent));
+        vec3 objectNormal = normalize(sheetNormal * cos(theta) + curtainAcross * sin(theta) * 0.8);
+        vCurtainFacing = cos(theta);
         #ifdef USE_TANGENT
           vec3 objectTangent = curtainAcross;
         #endif`)
       .replace('#include <begin_vertex>', `
+        float thickness = min(0.07, uWidth * 0.14) * (0.6 + 0.8 * cv);
+        // Travelling wobble: the sheet necks and swells as it falls.
+        float wobble = sin(cv * 9.0 - uTravel * 5.0 + uv.x * 3.0) * 0.012 * cv;
         vec3 transformed = uStart + curtainDir * (uReach * cv) - vec3(0.0, 0.0, uDrop * cv * cv)
-          + curtainAcross * (uv.x - 0.5) * uWidth * (1.0 + uFlare * cv);
+          + curtainAcross * ((uv.x - 0.5) * uWidth * (1.0 + uFlare * cv) + wobble)
+          + sheetNormal * thickness * cos(theta);
         vCurtainUv = uv;`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D uRipplesA;
+        uniform sampler2D uRipplesB;
         uniform float uStrength;
         uniform float uAeration;
         uniform float uTravel;
@@ -336,25 +419,33 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         uniform float uDrop;
         uniform float uReach;
         uniform vec3 uCurtainTint;
-        varying vec2 vCurtainUv;`)
+        varying vec2 vCurtainUv;
+        varying float vCurtainFacing;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         float pathLength = uReach + uDrop;
-        vec2 streakUv = vec2(vCurtainUv.x * uWidth * 2.2, vCurtainUv.y * pathLength * 0.45 - uTravel);
-        vec4 streak = texture2D(uRipplesA, streakUv * vec2(1.0, 0.35));
-        float fine = texture2D(uRipplesA, streakUv * vec2(3.1, 0.9) + vec2(0.3, 0.1)).a;
-        float edge = smoothstep(0.0, 0.08, vCurtainUv.x) * smoothstep(1.0, 0.92, vCurtainUv.x);
-        float lengthwise = smoothstep(0.0, 0.03, vCurtainUv.y);
-        float aerated = clamp(uAeration * (0.25 + 0.75 * smoothstep(0.05, 0.9, vCurtainUv.y)) + (fine - 0.5) * 0.5, 0.0, 1.0);
-        float white = smoothstep(0.35, 0.8, aerated * (0.6 + streak.a * 0.8));
-        diffuseColor.rgb = mix(uCurtainTint, vec3(1.0), white);
-        diffuseColor.a = uStrength * edge * lengthwise * (0.42 + 0.5 * white + 0.2 * streak.a);`)
+        float along = vCurtainUv.y;
+        // Long vertical streaks: noise stretched along the fall and pulled
+        // down at the water's speed; a second, finer layer shears past it.
+        vec2 streakUv = vec2(vCurtainUv.x * uWidth * 3.2, along * pathLength * 0.35 - uTravel * 0.55);
+        vec4 streak = texture2D(uRipplesA, streakUv * vec2(1.0, 0.18));
+        float fine = texture2D(uRipplesB, vec2(vCurtainUv.x * uWidth * 7.0 + 0.3, along * pathLength * 0.8 - uTravel * 0.9) * vec2(1.0, 0.25)).a;
+        float streaks = streak.a * 0.6 + fine * 0.4;
+        float edge = smoothstep(0.0, 0.12, vCurtainUv.x) * smoothstep(1.0, 0.88, vCurtainUv.x);
+        float lip = smoothstep(0.0, 0.04, along);
+        // Aeration grows with the fall; the tail breaks into ragged fingers.
+        float aerated = uAeration * smoothstep(0.02, 0.85, along);
+        float white = clamp(aerated * 1.25 + (streaks - 0.5) * 1.1, 0.0, 1.0);
+        float tail = 1.0 - smoothstep(0.7, 1.0, along) * (1.0 - smoothstep(0.35, 0.75, streaks));
+        diffuseColor.rgb = mix(uCurtainTint * (0.9 + 0.1 * streaks), vec3(1.0), white);
+        float glassy = mix(0.28, 0.5, streaks) * (0.6 + 0.4 * vCurtainFacing);
+        diffuseColor.a = uStrength * edge * lip * tail * mix(glassy, 0.97, white);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(0.06, 0.55, white);`)
+        roughnessFactor = mix(0.05, 0.6, white);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         vec2 streakSlope = streak.xy * 2.0 - 1.0;
-        normal = normalize(normal + vec3(streakSlope.x * 0.45, streakSlope.y * 0.15, 0.0));`)
+        normal = normalize(normal + vec3(streakSlope.x * 0.6, streakSlope.y * 0.2, 0.0));`)
   }
-  material.customProgramCacheKey = () => 'garden-curtain-v1'
+  material.customProgramCacheKey = () => 'garden-curtain-v2'
   return { material, uniforms: own }
 }
 
@@ -377,7 +468,7 @@ export function createDropletMaterial(uniforms: GardenUniforms): THREE.MeshStand
         float speed = (0.35 + aSeed.x * 0.9) * sqrt(impact.w);
         vec2 spread = vec2(cos(angle), sin(angle)) * (impact.z * 0.4 + speed * life * 0.55);
         float rise = speed * 1.1 * life - 4.9 * life * life * 0.5;
-        float size = (0.018 + 0.03 * aSeed.y) * step(0.02, impact.w) * (1.0 - life * 0.6) * step(0.0, rise + 0.01);
+        float size = (0.014 + 0.028 * aSeed.y) * step(0.02, impact.w) * (1.0 - life * 0.6) * step(0.0, rise + 0.01);
         vec3 transformed = position * size + vec3(impact.xy + spread, uImpactZ[int(aSlot + 0.5)] + max(rise, 0.0));`)
   }
   material.customProgramCacheKey = () => 'garden-droplets-v1'

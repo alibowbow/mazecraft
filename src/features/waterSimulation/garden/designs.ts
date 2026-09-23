@@ -529,9 +529,9 @@ function split(): GardenDesign {
     entry: lowEntry, exits: [lowExit, { i: lowCols - 1, j: 1, side: 'east' }], straightness: 0.7 })
   const lowSpout = low.spout(lowExit)
   vessels.push({
-    name: 'twin-confluence', floor: 0.42, wallHeight: 0.66, wallWidth: 0.32, rimWidth: RIM,
+    name: 'twin-confluence', floor: 0.42, wallHeight: 0.72, wallWidth: 0.32, rimWidth: RIM,
     outline: latticeRim(low, 0.7), walls: low.walls, islands: [], sills: [],
-    spouts: [{ ...lowSpout, width: 0.56, crest: 0.18, length: 0.42 }], floors: [], planters: [],
+    spouts: [{ ...lowSpout, width: 0.8, crest: 0.18, length: 0.42 }], floors: [], planters: [],
   })
   vessels.push(drainBasin(lowSpout, RIM, 0.42, 2.1, 1.2, 0.04))
   return {
