@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import type { GardenLayout, Tipper, Wheel } from './layout'
+import { LIFT_SPEED, type GardenLayout, type Lift, type Tipper, type Wheel } from './layout'
 import type { GardenState } from './simulation'
 import { criticalDepth } from './geometry'
 import { TIPPER_ARM, TIPPER_RADIUS, TIPPER_REST, TIPPER_TAIL, WHEEL_PADDLES } from './mechanics'
@@ -25,6 +25,18 @@ function post(x: number, y: number, bottom: number, top: number, size = 0.07): T
   return geometry
 }
 
+/** A beam between two points (for frames and legs). */
+function strut(a: THREE.Vector3, b: THREE.Vector3, size: number): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(size, a.distanceTo(b), size)
+  geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize()))
+  geometry.translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2)
+  return geometry
+}
+
+const NORIA_BUCKETS = 18
+
+interface Noria extends Part { spin: number; angle: number; water: THREE.Mesh[] }
+
 /**
  * The garden's machinery: bamboo tipping tubes (shishi-odoshi) that swing
  * with the simulated load, and paddle wheels whose speed follows the flow
@@ -34,6 +46,8 @@ export class GardenDevices {
   readonly group = new THREE.Group()
   private readonly tippers: Part[] = []
   private readonly wheels: (Part & { spin: number; angle: number })[] = []
+  private readonly norias: Noria[] = []
+  private readonly bucketWater = new THREE.MeshPhysicalMaterial({ color: 0x8fe0e6, roughness: 0.08, transmission: 0.6, thickness: 0.1, transparent: true, opacity: 0.92 })
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly bamboo = new THREE.MeshPhysicalMaterial({ color: 0xb49a55, roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.18, sheen: 0.3, sheenColor: new THREE.Color(0xfff0c8) })
   private readonly teak = new THREE.MeshPhysicalMaterial({ color: 0x7e5334, roughness: 0.5, clearcoat: 0.45, clearcoatRoughness: 0.25 })
@@ -45,6 +59,7 @@ export class GardenDevices {
     this.group.name = 'garden-machinery'
     for (const tipper of layout.tippers) this.tippers.push(this.buildTipper(tipper))
     for (const wheel of layout.wheels) this.wheels.push({ ...this.buildWheel(wheel), spin: 0, angle: wheel.index * 0.7 })
+    for (const lift of layout.lifts) this.norias.push(this.buildNoria(lift))
   }
 
   private mesh(geometry: THREE.BufferGeometry, material: THREE.Material, parent: THREE.Object3D, name: string): THREE.Mesh {
@@ -153,6 +168,74 @@ export class GardenDevices {
     return { group, pivot }
   }
 
+  /**
+   * A great bucket wheel in local frame: x along its plane, y along the axle.
+   * Buckets rise on the +x side, carry water over the top and tip it into
+   * the trough beside the wheel.
+   */
+  private buildNoria(lift: Lift): Noria {
+    const group = new THREE.Group()
+    group.name = `garden-noria-${lift.index}`
+    group.position.set(lift.center[0], lift.center[1], lift.hub)
+    group.rotation.z = Math.atan2(lift.direction[1], lift.direction[0])
+    const pivot = new THREE.Group()
+    group.add(pivot)
+    const R = lift.radius, w = lift.width
+    const wood: THREE.BufferGeometry[] = []
+    for (const side of [-1, 1]) {
+      for (const radius of [R, R * 0.72]) {
+        const rim = new THREE.TorusGeometry(radius, 0.035, 8, 96)
+        rim.rotateX(Math.PI / 2)
+        rim.translate(0, side * w / 2, 0)
+        wood.push(rim)
+      }
+      for (let k = 0; k < 8; k++) {
+        const spoke = new THREE.BoxGeometry(R * 2, 0.05, 0.06)
+        spoke.rotateY(k / 8 * Math.PI)
+        spoke.translate(0, side * w / 2, 0)
+        wood.push(spoke)
+      }
+    }
+    const water: THREE.Mesh[] = []
+    for (let k = 0; k < NORIA_BUCKETS; k++) {
+      const a = k / NORIA_BUCKETS * Math.PI * 2
+      // Open buckets between the rims, mouths facing forward along the rim.
+      const x = Math.sin(a) * (R - 0.1), z = -Math.cos(a) * (R - 0.1)
+      for (const [dx, dz, sx, sz] of [[0, -0.08, 0.26, 0.03], [-0.12, 0, 0.03, 0.18], [0.12, 0, 0.03, 0.18]] as const) {
+        const plank = new THREE.BoxGeometry(sx, w * 0.96, sz)
+        plank.translate(dx, 0, dz)
+        plank.rotateY(a)
+        plank.translate(x, 0, z)
+        wood.push(plank)
+      }
+      const fill = new THREE.BoxGeometry(0.2, w * 0.9, 0.1)
+      fill.translate(0, 0, -0.02)
+      fill.rotateY(a)
+      fill.translate(x, 0, z)
+      const mesh = new THREE.Mesh(fill, this.bucketWater)
+      mesh.name = 'garden-noria-bucket-water'
+      mesh.visible = false
+      this.geometries.push(fill)
+      pivot.add(mesh)
+      water.push(mesh)
+    }
+    this.mesh(merged(wood), this.teak, pivot, 'garden-noria-wheel')
+    const hub = new THREE.CylinderGeometry(0.12, 0.12, w + 0.12, 24)
+    const axle = new THREE.CylinderGeometry(0.045, 0.045, w + 0.9, 16)
+    this.mesh(merged([hub, axle]), this.brass, pivot, 'garden-noria-hub')
+    // Two A-frames standing in the sump carry the axle.
+    const frame: THREE.BufferGeometry[] = []
+    const base = lift.base - lift.hub
+    for (const side of [-1, 1]) {
+      const y = side * (w / 2 + 0.3), top = new THREE.Vector3(0, y, 0.08)
+      frame.push(strut(new THREE.Vector3(-0.75, y, base), top, 0.12), strut(new THREE.Vector3(0.75, y, base), top, 0.12))
+      frame.push(strut(new THREE.Vector3(-0.42, y, base * 0.45), new THREE.Vector3(0.42, y, base * 0.45), 0.08))
+    }
+    this.mesh(merged(frame), this.ceramic, group, 'garden-noria-frame')
+    this.group.add(group)
+    return { group, pivot, spin: 0, angle: lift.index * 0.4, water }
+  }
+
   update(state: GardenState): void {
     let dt = this.previousTime === null ? 0 : state.time - this.previousTime
     if (dt < 0) dt = 0
@@ -177,11 +260,27 @@ export class GardenDevices {
       if (Math.abs(part.spin) > 1e-3) this.moved = true
       part.pivot.rotation.y = part.angle
     })
+    this.layout.lifts.forEach((lift, i) => {
+      const noria = this.norias[i]
+      const load = state.liftLoads[i] ?? 0
+      const running = load > 1e-4 || (state.discharge[lift.edge] ?? 0) > 1e-4
+      // Buckets rise on the +x side: the wheel turns backwards about its axle.
+      const target = running ? -LIFT_SPEED / lift.radius : 0
+      noria.spin += (target - noria.spin) * Math.min(1, dt * 0.8)
+      noria.angle += noria.spin * dt
+      noria.pivot.rotation.y = noria.angle
+      if (Math.abs(noria.spin) > 1e-3) this.moved = true
+      const full = load > 1e-3
+      noria.water.forEach((mesh, k) => {
+        const phase = ((k / NORIA_BUCKETS * Math.PI * 2 - noria.angle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)
+        mesh.visible = full && phase > 0.15 && phase < Math.PI + 0.25
+      })
+    })
   }
 
   dispose(): void {
     for (const geometry of this.geometries) geometry.dispose()
-    this.bamboo.dispose(); this.teak.dispose()
+    this.bamboo.dispose(); this.teak.dispose(); this.bucketWater.dispose()
     this.group.clear()
   }
 }

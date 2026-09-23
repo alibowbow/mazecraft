@@ -710,6 +710,16 @@ export class FreeSurfaceRenderer {
     this.draw()
   }
 
+  private followWater = true
+
+  /** Water gardens: let the camera travel with the water. */
+  setFollow(enabled: boolean): void {
+    this.followWater = enabled
+    if (this.disposed) return
+    if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setFollow(enabled)
+    this.draw()
+  }
+
   setInflow(enabled: boolean): void {
     if (this.disposed) return
     this.canvas.dataset.inflow = enabled ? 'enabled' : 'disabled'
@@ -803,6 +813,7 @@ export class FreeSurfaceRenderer {
       this.presentation3d.setLook(this.look)
       if (this.basinSnapshot) this.presentation3d.setBasinSnapshot(this.basinSnapshot)
       this.presentation3d.setInflow(this.canvas.dataset.inflow !== 'disabled')
+      if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setFollow(this.followWater)
     }
     if (mode === 'free-surface' && this.sculpture === 'extruded-flow') this.scene.add(this.funnel)
     else if (this.sculpture === 'extruded-flow') this.presentation3d?.addFunnel(this.funnel)

@@ -12,8 +12,10 @@ import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, crea
 import { GardenFalls } from './falls'
 import { GardenPlants } from './plants'
 import { GardenDevices } from './devices'
+import { GardenChannels } from './channels'
 import { createGardenSky } from './environment'
-import type { GardenSnapshot } from './simulation'
+import { PROFILE_SAMPLES, transportEdges, type GardenSnapshot } from './simulation'
+import { resample } from './geometry'
 
 interface Glaze { glaze: string; bed: string; roughness: number; clearcoat: number; clearcoatRoughness: number; sheen: number }
 
@@ -60,6 +62,7 @@ export class GardenPresentation3D {
   private readonly falls: GardenFalls
   private readonly plants: GardenPlants
   private readonly devices: GardenDevices
+  private readonly channels: GardenChannels
   private shadowFrame = 0
   private readonly sun = new THREE.DirectionalLight(0xfff4e2, 3)
   private readonly sky = new THREE.HemisphereLight(0xdfeeff, 0xd9c6a8, 0.0)
@@ -71,6 +74,17 @@ export class GardenPresentation3D {
   private lightKey = ''
   private inflow = true
   private state: GardenSnapshot['garden'] | null = null
+  /** Camera that travels with the water: smoothed focus and framing height. */
+  private follow = true
+  private readonly focus = new THREE.Vector3()
+  private focusHeight = 0
+  private focusTime: number | null = null
+  private view: { width: number; height: number; zoom: number; panX: number; panY: number; orientation: THREE.Quaternion } | null = null
+  /** Per pool: bed cells sorted by wetting key, to find the tip of a front. */
+  private readonly frontCells: { keys: Float32Array; points: Float32Array }[]
+  private readonly channelPaths: [number, number, number][][]
+  /** When each pool / channel first took water, to follow the newest arrival. */
+  private readonly started: Float64Array
   private disposed = false
 
   constructor(id: GardenId, private readonly renderer: THREE.WebGLRenderer) {
@@ -81,6 +95,20 @@ export class GardenPresentation3D {
     const { bounds } = layout
     this.center = new THREE.Vector3((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2, layout.height * 0.35)
     this.extent = new THREE.Vector3(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, layout.height)
+    const plan = gardenField(layout)
+    const perPool: { key: number; x: number; y: number }[][] = layout.pools.map(() => [])
+    for (let i = 0; i < plan.entry.length; i++) {
+      const key = plan.entry[i], owner = plan.data[i * 4 + 3] - 1
+      if (owner < 0 || key >= FAR || i % 2) continue
+      const cx = i % plan.width, cy = Math.floor(i / plan.width)
+      perPool[owner]?.push({ key, x: plan.bounds[0] + (cx + 0.5) * plan.cell, y: plan.bounds[1] + (cy + 0.5) * plan.cell })
+    }
+    this.frontCells = perPool.map(list => {
+      list.sort((a, b) => a.key - b.key)
+      return { keys: Float32Array.from(list, cell => cell.key), points: Float32Array.from(list.flatMap(cell => [cell.x, cell.y])) }
+    })
+    this.channelPaths = transportEdges(layout).map(edge => resample(edge.path!, 0.1).map(p => [p[0], p[1], p[2]] as [number, number, number]))
+    this.started = new Float64Array(layout.pools.length + this.channelPaths.length).fill(-1)
 
     this.wallMaterial = createCeramicMaterial(this.uniforms, 'wall')
     this.bedMaterial = createCeramicMaterial(this.uniforms, 'bed')
@@ -127,6 +155,8 @@ export class GardenPresentation3D {
 
     this.devices = new GardenDevices(layout, this.trimMaterial, brass)
     this.content.add(this.devices.group)
+    this.channels = new GardenChannels(layout, this.uniforms)
+    this.content.add(this.channels.mesh)
     this.falls = new GardenFalls(layout, this.uniforms)
     this.content.add(this.falls.group)
     this.plants = new GardenPlants()
@@ -236,6 +266,7 @@ export class GardenPresentation3D {
     }
     // Thin sheets transmit most light: a pale version of the pool colour.
     this.falls.setTint(water.attenuationColor.clone().lerp(new THREE.Color(0xffffff), 0.55))
+    this.channels.setTint(water.attenuationColor.clone().lerp(new THREE.Color(0xffffff), 0.4))
   }
 
   setInflow(enabled: boolean): void {
@@ -255,8 +286,10 @@ export class GardenPresentation3D {
       flow[i] = THREE.MathUtils.clamp(state.throughflow[i] / (0.8 * depth) * 1.6, 0, 0.9)
     })
     this.uniforms.uGardenTime.value = state.time
+    this.trackWater(state)
     this.falls.update(state, this.inflow)
     this.devices.update(state)
+    this.channels.update(state)
     // Moving machinery casts moving shadows: refresh them at a gentle rate.
     if (this.devices.moved && ++this.shadowFrame % 3 === 0) {
       this.sun.shadow.needsUpdate = true
@@ -269,7 +302,82 @@ export class GardenPresentation3D {
     if (!this.state) this.uniforms.uGardenTime.value = time
   }
 
+  /** Follow the water (on by default): the camera travels with the newest arrival. */
+  setFollow(enabled: boolean): void {
+    this.follow = enabled
+    this.focusTime = null
+    this.applyView()
+  }
+
+  /**
+   * The newest stretch of the course the water is working through: the tip
+   * of a spreading front, or the head of water running down a channel.
+   * Returns null once the whole course runs steadily.
+   */
+  private waterHead(state: GardenSnapshot['garden']): THREE.Vector3 | null {
+    // The newest stretch the water has reached; once it runs steadily the
+    // camera eases back out, even if older side bays are still wetting.
+    let newest = -1, head: THREE.Vector3 | null = null
+    const time = state.time
+    this.layout.pools.forEach((pool, i) => {
+      const front = state.fronts[i]
+      if (front < 0) return
+      if (this.started[i] < 0) this.started[i] = time
+      if (this.started[i] < newest) return
+      newest = this.started[i]
+      head = null
+      const cells = this.frontCells[i]
+      if (front >= FAR || !cells.keys.length) return
+      let low = 0, high = cells.keys.length - 1
+      while (low < high) { const mid = (low + high + 1) >> 1; if (cells.keys[mid] <= front) low = mid; else high = mid - 1 }
+      head = new THREE.Vector3(cells.points[low * 2], cells.points[low * 2 + 1], state.levels[i])
+    })
+    this.channelPaths.forEach((path, c) => {
+      const slot = this.layout.pools.length + c
+      let reach = -1
+      for (let s = 0; s < PROFILE_SAMPLES; s++) if (state.channelFlow[c * PROFILE_SAMPLES + s] > 0.002) reach = s
+      if (reach < 0) return
+      if (this.started[slot] < 0) this.started[slot] = time
+      if (this.started[slot] < newest) return
+      newest = this.started[slot]
+      head = null
+      if (reach >= PROFILE_SAMPLES - 1) return
+      const point = path[Math.round(reach / (PROFILE_SAMPLES - 1) * (path.length - 1))]
+      head = new THREE.Vector3(point[0], point[1], point[2])
+    })
+    return head
+  }
+
+  private trackWater(state: GardenSnapshot['garden']): void {
+    if (state.time < 1e-6 || (this.state && state.fronts.every(front => front < 0))) this.started.fill(-1)
+    if (!this.follow) return
+    const now = performance.now() / 1000
+    const dt = this.focusTime === null ? 1 : Math.min(0.5, Math.max(0, now - this.focusTime))
+    const snap = this.focusTime === null
+    this.focusTime = now
+    const head = this.waterHead(state)
+    // Frame a few metres around the head while the water travels; ease back
+    // to the whole garden once everything is running.
+    const target = head ?? this.center
+    const height = head ? 6.5 : 0
+    const k = snap ? 1 : 1 - Math.exp(-dt / 0.9)
+    this.focus.lerp(target, k)
+    this.focusHeight += (height - this.focusHeight) * (snap ? 1 : 1 - Math.exp(-dt / 1.4))
+    this.applyView()
+  }
+
+  private applyView(): void {
+    if (!this.view) return
+    const { width, height, zoom, panX, panY, orientation } = this.view
+    this.frame(width, height, zoom, panX, panY, orientation)
+  }
+
   updateView(width: number, height: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
+    this.view = { width, height, zoom, panX, panY, orientation: orientation.clone() }
+    this.frame(width, height, zoom, panX, panY, orientation)
+  }
+
+  private frame(width: number, height: number, zoom: number, panX: number, panY: number, orientation: THREE.Quaternion): void {
     if (this.disposed) return
     const aspect = Math.max(1, width) / Math.max(1, height)
     // Frame the whole garden as seen from the default angle; the framing
@@ -278,10 +386,14 @@ export class GardenPresentation3D {
     const w = this.extent.x + 0.6, d = this.extent.y + 0.6, h = this.extent.z
     const frontWidth = Math.abs(basis[0]) * w + Math.abs(basis[4]) * d + Math.abs(basis[8]) * h
     const frontHeight = Math.abs(basis[1]) * w + Math.abs(basis[5]) * d + Math.abs(basis[9]) * h
-    const viewHeight = Math.max(frontHeight * 0.9, frontWidth * 0.94 / aspect) / Math.max(0.1, zoom)
+    const overview = Math.max(frontHeight * 0.9, frontWidth * 0.94 / aspect)
+    // Following: close in around the travelling water, then ease back out.
+    const close = this.follow ? THREE.MathUtils.clamp(this.focusHeight / 6.5, 0, 1) : 0
+    const near = Math.min(overview, Math.max(6.5, 5.2 / aspect))
+    const viewHeight = THREE.MathUtils.lerp(overview, near, close) / Math.max(0.1, zoom)
     this.viewSize.set(viewHeight * aspect, viewHeight)
     const offset = new THREE.Vector3(panX, panY, 0).applyQuaternion(orientation)
-    this.target.copy(this.center).add(offset)
+    this.target.copy(this.follow && this.focusTime !== null ? this.focus : this.center).add(offset)
     this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
     this.camera.left = -this.viewSize.x / 2; this.camera.right = this.viewSize.x / 2
     this.camera.top = viewHeight / 2; this.camera.bottom = -viewHeight / 2
@@ -296,7 +408,7 @@ export class GardenPresentation3D {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.falls.dispose(); this.plants.dispose(); this.devices.dispose()
+    this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uLeafShade]) uniform.value.dispose()

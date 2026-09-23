@@ -1,6 +1,6 @@
 import type { BasinSnapshot } from '../freeSurface/basinSimulation'
 import type { FluidLayout } from '../freeSurface/types'
-import type { GardenLayout } from './layout'
+import type { Edge, GardenLayout } from './layout'
 import { gardenField, FAR, type GardenField } from './flowField'
 import { FILLING, POURING, RETURNING, TIPPER_POUR_TIME, TIPPER_RETURN_TIME, TIPPER_TIP_TIME, TIPPER_TIPPED, TIPPING, tipperAngle, type TipperPhase } from './mechanics'
 
@@ -8,7 +8,7 @@ const STEP = 1 / 120
 /** Rectangular sharp-crested weir, Q = C·w·h^1.5 (SI, Cd ≈ 0.62). */
 export const WEIR_COEFFICIENT = 1.84
 /** Supply at 1× inflow, m³/s. */
-export const GARDEN_SOURCE_FLOW = 0.14
+export const GARDEN_SOURCE_FLOW = 0.17
 /**
  * A dry bed wets progressively: new water first spreads as a thin film from
  * the pool's inflow along the channels (in geodesic order), and only once
@@ -23,6 +23,21 @@ export const HYDRAULIC_TIME_LAPSE = 1
  */
 export const FRONT_SPEED = 0.75
 const FREEBOARD = 0.04
+/**
+ * Share of a pool's inflow that runs straight on over its outlets once the
+ * wetting front has reached them: water streams down a terraced channel as a
+ * sheet rather than waiting for every terrace to brim like a tank.
+ */
+export const RUN_THROUGH = 0.85
+/** Discharge coefficient of a primed siphon pipe. */
+const SIPHON_CD = 0.62
+/** Samples of the flow along each channel, for rendering. */
+export const PROFILE_SAMPLES = 48
+
+/** Edges whose water spends time in transit: chutes and norias. */
+export function transportEdges(layout: GardenLayout): Edge[] {
+  return layout.edges.filter(edge => (edge.delay ?? 0) > 0)
+}
 
 export interface GardenState {
   readonly time: number
@@ -39,6 +54,12 @@ export interface GardenState {
   readonly tipperAngles: Float32Array
   readonly tipperLoads: Float32Array
   readonly tipperPours: Float32Array
+  /** Per transport edge (see `transportEdges`): flow (m³/s) sampled along its channel, intake first. */
+  readonly channelFlow: Float32Array
+  /** Per noria: flow riding up in its buckets (m³/s). */
+  readonly liftLoads: Float32Array
+  /** Per siphon: 1 while primed and running. */
+  readonly siphonPrimed: Float32Array
 }
 
 export interface GardenSnapshot extends BasinSnapshot {
@@ -84,6 +105,17 @@ export class GardenSimulation {
   private readonly tipperAngles: Float32Array
   private readonly tipperLoads: Float32Array
   private readonly tipperPours: Float32Array
+  /** Transit lines: per transport, a ring of per-step volumes (plug flow). */
+  private readonly lines: { edge: Edge; ring: Float64Array; head: number; steps: number; rise: number; held: number; arrived: number }[]
+  private readonly lineOf: Int32Array
+  private readonly primed: Uint8Array
+  /** Inflow of each pool over the last step (m³/s), and how many outlets share its run-through. */
+  private readonly recentInflow: Float64Array
+  private readonly stepInflow: Float64Array
+  private readonly runOutlets: Uint8Array
+  private readonly channelFlow: Float32Array
+  private readonly liftLoads: Float32Array
+  private readonly siphonPrimed: Float32Array
   private readonly totalArea: number
   private time = 0
   private accumulator = 0
@@ -124,6 +156,26 @@ export class GardenSimulation {
     this.tipperAngles = new Float32Array(tippers)
     this.tipperLoads = new Float32Array(tippers)
     this.tipperPours = new Float32Array(tippers)
+    this.lineOf = new Int32Array(layout.edges.length).fill(-1)
+    this.lines = transportEdges(layout).map((edge, i) => {
+      this.lineOf[edge.index] = i
+      const steps = Math.max(1, Math.round(edge.delay! / STEP))
+      return { edge, ring: new Float64Array(steps), head: 0, steps, rise: Math.round((edge.rise ?? 0) / STEP), held: 0, arrived: 0 }
+    })
+    this.primed = new Uint8Array(layout.siphons.length)
+    this.recentInflow = new Float64Array(count)
+    this.stepInflow = new Float64Array(count)
+    this.runOutlets = new Uint8Array(count)
+    for (const edge of layout.edges) if (this.runsThrough(edge)) this.runOutlets[edge.a]++
+    this.channelFlow = new Float32Array(this.lines.length * PROFILE_SAMPLES)
+    this.liftLoads = new Float32Array(layout.lifts.length)
+    this.siphonPrimed = new Float32Array(layout.siphons.length)
+  }
+
+  /** Water in a transit line at `age` steps after it entered (m³ per step). */
+  private lineAt(line: GardenSimulation['lines'][number], age: number): number {
+    const j = Math.max(0, Math.min(line.steps - 1, Math.round(age)))
+    return line.ring[(line.head - 1 - j + line.steps * 2) % line.steps]
   }
 
   /**
@@ -148,6 +200,7 @@ export class GardenSimulation {
       const out = Math.min(load, rate * STEP)
       this.tipVolume[i] -= out
       this.volumes[tipper.pool] += out
+      this.stepInflow[tipper.pool] += out
       this.tipPour[i] = out / STEP
     }
   }
@@ -190,11 +243,21 @@ export class GardenSimulation {
   /** Water stands on the wetted part of the bed only. */
   level(pool: number): number {
     const share = this.wet(pool) ? 1 : Math.max(0.05, this.wetShare(pool))
-    return this.floors[pool] + this.volumes[pool] / (this.areas[pool] * share)
+    // A spreading film is never deeper than the full pool would be.
+    return this.floors[pool] + Math.min(this.volumes[pool] / (this.areas[pool] * share), Math.max(WETTING_FILM * 3, this.volumes[pool] / this.areas[pool] + 0.06))
   }
 
   /** The walls are sculpted, not simulated: their height never limits water. */
   setWallHeight(_multiplier: number): void {}
+
+  /** Chutes, spouts, steps and drains carry run-through; norias and siphons do not. */
+  private runsThrough(edge: Edge): boolean {
+    return edge.kind === 'sill' || edge.kind === 'spout' || edge.kind === 'chute' || edge.kind === 'drain'
+  }
+
+  private runThrough(edge: Edge): number {
+    return this.reachedOutlet(edge.a) ? RUN_THROUGH * this.recentInflow[edge.a] / Math.max(1, this.runOutlets[edge.a]) : 0
+  }
 
   private computeFlows(): void {
     const { edges } = this.layout
@@ -202,7 +265,20 @@ export class GardenSimulation {
       const edge = edges[k]
       const levelA = this.level(edge.a)
       if (!this.reachedOutlet(edge.a) && (edge.b < 0 || !this.reachedOutlet(edge.b))) { this.flow[k] = 0; continue }
-      if (edge.b < 0 || edge.kind === 'spout') {
+      if (edge.kind === 'siphon') {
+        if (!this.reachedOutlet(edge.a)) { this.flow[k] = 0; continue }
+        const i = edge.siphon!, mouth = edge.path![edge.path!.length - 1][2]
+        if (this.primed[i] && levelA <= edge.crest) this.primed[i] = 0
+        else if (!this.primed[i] && levelA >= edge.trigger!) this.primed[i] = 1
+        const diameter = edge.width / Math.PI
+        let q = this.primed[i] ? SIPHON_CD * Math.PI * diameter * diameter / 4 * Math.sqrt(2 * 9.81 * Math.max(0, levelA - mouth)) : 0
+        // The bell's standpipe doubles as an overflow if the siphon can't keep up.
+        const over = levelA - (edge.trigger! + 0.05)
+        if (over > 0) q += WEIR_COEFFICIENT * edge.width * over ** 1.5
+        this.flow[k] = Math.min(q, 0.5 * Math.max(0, levelA - this.floors[edge.a]) * this.areas[edge.a] / STEP)
+        continue
+      }
+      if (edge.b < 0 || edge.kind !== 'sill') {
         if (!this.reachedOutlet(edge.a)) { this.flow[k] = 0; continue }
         // Drains and spouts only ever discharge outward and downward.
         const head = levelA - edge.crest
@@ -212,7 +288,7 @@ export class GardenSimulation {
           q *= villemonte(Math.max(head, 1e-9), back)
         }
         q = Math.min(q, 0.5 * Math.max(0, head) * this.areas[edge.a] / STEP)
-        this.flow[k] = q
+        this.flow[k] = edge.kind === 'lift' ? q : Math.max(q, this.runThrough(edge))
         continue
       }
       const levelB = this.level(edge.b)
@@ -220,13 +296,14 @@ export class GardenSimulation {
       const up = forward ? edge.a : edge.b, down = forward ? edge.b : edge.a
       const upperLevel = forward ? levelA : levelB, lowerLevel = forward ? levelB : levelA
       const head = upperLevel - edge.crest
-      if (head <= 0 || !this.reachedOutlet(up)) { this.flow[k] = 0; continue }
+      const run = this.runThrough(edge)
+      if (head <= 0 || !this.reachedOutlet(up)) { this.flow[k] = run; continue }
       let q = WEIR_COEFFICIENT * edge.width * head ** 1.5 * villemonte(head, lowerLevel - edge.crest)
       // Never transfer more than half of what would equalise the two pools.
       const a = this.areas[up], b = this.areas[down]
       const equalise = (upperLevel - Math.max(lowerLevel, edge.crest)) * a * b / (a + b)
       q = Math.min(q, 0.5 * equalise / STEP)
-      this.flow[k] = forward ? q : -q
+      this.flow[k] = forward ? Math.max(q, run) : run - q
     }
   }
 
@@ -253,6 +330,8 @@ export class GardenSimulation {
       const pool = source.pool
       const room = (this.maxLevels[pool] - this.level(pool)) * this.areas[pool] / STEP + this.outflow[pool]
       this.sourceRate = Math.max(0, Math.min(GARDEN_SOURCE_FLOW * requested, room))
+      this.stepInflow.fill(0)
+      this.stepInflow[pool] += this.sourceRate * STEP
       this.volumes[pool] += this.sourceRate * STEP
       this.injected += this.sourceRate * STEP
       this.drainRate = 0
@@ -260,11 +339,25 @@ export class GardenSimulation {
         const q = this.flow[k] * STEP, edge = edges[k]
         this.volumes[edge.a] -= q
         // While a tube is swung away, its jet falls straight into the pool.
-        if (edge.tipper !== undefined && this.tipPhase[edge.tipper] === FILLING) this.tipVolume[edge.tipper] += q
-        else if (edge.b >= 0) this.volumes[edge.b] += q
-        else { this.drained += q; this.drainRate += this.flow[k] }
+        const line = this.lineOf[k]
+        if (line >= 0) {
+          // Plug flow: what enters now arrives after the line's transit time.
+          const transit = this.lines[line]
+          const out = transit.ring[transit.head]
+          transit.ring[transit.head] = q
+          transit.head = (transit.head + 1) % transit.steps
+          transit.held += q - out
+          transit.arrived = out / STEP
+          this.volumes[edge.b] += out
+          this.stepInflow[edge.b] += out
+        } else if (edge.tipper !== undefined && this.tipPhase[edge.tipper] === FILLING) this.tipVolume[edge.tipper] += q
+        else if (edge.b >= 0) {
+          this.volumes[edge.b] += q
+          if (q > 0) this.stepInflow[edge.b] += q; else this.stepInflow[edge.a] -= q
+        } else { this.drained += q; this.drainRate += this.flow[k] }
       }
       this.advanceTippers()
+      for (let i = 0; i < this.recentInflow.length; i++) this.recentInflow[i] = this.stepInflow[i] / STEP
       for (let i = 0; i < this.volumes.length; i++) {
         const limit = (this.maxLevels[i] + FREEBOARD - this.floors[i]) * this.areas[i]
         if (this.volumes[i] > limit) { this.escaped += this.volumes[i] - limit; this.volumes[i] = limit }
@@ -280,6 +373,9 @@ export class GardenSimulation {
     this.flow.fill(0)
     this.front.fill(-1)
     this.tipVolume.fill(0); this.tipPhase.fill(FILLING); this.tipTime.fill(0); this.tipPour.fill(0)
+    for (const line of this.lines) { line.ring.fill(0); line.head = 0; line.held = 0; line.arrived = 0 }
+    this.primed.fill(0)
+    this.recentInflow.fill(0)
     this.time = 0; this.accumulator = 0
     this.injected = 0; this.drained = 0; this.escaped = 0
     this.sourceRate = 0; this.drainRate = 0
@@ -295,11 +391,25 @@ export class GardenSimulation {
       this.discharge[k] = q
       const [from, to] = q >= 0 ? [edge.a, edge.b] : [edge.b, edge.a]
       this.outflow[from] += Math.abs(q)
-      if (to >= 0 && edge.tipper === undefined) this.inflowSum[to] += Math.abs(q)
+      if (to >= 0 && edge.tipper === undefined && this.lineOf[k] < 0) this.inflowSum[to] += Math.abs(q)
       const head = Math.max(0.02, this.level(from) - edge.crest)
       maxVelocity = Math.max(maxVelocity, Math.abs(q) / (edge.width * head))
     }
     let stored = 0, wetArea = 0
+    this.lines.forEach((line, i) => {
+      stored += line.held
+      this.inflowSum[line.edge.b] += line.arrived
+      const channel = line.steps - line.rise
+      for (let s = 0; s < PROFILE_SAMPLES; s++) {
+        this.channelFlow[i * PROFILE_SAMPLES + s] = this.lineAt(line, line.rise + s / (PROFILE_SAMPLES - 1) * (channel - 1)) / STEP
+      }
+      if (line.edge.lift !== undefined) {
+        let riding = 0
+        for (let j = 0; j < line.rise; j += 4) riding += this.lineAt(line, j)
+        this.liftLoads[line.edge.lift] = line.rise ? riding / Math.ceil(line.rise / 4) / STEP : 0
+      }
+    })
+    this.primed.forEach((value, i) => { this.siphonPrimed[i] = value })
     for (const tipper of this.layout.tippers) {
       const i = tipper.index, load = this.tipVolume[i]
       stored += load
@@ -331,7 +441,8 @@ export class GardenSimulation {
       rows: this.grid.rows, cols: this.grid.cols, depth: this.depth, velocity: this.velocity, connections: this.connections,
       initialStoredVolume: this.initialStoredVolume, sourceRate: this.sourceRate,
       garden: { time: this.time, levels: this.levels, discharge: this.discharge, throughflow: this.throughflow, fronts: this.fronts, sourceRate: this.sourceRate,
-        tipperAngles: this.tipperAngles, tipperLoads: this.tipperLoads, tipperPours: this.tipperPours },
+        tipperAngles: this.tipperAngles, tipperLoads: this.tipperLoads, tipperPours: this.tipperPours,
+        channelFlow: this.channelFlow, liftLoads: this.liftLoads, siphonPrimed: this.siphonPrimed },
       diagnostics: {
         time: this.time, count: 0, injected: this.injected, discharged: this.drained, escaped: this.escaped, stored,
         massError: Math.abs(this.initialStoredVolume + this.injected - this.drained - this.escaped - stored),

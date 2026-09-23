@@ -1,4 +1,4 @@
-import { createGardenDesign, SOURCE_THROW, type GardenDesign, type GardenId, type VesselSpec } from './designs'
+import { createGardenDesign, SOURCE_THROW, type ChuteSpec, type GardenDesign, type GardenId, type LiftSpec, type SiphonSpec, type Vec3, type VesselSpec } from './designs'
 import {
   boundsOf, difference, offset, polygon, regionArea, regionContains, regions, simplifyRing, soften, strokes, union,
   type Bounds, type Region, type Shape2, type Vec2,
@@ -16,9 +16,15 @@ export const SPOUT_SILL_RADIUS = 0.07
  */
 export const STEP_CUT = 0.006
 /** Water standing on a terrace below its step edge (the wetting film). */
-export const BED_DEPTH = 0.02
+export const BED_DEPTH = 0.03
 /** Receiving troughs keep a real pool below their drain. */
 export const TROUGH_DEPTH = 0.17
+/** Water speed along open channels (m/s). */
+export const CHUTE_SPEED = 1.5
+/** Rim speed of a noria's buckets (m/s). */
+export const LIFT_SPEED = 0.85
+/** A noria's buckets only fill once the sump stands this deep. */
+export const LIFT_SILL = 0.06
 
 export interface CompiledVessel {
   index: number
@@ -45,7 +51,7 @@ export interface Pool {
   brim: number
 }
 
-export type EdgeKind = 'sill' | 'spout' | 'drain'
+export type EdgeKind = 'sill' | 'spout' | 'drain' | 'chute' | 'lift' | 'siphon'
 
 export interface Edge {
   index: number
@@ -66,7 +72,21 @@ export interface Edge {
   landing?: Vec2
   /** Index into `tippers` when this spout pours into a tipping tube. */
   tipper?: number
+  /** Chutes, noria troughs and siphon pipes: centreline (world). */
+  path?: Vec3[]
+  /** Transit time from intake to landing (s). */
+  delay?: number
+  /** Noria: part of the delay spent riding the wheel (s). */
+  rise?: number
+  /** Siphons: absolute level at which the siphon primes, and index into `siphons`. */
+  trigger?: number
+  siphon?: number
+  /** Noria index into `lifts`. */
+  lift?: number
 }
+
+export interface Lift extends LiftSpec { index: number; edge: number; pool: number; base: number }
+export interface Siphon extends SiphonSpec { index: number; edge: number; pool: number; base: number }
 
 /** A tipping tube between a spout and the pool below it. */
 export interface Tipper extends TipperFrame {
@@ -108,12 +128,26 @@ export interface GardenLayout {
   edges: Edge[]
   tippers: Tipper[]
   wheels: Wheel[]
+  lifts: Lift[]
+  siphons: Siphon[]
   source: { pool: number; tower: Vec2; lip: Vec2; landing: Vec2; lipZ: number; width: number; direction: Vec2; round: boolean }
   bounds: Bounds
   height: number
 }
 
 const normalize = ([x, y]: Vec2): Vec2 => { const l = Math.hypot(x, y) || 1; return [x / l, y / l] }
+
+export function pathLength(path: readonly Vec3[]): number {
+  let length = 0
+  for (let i = 1; i < path.length; i++) length += Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2])
+  return length
+}
+
+/** Horizontal direction of a path's last segment. */
+function endDirection(path: readonly Vec3[]): Vec2 {
+  const a = path[path.length - 2], b = path[path.length - 1]
+  return normalize([b[0] - a[0], b[1] - a[1]])
+}
 const add = (a: Vec2, b: Vec2, s = 1): Vec2 => [a[0] + b[0] * s, a[1] + b[1] * s]
 
 function polylineLength(points: readonly Vec2[]): number {
@@ -158,11 +192,15 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   const pools: Pool[] = []
   const edges: Edge[] = []
   const pendingSpouts: { vessel: number; spout: VesselSpec['spouts'][number] }[] = []
+  const pendingChutes: { vessel: number; chute: ChuteSpec }[] = []
+  const pendingLifts: { vessel: number; lift: LiftSpec }[] = []
+  const pendingSiphons: { vessel: number; siphon: SiphonSpec }[] = []
   const sillWheels: number[] = []
   design.vessels.forEach((spec, vesselIndex) => {
     const rim = { points: spec.outline, closed: true }
     let rimShape = strokes([rim], spec.rimWidth / 2)
-    for (const spout of spec.spouts) rimShape = difference(rimShape, notch(spout.at, normalize(spout.direction), spout.width / 2, spec.rimWidth))
+    const openings = [...spec.spouts, ...(spec.chutes ?? [])]
+    for (const spout of openings) rimShape = difference(rimShape, notch(spout.at, normalize(spout.direction), spout.width / 2, spec.rimWidth))
     const widths = [...new Set(spec.walls.map(wall => wall.width ?? spec.wallWidth))]
     const wallShapes = widths.map(width => strokes(spec.walls.filter(wall => (wall.width ?? spec.wallWidth) === width), width / 2))
     const raw = union(rimShape, ...wallShapes, polygon(...spec.islands))
@@ -173,7 +211,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
       const extend = (from: Vec2, to: Vec2): Vec2 => { const d = normalize([to[0] - from[0], to[1] - from[1]]); return add(to, d, 0.1) }
       return strokes([{ points: [extend(p[1], p[0]), ...p, extend(p[n - 2], p[n - 1])] }], STEP_CUT)
     })
-    const spoutSills = spec.spouts.map(spout => {
+    const spoutSills = openings.map(spout => {
       const direction = normalize(spout.direction), across: Vec2 = [-direction[1], direction[0]]
       return strokes([{ points: [add(spout.at, across, -spout.width / 2 - 0.05), add(spout.at, across, spout.width / 2 + 0.05)] }], SPOUT_SILL_RADIUS)
     })
@@ -218,6 +256,9 @@ export function compileGarden(design: GardenDesign): GardenLayout {
       compiled.sills.push({ regions: regions(sillShapes[k]).map(smooth), crest, edge: edge.index })
     })
     for (const spout of spec.spouts) pendingSpouts.push({ vessel: vesselIndex, spout })
+    for (const chute of spec.chutes ?? []) pendingChutes.push({ vessel: vesselIndex, chute })
+    for (const lift of spec.lifts ?? []) pendingLifts.push({ vessel: vesselIndex, lift })
+    for (const siphon of spec.siphons ?? []) pendingSiphons.push({ vessel: vesselIndex, siphon })
     if (spec.drain) {
       const pool = poolAt(spec.drain.at)
       if (!pool) throw new Error(`${design.id}/${spec.name}: drain is outside the water`)
@@ -250,9 +291,58 @@ export function compileGarden(design: GardenDesign): GardenLayout {
       edge.tipper = tippers.length
       tippers.push({
         ...frame, index: tippers.length, edge: edge.index, pool: target.index, width: TIPPER_RADIUS * 2,
-        capacity: Math.max(0.15, Math.min(0.3, target.area * 0.1)), landing, base: 0,
+        capacity: Math.max(0.06, Math.min(0.15, target.area * 0.04)), landing, base: 0,
       })
     } else if (spout.device === 'wheel') spoutWheels.push(edge.index)
+  }
+  const lifts: Lift[] = [], siphons: Siphon[] = []
+  for (const { vessel, chute } of pendingChutes) {
+    const spec = design.vessels[vessel]
+    const direction = normalize(chute.direction)
+    const source = pools.find(pool => pool.vessel === vessel && regionContains(pool.region, add(chute.at, direction, -(spec.rimWidth / 2 + 0.16))))
+    const end = chute.path[chute.path.length - 1]
+    const landing = add([end[0], end[1]], endDirection(chute.path), 0.22)
+    const target = findPool(landing, end[2], vessel)
+    if (!source) throw new Error(`${design.id}/${spec.name}: chute has no pool behind it`)
+    if (!target) throw new Error(`${design.id}/${spec.name}: chute lands outside every lower pool (${landing.map(v => v.toFixed(2))})`)
+    edges.push({
+      index: edges.length, kind: 'chute', a: source.index, b: target.index, crest: spec.floor + chute.crest, width: chute.width,
+      points: [chute.at], normal: direction, lipStart: add(chute.at, direction, -spec.rimWidth / 2), lipEnd: [chute.path[0][0], chute.path[0][1]],
+      landing, path: chute.path.slice(), delay: pathLength(chute.path) / CHUTE_SPEED,
+    })
+  }
+  for (const { vessel, lift } of pendingLifts) {
+    const spec = design.vessels[vessel]
+    const source = pools.find(pool => pool.vessel === vessel && regionContains(pool.region, lift.center))
+    const end = lift.path[lift.path.length - 1]
+    const landing = add([end[0], end[1]], endDirection(lift.path), 0.22)
+    const target = findPool(landing, end[2])
+    if (!source) throw new Error(`${design.id}/${spec.name}: noria stands outside its sump`)
+    if (!target) throw new Error(`${design.id}/${spec.name}: noria trough lands outside every basin (${landing.map(v => v.toFixed(2))})`)
+    const rise = Math.PI * lift.radius / LIFT_SPEED
+    const edge: Edge = {
+      index: edges.length, kind: 'lift', a: source.index, b: target.index, crest: source.floor + LIFT_SILL, width: lift.width * 4,
+      points: [lift.center], normal: normalize(lift.direction), landing, path: lift.path.slice(),
+      delay: rise + pathLength(lift.path) / CHUTE_SPEED, rise, lift: lifts.length,
+    }
+    edges.push(edge)
+    lifts.push({ ...lift, index: lifts.length, edge: edge.index, pool: source.index, base: source.floor })
+  }
+  for (const { vessel, siphon } of pendingSiphons) {
+    const spec = design.vessels[vessel]
+    const source = pools.find(pool => pool.vessel === vessel && regionContains(pool.region, siphon.at))
+    const mouth = siphon.path[siphon.path.length - 1]
+    const landing: Vec2 = [mouth[0], mouth[1]]
+    const target = findPool(landing, mouth[2], vessel)
+    if (!source) throw new Error(`${design.id}/${spec.name}: siphon bell stands outside the water`)
+    if (!target) throw new Error(`${design.id}/${spec.name}: siphon discharges outside every lower pool`)
+    const edge: Edge = {
+      index: edges.length, kind: 'siphon', a: source.index, b: target.index, crest: spec.floor + siphon.stop, width: Math.PI * siphon.diameter,
+      points: [siphon.at], normal: endDirection(siphon.path), landing, path: siphon.path.slice(),
+      trigger: spec.floor + siphon.trigger, siphon: siphons.length,
+    }
+    edges.push(edge)
+    siphons.push({ ...siphon, index: siphons.length, edge: edge.index, pool: source.index, base: spec.floor })
   }
   // Orient every step downstream: its upper side is the pool the water
   // reaches first from the source.
@@ -277,6 +367,8 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   // Raise each bed to a fixed depth below its lowest outlet: pools fill in
   // seconds rather than minutes, and walls keep plenty of freeboard.
   for (const pool of pools) {
+    // Sumps (noria) and siphon basins keep their authored depth.
+    if (edges.some(edge => edge.a === pool.index && (edge.kind === 'lift' || edge.kind === 'siphon'))) continue
     const outlets = edges.filter(edge => edge.a === pool.index && edge.kind !== 'drain').map(edge => edge.crest)
     // Terraces: the bed sits just under its step edge, so the water runs
     // shallow across each level and pours over the edge onto the next.
@@ -288,6 +380,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   }
   // Machinery stands on the finished beds.
   for (const tipper of tippers) tipper.base = pools[tipper.pool].floor
+  for (const lift of lifts) { lift.base = pools[lift.pool].floor; edges[lift.edge].crest = lift.base + LIFT_SILL }
   for (const index of spoutWheels) {
     const edge = edges[index], floor = pools[edge.b].floor
     const radius = spoutWheelRadius(edge.crest, floor)
@@ -313,11 +406,14 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   const bounds = boundsOf([
     ...vessels.flatMap(vessel => vessel.footprint.map(region => region.outer)),
     [sourceSpec.tower],
+    ...edges.filter(edge => edge.path).map(edge => edge.path!.map(([x, y]) => [x, y] as Vec2)),
+    ...lifts.map(lift => [add(lift.center, normalize(lift.direction), lift.radius), add(lift.center, normalize(lift.direction), -lift.radius)]),
   ])
   return {
-    id: design.id, design, vessels, pools, edges, tippers, wheels,
+    id: design.id, design, vessels, pools, edges, tippers, wheels, lifts, siphons,
     source: { pool: sourcePool.index, tower: sourceSpec.tower, lip: sourceSpec.lip, landing, lipZ: sourceSpec.lipZ, width: sourceSpec.width, direction, round: !!sourceSpec.round },
-    bounds, height: Math.max(sourceSpec.lipZ + 0.3, ...vessels.map(vessel => vessel.top)),
+    bounds, height: Math.max(sourceSpec.lipZ + 0.3, ...vessels.map(vessel => vessel.top),
+      ...edges.flatMap(edge => edge.path?.map(point => point[2] + 0.2) ?? []), ...lifts.map(lift => lift.hub + lift.radius + 0.2)),
   }
 }
 

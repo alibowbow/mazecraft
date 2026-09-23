@@ -288,6 +288,7 @@ export class FreeSurfaceRuntime {
     this.lastAdvance = null; this.debt = 0; this.displayRequested = false; this.refineAfterCatchUp = false
     this.releasePending()
   }
+  setFollow(value: boolean) { this.renderer.setFollow(value) }
   setSpeed(value: number) {
     this.speed = Math.max(0.1, Math.min(4, value))
     this.debt = 0

@@ -68,9 +68,13 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     })
     // Near steady state the drain returns what the source supplies.
     const supplied = state.diagnostics.injected - injected0, drained = state.diagnostics.discharged - drained0
+    // Tubes, channels and siphon cisterns hold water back in batches.
     const held = layout.tippers.reduce((sum, tipper) => sum + tipper.capacity, 0)
+      + layout.siphons.reduce((sum, siphon) => sum + (siphon.trigger - siphon.stop + 0.1) * layout.pools[siphon.pool].area, 0)
+      + layout.edges.reduce((sum, edge) => sum + (edge.delay ?? 0) * state.sourceRate, 0)
     expect(Math.abs(drained - supplied)).toBeLessThan(supplied * 0.05 + held)
-    for (const edge of layout.edges) expect(state.garden.discharge[edge.index], `${edge.kind} ${edge.index}`).toBeGreaterThan(0)
+    // Siphons run in bursts; everything else runs continuously.
+    for (const edge of layout.edges) if (edge.kind !== 'siphon') expect(state.garden.discharge[edge.index], `${edge.kind} ${edge.index}`).toBeGreaterThan(0)
   })
 
   it('works its machinery: tippers cycle in surges and clear the water at 1× supply', () => {
@@ -92,6 +96,37 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
       expect(tipperLowest(tipper), 'the tipped mouth stays above the surge').toBeGreaterThan(highest[tipper.pool] + 0.1)
     }
     for (const wheel of layout.wheels) expect(wheel.z - wheel.radius, `wheel ${wheel.index} clears its bed`).toBeGreaterThan(wheel.base)
+  })
+
+  it('runs a long journey through chutes, a noria and a siphon', () => {
+    for (const edge of layout.edges) if (edge.path) {
+      const end = edge.path[edge.path.length - 1]
+      if (edge.kind !== 'siphon') expect(end[2], `${edge.kind} ${edge.index} clears the rim it pours over`).toBeGreaterThan(layout.pools[edge.b].brim + 0.1)
+    }
+    for (const lift of layout.lifts) {
+      const edge = layout.edges[lift.edge]
+      expect(layout.pools[edge.b].floor, 'the noria lifts water uphill').toBeGreaterThan(layout.pools[edge.a].brim + 1)
+    }
+    const simulation = new GardenSimulation(layout, grid)
+    let arrival = -1, primes = 0, primed = false
+    const firstWet = new Array(layout.pools.length).fill(Infinity)
+    for (let step = 0; step < 2400; step++) {
+      simulation.advance(0.25, 0.65)
+      const { diagnostics, garden } = simulation.snapshot()
+      if (arrival < 0 && diagnostics.discharged > 1e-4) arrival = step * 0.25
+      garden.fronts.forEach((front, i) => { if (front >= 0) firstWet[i] = Math.min(firstWet[i], step * 0.25) })
+      const now = garden.siphonPrimed[0] > 0
+      if (now && !primed) primes++
+      primed = now
+    }
+    // At the default supply the water keeps moving from stage to stage for
+    // about a minute before it reaches the drain, never stalling for long.
+    expect(arrival).toBeGreaterThan(45)
+    expect(arrival).toBeLessThan(120)
+    expect(primes, 'the siphon cycles in rushes').toBeGreaterThanOrEqual(4)
+    // Something new happens every few seconds: no stage waits long for the last.
+    const times = firstWet.slice().sort((a, b) => a - b)
+    for (let i = 1; i < times.length; i++) expect(times[i] - times[i - 1], `stage ${i}`).toBeLessThan(30)
   })
 
   it('starts dry and wets its channels progressively from the source', () => {
@@ -123,7 +158,7 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     expect(draining.diagnostics.stored).toBeLessThan(flowing.diagnostics.stored)
     expect(draining.diagnostics.massError).toBeLessThan(1e-9)
     // Pools below a tipper still take its occasional surge as the upper pools drain.
-    const surged = new Set(layout.tippers.map(tipper => tipper.pool))
+    const surged = new Set([...layout.tippers.map(tipper => tipper.pool), ...layout.siphons.flatMap(siphon => [siphon.pool, layout.edges[siphon.edge].b])])
     layout.pools.forEach((_, i) => { if (!surged.has(i)) expect(draining.garden.levels[i]).toBeLessThanOrEqual(flowingLevels[i] + 1e-9) })
     simulation.reset()
     const reset = simulation.snapshot()

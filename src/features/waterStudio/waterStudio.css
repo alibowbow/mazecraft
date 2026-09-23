@@ -448,3 +448,4 @@
 .ws-material-grid button { min-height:68px; padding:8px 2px; font-size:10px; gap:8px; }
 .ws-material-grid i { width:25px; height:25px; border-radius:8px; }
 .ws-material-grid button > svg { width:11px; height:11px; right:3px; top:3px; }
+.water-studio .ws-view-controls .ws-icon[aria-pressed="true"] { background: var(--ws-ink, #1f2a2c); color: #fff; }
