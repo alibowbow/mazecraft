@@ -104,6 +104,11 @@ export class GardenPresentation3D {
     mesh(solids.beds, this.bedMaterial, 'garden-glazed-beds', false)
     mesh(solids.trim, this.trimMaterial, 'garden-spouts-and-tower')
     if (solids.planterSoil) mesh(solids.planterSoil, this.soilMaterial, 'garden-planter-soil', false)
+    const brass = new THREE.MeshPhysicalMaterial({ color: 0xc08a4e, metalness: 1, roughness: 0.28, clearcoat: 0.3, envMapIntensity: 1.2 })
+    const opening = new THREE.MeshBasicMaterial({ color: 0x0b1416, side: THREE.DoubleSide })
+    this.materials.push(brass, opening)
+    mesh(solids.brass, brass, 'garden-brass-pipe-and-drains')
+    mesh(solids.openings, opening, 'garden-pipe-bore-and-drain-holes', false)
     const water = mesh(solids.water, this.waterMaterial, 'garden-pool-water', false)
     water.receiveShadow = false
     water.frustumCulled = false

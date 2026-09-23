@@ -1,4 +1,4 @@
-import { createGardenDesign, type GardenDesign, type GardenId, type VesselSpec } from './designs'
+import { createGardenDesign, SOURCE_THROW, type GardenDesign, type GardenId, type VesselSpec } from './designs'
 import {
   boundsOf, difference, offset, polygon, regionArea, regionContains, regions, simplifyRing, soften, strokes, union,
   type Bounds, type Region, type Shape2, type Vec2,
@@ -205,7 +205,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   // Orient every step downstream: its upper side is the pool the water
   // reaches first from the source.
   const hops = new Array<number>(pools.length).fill(Infinity)
-  const firstPool = findPool(add(design.source.lip, normalize([design.source.lip[0] - design.source.tower[0], design.source.lip[1] - design.source.tower[1]]), 0.14), design.source.lipZ)
+  const firstPool = findPool(add(design.source.lip, normalize([design.source.lip[0] - design.source.tower[0], design.source.lip[1] - design.source.tower[1]]), SOURCE_THROW), design.source.lipZ)
   if (firstPool) {
     hops[firstPool.index] = 0
     for (let changed = true; changed;) {
@@ -236,7 +236,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   }
   const { source: sourceSpec } = design
   const direction = normalize([sourceSpec.lip[0] - sourceSpec.tower[0], sourceSpec.lip[1] - sourceSpec.tower[1]])
-  const landing = add(sourceSpec.lip, direction, 0.14)
+  const landing = add(sourceSpec.lip, direction, SOURCE_THROW)
   const sourcePool = findPool(landing, sourceSpec.lipZ)
   if (!sourcePool) throw new Error(`${design.id}: the source lands outside the water`)
   const bounds = boundsOf([

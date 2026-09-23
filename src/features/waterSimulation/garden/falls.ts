@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { GardenLayout } from './layout'
 import type { GardenState } from './simulation'
-import { criticalDepth } from './geometry'
+import { criticalDepth, sourceMouth } from './geometry'
 import { createCurtainMaterial, createDropletMaterial, MAX_IMPACTS, type CurtainUniforms, type GardenUniforms } from './materials'
 
 const G = 9.81
@@ -116,9 +116,11 @@ export class GardenFalls {
     const { source } = layout
     const q0 = inflow ? state.sourceRate : 0
     const h0 = criticalDepth(q0, source.width)
-    const channelStart = new THREE.Vector3(source.tower[0] + source.direction[0] * 0.2, source.tower[1] + source.direction[1] * 0.2, source.lipZ + h0)
+    // The water leaves the brass pipe mouth, drops into the channel and runs to the lip.
+    const mouth = sourceMouth(layout)
+    const channelStart = new THREE.Vector3(mouth.x, mouth.y, mouth.z - 0.02)
     const channelLength = Math.hypot(source.lip[0] - channelStart.x, source.lip[1] - channelStart.y)
-    this.sheet(index++, channelStart, source.direction, channelLength, 0, source.width * 0.98, 0, THREE.MathUtils.smoothstep(q0, 0, 0.012), 0.12, 0.6, dt)
+    this.sheet(index++, channelStart, source.direction, channelLength, channelStart.z - (source.lipZ + h0), Math.min(source.width * 0.98, 0.16 + h0), 0.8, THREE.MathUtils.smoothstep(q0, 0, 0.012), 0.12, 0.6, dt)
     this.fall(index++, source.lip[0], source.lip[1], source.lipZ + h0 * 0.85, source.direction, level(source.pool), q0, source.width, 0.45, dt)
     for (const edge of layout.edges) {
       const q = state.discharge[edge.index]
@@ -155,6 +157,11 @@ export class GardenFalls {
           this.targets.push({ x: start.x + direction[0] * reach, y: start.y + direction[1] * reach, z: lowerLevel, radius: edge.width * 0.5, strength: Math.min(1, strength * (0.3 + drop * 1.5)) })
         }
       }
+    }
+    const drain = layout.edges.find(edge => edge.kind === 'drain')
+    if (drain) {
+      const rate = Math.max(0, state.discharge[drain.index])
+      this.uniforms.uDrain.value.set(drain.points[0][0], drain.points[0][1], level(drain.a), THREE.MathUtils.smoothstep(rate, 0, 0.05))
     }
     const impacts = this.uniforms.uImpacts.value, heights = this.uniforms.uImpactZ.value
     const count = Math.min(MAX_IMPACTS, this.targets.length)

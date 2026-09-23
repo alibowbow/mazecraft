@@ -110,9 +110,14 @@ export class GardenSimulation {
     return order.length ? order[order.length - 1] : 0
   }
 
-  /** A pool can only spill once its front has wetted the whole bed. */
+  /** Whole bed wet: side bays included. */
   private wet(pool: number): boolean {
     return this.front[pool] >= this.reach(pool) - 1e-9
+  }
+
+  /** A pool can spill as soon as its front has run down to its outlet. */
+  private reachedOutlet(pool: number): boolean {
+    return this.front[pool] >= this.field.outletKey[pool] - 0.3
   }
 
   /** Wetted share of a pool's bed behind its front. */
@@ -135,8 +140,10 @@ export class GardenSimulation {
     }
   }
 
+  /** Water stands on the wetted part of the bed only. */
   level(pool: number): number {
-    return this.floors[pool] + this.volumes[pool] / this.areas[pool]
+    const share = this.wet(pool) ? 1 : Math.max(0.05, this.wetShare(pool))
+    return this.floors[pool] + this.volumes[pool] / (this.areas[pool] * share)
   }
 
   /** The walls are sculpted, not simulated: their height never limits water. */
@@ -147,9 +154,9 @@ export class GardenSimulation {
     for (let k = 0; k < edges.length; k++) {
       const edge = edges[k]
       const levelA = this.level(edge.a)
-      if (!this.wet(edge.a) && (edge.b < 0 || !this.wet(edge.b))) { this.flow[k] = 0; continue }
+      if (!this.reachedOutlet(edge.a) && (edge.b < 0 || !this.reachedOutlet(edge.b))) { this.flow[k] = 0; continue }
       if (edge.b < 0 || edge.kind === 'spout') {
-        if (!this.wet(edge.a)) { this.flow[k] = 0; continue }
+        if (!this.reachedOutlet(edge.a)) { this.flow[k] = 0; continue }
         // Drains and spouts only ever discharge outward and downward.
         const head = levelA - edge.crest
         let q = head > 0 ? WEIR_COEFFICIENT * edge.width * head ** 1.5 : 0
@@ -166,7 +173,7 @@ export class GardenSimulation {
       const up = forward ? edge.a : edge.b, down = forward ? edge.b : edge.a
       const upperLevel = forward ? levelA : levelB, lowerLevel = forward ? levelB : levelA
       const head = upperLevel - edge.crest
-      if (head <= 0 || !this.wet(up)) { this.flow[k] = 0; continue }
+      if (head <= 0 || !this.reachedOutlet(up)) { this.flow[k] = 0; continue }
       let q = WEIR_COEFFICIENT * edge.width * head ** 1.5 * villemonte(head, lowerLevel - edge.crest)
       // Never transfer more than half of what would equalise the two pools.
       const a = this.areas[up], b = this.areas[down]
@@ -251,7 +258,7 @@ export class GardenSimulation {
         // Spreading: water stands on the wetted part of the bed only.
         const share = Math.max(1e-3, this.wetShare(i))
         this.fronts[i] = this.front[i]
-        this.levels[i] = this.floors[i] + Math.min(0.12, Math.max(WETTING_FILM, volume / (this.areas[i] * share)))
+        this.levels[i] = Math.max(this.floors[i] + WETTING_FILM, this.level(i))
         wetArea += this.areas[i] * share
       } else {
         this.fronts[i] = FAR

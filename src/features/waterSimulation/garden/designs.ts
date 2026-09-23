@@ -404,11 +404,20 @@ function inRoom(rooms: LatticeOptions['rooms'] = [], solids: Cell[] = []) {
 
 const WALL = 0.34
 const RIM = 0.5
+/** Horizontal travel of the source pour, lip to landing (m). */
+export const SOURCE_THROW = 0.3
 
 function source(landing: Vec2, towerOffset: Vec2, lipZ: number, width = 0.44): SourceSpec {
   const length = Math.hypot(towerOffset[0], towerOffset[1])
-  const lip: Vec2 = [landing[0] - towerOffset[0] / length * 0.14, landing[1] - towerOffset[1] / length * 0.14]
+  // The pour leaves the lip with some forward speed: set the lip back
+  // towards the tower so the water lands in the middle of the entry cell.
+  const lip: Vec2 = [landing[0] + towerOffset[0] / length * SOURCE_THROW, landing[1] + towerOffset[1] / length * SOURCE_THROW]
   return { tower: [landing[0] + towerOffset[0], landing[1] + towerOffset[1]], lip, lipZ, width }
+}
+
+function towards(from: Vec2, to: Vec2, distance: number): Vec2 {
+  const d = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1
+  return [from[0] + (to[0] - from[0]) / d * distance, from[1] + (to[1] - from[1]) / d * distance]
 }
 
 /** Origin that centres `cell` of a lattice on a given landing point. */
@@ -449,7 +458,7 @@ function atelier(): GardenDesign {
   return {
     id: 'atelier',
     vessels: [main, drainBasin(spout, RIM, 0.5, 2.3, 1.35)],
-    source: source(maze.center(entry), [0, 1.95], floor + height + 0.55),
+    source: source(maze.center(entry), [0, 1.95], floor + height + 0.3),
     plants: [
       { kind: 'olive', at: [x0 - 1.2, y1 - 0.4], scale: 1.89 },
       { kind: 'rosemary', at: [x1 + 1.0, y0 + 1.4], scale: 1.59 },
@@ -487,7 +496,7 @@ function cascade(): GardenDesign {
   }
   vessels.push(drainBasin(spout, RIM, length, 2.0, 1.2))
   return {
-    id: 'cascade', vessels, source: source(firstLanding, [0, 1.85], floors[0] + 0.74 + 0.55, 0.42),
+    id: 'cascade', vessels, source: source(firstLanding, [0, 1.85], floors[0] + 0.8 + 0.3, 0.42),
     plants: [
       { kind: 'olive', at: [-4.2, 2.6], scale: 1.81 },
       { kind: 'rosemary', at: [3.9, -1.4], scale: 1.52 },
@@ -544,7 +553,7 @@ function split(): GardenDesign {
   vessels.push(drainBasin(lowSpout, RIM, 0.42, 2.1, 1.2, 0.04))
   return {
     id: 'split', vessels,
-    source: source(top.center({ i: 2, j: 2 }), [0, 1.8], topFloor + 0.72 + 0.55, 0.42),
+    source: source(top.center({ i: 2, j: 2 }), [0, 1.8], topFloor + 0.72 + 0.3, 0.42),
     plants: [
       { kind: 'olive', at: [-5.2, 3.6], scale: 1.59 },
       { kind: 'olive', at: [5.3, 3.3], scale: 1.45 },
@@ -595,7 +604,7 @@ function serpentine(): GardenDesign {
   return {
     id: 'serpentine',
     vessels: [main, drainBasin(spout, RIM, 0.5, 2.2, 1.3)],
-    source: source(landing, [0, 1.85], floor + 0.76 + 0.55),
+    source: source(landing, [0, 1.85], floor + 0.76 + 0.3),
     plants: [
       { kind: 'olive', at: [-5.6, 2.6], scale: 1.74 },
       { kind: 'rosemary', at: [5.5, 1.2], scale: 1.59 },
@@ -642,7 +651,7 @@ function waterGarden(): GardenDesign {
   return {
     id: 'garden',
     vessels: [main, drainBasin(spout, 0.55, 0.5, 2.0, 1.25)],
-    source: { tower: [cx, cy], lip: [landing[0] - 0.12, landing[1] - 0.05], lipZ: floor + 0.8 + 0.7, width: 0.34, round: true },
+    source: { tower: [cx, cy], lip: towards(landing, [cx, cy], SOURCE_THROW), lipZ: floor + 0.8 + 0.35, width: 0.34, round: true },
     plants: [
       { kind: 'olive', at: [-4.6, 4.0], scale: 1.81 },
       { kind: 'rosemary', at: [-4.9, -2.6], scale: 1.59 },

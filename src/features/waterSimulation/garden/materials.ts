@@ -33,6 +33,8 @@ export function createGardenUniforms(field: GardenField) {
     uImpactZ: { value: new Float32Array(MAX_IMPACTS) },
     uImpactCount: { value: 0 },
     uFront: { value: new Float32Array(MAX_POOLS).fill(-1) },
+    /** Drain vortex: x, y, water level, strength (0–1). */
+    uDrain: { value: new THREE.Vector4(0, 0, -10, 0) },
     uGardenEntry: { value: entryTexture(field) },
     uWallScale: { value: 1 },
     uRipplesA: { value: createRippleNormals(17, 256, 14, 4.6) },
@@ -219,6 +221,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform vec4 uImpacts[${MAX_IMPACTS}];
         uniform float uImpactZ[${MAX_IMPACTS}];
         uniform int uImpactCount;
+        uniform vec4 uDrain;
         varying float vPoolDepth;
         varying float vPoolFlow;
         varying float vPoolFront;
@@ -257,6 +260,14 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
           waveHeight += sin(arg) * envelope;
           waveGrad += d / r * (cos(arg) * 16.0 * envelope - sin(arg) * 2.2 * envelope);
         }
+        // A drain draws the surface down into a shallow vortex dimple.
+        if (abs(uDrain.z - poolLevel) < 0.03 && uDrain.w > 0.0) {
+          vec2 d = position.xy - uDrain.xy;
+          float r2 = dot(d, d);
+          float dimple = uDrain.w * 0.05 * exp(-r2 / 0.03);
+          waveHeight -= dimple;
+          waveGrad -= d * (-2.0 / 0.03) * dimple;
+        }
         vec3 objectNormal = normalize(vec3(-waveGrad, 1.0));
         #ifdef USE_TANGENT
           vec3 objectTangent = vec3(1.0, 0.0, 0.0);
@@ -274,6 +285,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform float uImpactZ[${MAX_IMPACTS}];
         uniform int uImpactCount;
         uniform sampler2D uGardenEntry;
+        uniform vec4 uDrain;
         varying float vPoolDepth;
         varying float vPoolFlow;
         varying float vPoolFront;`)
@@ -315,6 +327,13 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         }
         // Meniscus/flow foam along walls where the current is strong.
         waterFoam += (1.0 - smoothstep(0.015, 0.06, wallDistance)) * smoothstep(0.15, 0.6, waterSpeed) * mix(0.25, 0.7, foamNoise) * 0.5;
+        // Spiral foam arms wind into the drain.
+        if (abs(uDrain.z - vGardenWorld.z) < 0.08 && uDrain.w > 0.0) {
+          vec2 d = vGardenWorld.xy - uDrain.xy;
+          float r = length(d);
+          float arms = sin(atan(d.y, d.x) * 3.0 + log(r + 0.02) * 9.0 + uGardenTime * 6.0);
+          waterFoam += uDrain.w * smoothstep(0.55, 1.0, arms) * smoothstep(0.55, 0.15, r) * smoothstep(0.1, 0.16, r) * 0.7;
+        }
         // The advancing tongue of water is aerated and bright.
         waterFoam += leadingEdge * mix(0.3, 1.0, smoothstep(0.42, 0.62, foamNoise)) * 0.75;
         waterFoam = clamp(waterFoam, 0.0, 1.0);
