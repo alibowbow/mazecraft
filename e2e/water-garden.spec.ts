@@ -28,6 +28,7 @@ for (const [label, id] of presets) {
     const dry = await gardenState(page)
     expect(dry.sculpture).toBe('garden')
     expect(dry.levels.length).toBeGreaterThanOrEqual(3)
+    await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
     await expect.poll(async () => (await gardenState(page)).spills.filter(rate => rate > 0).length,
       { timeout: e2eTimeout(120_000) }).toBeGreaterThan(0)
     expect(errors).toEqual([])

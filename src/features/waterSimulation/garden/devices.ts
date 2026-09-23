@@ -47,7 +47,7 @@ export class GardenDevices {
   private readonly tippers: Part[] = []
   private readonly wheels: (Part & { spin: number; angle: number })[] = []
   private readonly norias: Noria[] = []
-  private readonly bucketWater = new THREE.MeshPhysicalMaterial({ color: 0x8fe0e6, roughness: 0.08, transmission: 0.6, thickness: 0.1, transparent: true, opacity: 0.92 })
+  private readonly bucketWater = new THREE.MeshStandardMaterial({ color: 0x7fd6de, roughness: 0.08, transparent: true, opacity: 0.85 })
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly bamboo = new THREE.MeshPhysicalMaterial({ color: 0xb49a55, roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.18, sheen: 0.3, sheenColor: new THREE.Color(0xfff0c8) })
   private readonly teak = new THREE.MeshPhysicalMaterial({ color: 0x7e5334, roughness: 0.5, clearcoat: 0.45, clearcoatRoughness: 0.25 })

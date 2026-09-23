@@ -710,7 +710,13 @@ export class FreeSurfaceRenderer {
     this.draw()
   }
 
-  private followWater = true
+  private followWater = false
+  /** Shader warm-up of a new water garden; nothing is drawn until it settles. */
+  private warming: Promise<void> | null = null
+
+  /** Pending shader warm-up of the current scene, if any. */
+  sceneWarming(): Promise<void> | null { return this.warming }
+
 
   /** Water gardens: let the camera travel with the water. */
   setFollow(enabled: boolean): void {
@@ -814,6 +820,13 @@ export class FreeSurfaceRenderer {
       if (this.basinSnapshot) this.presentation3d.setBasinSnapshot(this.basinSnapshot)
       this.presentation3d.setInflow(this.canvas.dataset.inflow !== 'disabled')
       if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setFollow(this.followWater)
+      if (this.presentation3d instanceof GardenPresentation3D) {
+        const warming: Promise<void> = this.presentation3d.warmUp().catch(() => undefined).then(() => {
+          if (this.warming === warming) this.warming = null
+          this.draw()
+        })
+        this.warming = warming
+      }
     }
     if (mode === 'free-surface' && this.sculpture === 'extruded-flow') this.scene.add(this.funnel)
     else if (this.sculpture === 'extruded-flow') this.presentation3d?.addFunnel(this.funnel)
@@ -988,6 +1001,7 @@ export class FreeSurfaceRenderer {
       this.canvas.dataset.surfaceBuilds = String(++this.surfaceBuilds)
     }
     this.renderer.setClearColor(STUDIO_BACKGROUND, 1)
+    if (this.viewMode === 'surface-3d' && this.presentation3d && this.warming) return
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
       this.presentation3d.updateWater(this.sculpture === 'extruded-flow' ? this.waterMaterial.uniforms.uTime.value : this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
       this.renderer.setRenderTarget(null)

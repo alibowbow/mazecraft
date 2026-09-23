@@ -449,3 +449,5 @@
 .ws-material-grid i { width:25px; height:25px; border-radius:8px; }
 .ws-material-grid button > svg { width:11px; height:11px; right:3px; top:3px; }
 .water-studio .ws-view-controls .ws-icon[aria-pressed="true"] { background: var(--ws-ink, #1f2a2c); color: #fff; }
+.water-studio .ws-start { position: absolute; z-index: 2; left: 50%; bottom: 96px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; background: var(--ws-ink, #1f2a2c); color: #fff; font-size: 14px; font-weight: 600; box-shadow: 0 10px 30px rgba(20, 40, 45, 0.22); }
+.water-studio .ws-start:hover { filter: brightness(1.12); }

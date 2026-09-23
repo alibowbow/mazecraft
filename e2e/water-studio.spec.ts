@@ -14,6 +14,13 @@ async function waitForStudio(page: Page) {
   return canvas
 }
 
+/** Scenes open dry and paused; pause again if a test started the water. */
+async function pause(page: Page) {
+  const button = page.getByRole('button', { name: '일시정지', exact: true })
+  if (await button.isVisible()) await button.click()
+  await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
+}
+
 async function openStudio(page: Page) {
   await page.goto('/')
   const canvas = await waitForStudio(page)
@@ -31,15 +38,19 @@ async function fluidState(page: Page) {
   })
 }
 
-test('water studio starts with live 3D water and tunes appearance without resetting paused flow', async ({ page }, testInfo) => {
+test('water studio opens dry, flows once started, and tunes appearance without resetting paused flow', async ({ page }, testInfo) => {
   test.setTimeout(e2eTimeout(90_000))
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   const canvas = await openStudio(page)
+  // Nothing flows until the viewer starts the water.
+  await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
+  expect((await fluidState(page)).stored).toBe(0)
+  await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
   await expect.poll(async () => (await fluidState(page)).stored, { timeout: firstFrameTimeout }).toBeGreaterThan(0)
   const initialTime = (await fluidState(page)).time
   await expect.poll(async () => (await fluidState(page)).time, { timeout: firstFrameTimeout }).toBeGreaterThan(initialTime)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
   // Allow a solver frame already posted before the pause to reach the UI.
   await page.waitForTimeout(350)
@@ -70,7 +81,7 @@ test('water studio starts with live 3D water and tunes appearance without resett
 
   await page.reload()
   await waitForStudio(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
   await page.getByRole('tab', { name: '색상', exact: true }).click()
   await expect(page.getByRole('button', { name: '물 색상 분홍', exact: true })).toHaveAttribute('aria-pressed', 'true')
@@ -84,10 +95,10 @@ test('water studio presets remain editable and can be saved to the project colle
   await openStudio(page)
   // Saving and editing are independent of continuous playback; cover their UI
   // against a stable real scene while the live-flow test checks progression.
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('button', { name: /트윈 플로우/ }).click()
   await waitForStudio(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('트윈 플로우')
   await page.getByRole('button', { name: '미로 저장', exact: true }).click()
   await expect(page.getByRole('button', { name: '미로 저장 완료', exact: true })).toBeVisible()
@@ -96,7 +107,7 @@ test('water studio presets remain editable and can be saved to the project colle
   await expect(page.getByText('트윈 플로우', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '← 물 스튜디오', exact: true }).click()
   await waitForStudio(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('tab', { name: '미로', exact: true }).click()
   await page.getByRole('button', { name: '전체 제작기 · 글자 / 이미지 / 벽 편집', exact: true }).click()
   await expect(page.getByLabel('프로젝트 제목')).toHaveValue('트윈 플로우')
@@ -119,14 +130,14 @@ test('15.6 mobile water studio keeps the scene visible and tuning controls reach
   await page.screenshot({ path: testInfo.outputPath('mobile-water-tuning.png') })
   await page.getByRole('button', { name: '튜닝 닫기', exact: true }).click()
   await expect(page.getByRole('button', { name: '튜닝 열기', exact: true })).toHaveAttribute('aria-expanded', 'false')
-  await expect(page.getByRole('button', { name: '일시정지', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('mobile-water-studio.png') })
 })
 
 test('edited water graph survives the editor round trip and opens as water in a fresh shared session', async ({ page, browser }) => {
   test.setTimeout(e2eTimeout(180_000))
   await openStudio(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('tab', { name: '미로', exact: true }).click()
   await page.getByRole('button', { name: '전체 제작기 · 글자 / 이미지 / 벽 편집', exact: true }).click()
   await page.getByLabel('프로젝트 제목').fill('편집한 작은 물 미로')
@@ -143,7 +154,7 @@ test('edited water graph survives the editor round trip and opens as water in a 
   await page.getByRole('button', { name: '닫기', exact: true }).last().click()
   await page.getByRole('button', { name: '홈으로', exact: true }).click()
   await waitForStudio(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('편집한 작은 물 미로')
   await page.getByRole('button', { name: '현재 미로 공유', exact: true }).click()
   const waterLink = await page.locator('.dialog input[readonly]').inputValue()
@@ -160,7 +171,7 @@ test('edited water graph survives the editor round trip and opens as water in a 
     await waitForStudio(shared)
     await expect(shared.getByTestId('water-studio-canvas')).toHaveAttribute('data-view-mode', 'surface-3d')
     await expect(shared.getByRole('heading', { level: 1 })).toHaveText('편집한 작은 물 미로')
-    await shared.getByRole('button', { name: '일시정지', exact: true }).click()
+    await pause(shared)
     await shared.getByRole('button', { name: '현재 미로 공유', exact: true }).click()
     const reopenedLink = await shared.locator('.dialog input[readonly]').inputValue()
     expect(readShareHash(new URL(reopenedLink).hash)!.project.mazeGraph).toEqual(edited.mazeGraph)
@@ -172,7 +183,7 @@ test('edited water graph survives the editor round trip and opens as water in a 
 test('creates a reproducible shaped maze with the original generator and carries it into the full editor', async ({ page }) => {
   test.setTimeout(e2eTimeout(180_000))
   await openStudio(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('button', { name: '2D', exact: true }).click()
   await page.getByRole('tab', { name: '미로', exact: true }).click()
   await page.getByRole('button', { name: '하트', exact: true }).click()
@@ -183,7 +194,7 @@ test('creates a reproducible shaped maze with the original generator and carries
   await page.getByRole('button', { name: '이 설정으로 미로 생성', exact: true }).click()
   await waitForStudio(page)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('하트 물 미로')
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('button', { name: '현재 미로 공유', exact: true }).click()
   const link = await page.locator('.dialog input[readonly]').inputValue()
   const created = readShareHash(new URL(link).hash)!.project

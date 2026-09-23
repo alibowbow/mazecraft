@@ -75,8 +75,10 @@ export class GardenPresentation3D {
   private inflow = true
   private state: GardenSnapshot['garden'] | null = null
   /** Camera that travels with the water: smoothed focus and framing height. */
-  private follow = true
+  private follow = false
   private readonly focus = new THREE.Vector3()
+  /** Where the tracking camera is gliding to. */
+  private readonly desired = new THREE.Vector3()
   private focusHeight = 0
   private focusTime: number | null = null
   private view: { width: number; height: number; zoom: number; panX: number; panY: number; orientation: THREE.Quaternion } | null = null
@@ -195,6 +197,27 @@ export class GardenPresentation3D {
 
   addFunnel(_group: THREE.Group): void {}
 
+  /**
+   * Compile every shader up front, in parallel where the driver allows, so
+   * the first frame and the first falls never stall the page. Hidden parts
+   * (falls, spray, bucket water) are shown just long enough to be compiled.
+   */
+  async warmUp(): Promise<void> {
+    const renderer = this.renderer
+    const hidden: THREE.Object3D[] = []
+    this.scene.traverse(object => { if (!object.visible) { hidden.push(object); object.visible = true } })
+    const shadows = renderer.shadowMap.enabled, toneMapping = renderer.toneMapping
+    renderer.shadowMap.enabled = true
+    renderer.toneMapping = this.toneMapping
+    let pending: Promise<unknown>
+    try { pending = renderer.compileAsync(this.scene, this.camera) } finally {
+      renderer.shadowMap.enabled = shadows
+      renderer.toneMapping = toneMapping
+      for (const object of hidden) object.visible = false
+    }
+    await pending
+  }
+
   setLook(next: Partial<WaterLook>): void {
     if (this.disposed) return
     this.look = normalizeWaterLook(next, this.look)
@@ -304,8 +327,10 @@ export class GardenPresentation3D {
 
   /** Follow the water (on by default): the camera travels with the newest arrival. */
   setFollow(enabled: boolean): void {
+    // Tracking starts from the garden's centre and closes in on the water.
+    if (enabled && !this.follow) { this.focus.copy(this.center); this.desired.copy(this.center) }
     this.follow = enabled
-    this.focusTime = null
+    this.focusHeight = enabled ? 1 : 0
     this.applyView()
   }
 
@@ -350,19 +375,24 @@ export class GardenPresentation3D {
 
   private trackWater(state: GardenSnapshot['garden']): void {
     if (state.time < 1e-6 || (this.state && state.fronts.every(front => front < 0))) this.started.fill(-1)
-    if (!this.follow) return
     const now = performance.now() / 1000
-    const dt = this.focusTime === null ? 1 : Math.min(0.5, Math.max(0, now - this.focusTime))
-    const snap = this.focusTime === null
+    const dt = this.focusTime === null ? 0 : Math.min(0.25, Math.max(0, now - this.focusTime))
     this.focusTime = now
+    if (!this.follow) { this.applyView(); return }
     const head = this.waterHead(state)
-    // Frame a few metres around the head while the water travels; ease back
-    // to the whole garden once everything is running.
-    const target = head ?? this.center
-    const height = head ? 6.5 : 0
-    const k = snap ? 1 : 1 - Math.exp(-dt / 0.9)
-    this.focus.lerp(target, k)
-    this.focusHeight += (height - this.focusHeight) * (snap ? 1 : 1 - Math.exp(-dt / 1.4))
+    if (head) {
+      // Dead zone: the camera only moves once the water leaves the middle of
+      // the frame, then glides just far enough to keep it there. Small jumps
+      // of the wetting front never shake the view.
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion)
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion)
+      const offset = head.clone().sub(this.desired)
+      const zoneX = this.viewSize.x * 0.22, zoneY = this.viewSize.y * 0.2
+      const dx = offset.dot(right), dy = offset.dot(up)
+      this.desired.addScaledVector(right, dx - THREE.MathUtils.clamp(dx, -zoneX, zoneX))
+      this.desired.addScaledVector(up, dy - THREE.MathUtils.clamp(dy, -zoneY, zoneY))
+    }
+    this.focus.lerp(this.desired, 1 - Math.exp(-dt / 1.1))
     this.applyView()
   }
 
@@ -388,12 +418,12 @@ export class GardenPresentation3D {
     const frontHeight = Math.abs(basis[1]) * w + Math.abs(basis[5]) * d + Math.abs(basis[9]) * h
     const overview = Math.max(frontHeight * 0.9, frontWidth * 0.94 / aspect)
     // Following: close in around the travelling water, then ease back out.
-    const close = this.follow ? THREE.MathUtils.clamp(this.focusHeight / 6.5, 0, 1) : 0
-    const near = Math.min(overview, Math.max(6.5, 5.2 / aspect))
+    const close = THREE.MathUtils.clamp(this.focusHeight, 0, 1)
+    const near = Math.min(overview, Math.max(overview * 0.55, 6.5, 5.2 / aspect))
     const viewHeight = THREE.MathUtils.lerp(overview, near, close) / Math.max(0.1, zoom)
     this.viewSize.set(viewHeight * aspect, viewHeight)
     const offset = new THREE.Vector3(panX, panY, 0).applyQuaternion(orientation)
-    this.target.copy(this.follow && this.focusTime !== null ? this.focus : this.center).add(offset)
+    this.target.copy(this.center).lerp(this.focus, close).add(offset)
     this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
     this.camera.left = -this.viewSize.x / 2; this.camera.right = this.viewSize.x / 2
     this.camera.top = viewHeight / 2; this.camera.bottom = -viewHeight / 2
