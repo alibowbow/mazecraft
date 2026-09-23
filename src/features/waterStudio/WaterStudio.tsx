@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { BrandMark } from '../../components/BrandMark'
 import { ArrowUpRight, Check, ChevronDown, Droplets, Expand, FolderOpen, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Save, Shuffle, SlidersHorizontal, Waves, X, Square, Circle, Heart, Hexagon, Star, Diamond, Wand2, Pencil, Video } from 'lucide-react'
 import { createDefaultProject, generateMaze, type MazeProject } from '../../core/maze'
 import { createImageMask, loadImageFile, DEFAULT_IMAGE_OPTIONS } from '../../core/masks/imageMask'
@@ -69,12 +70,14 @@ interface Props {
   initialProject?: MazeProject | null
   onProjectChange?(project: MazeProject): void
   onLibrary(): void
+  /** Back to the MazeCraft home. */
+  onHome?(): void
   onEdit(project: MazeProject): void
   onSave(project: MazeProject): Promise<void>
   onShare(project: MazeProject): void
 }
 
-export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onEdit, onSave, onShare }: Props) {
+export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onHome, onEdit, onSave, onShare }: Props) {
   const [customProject, setCustomProject] = useState<MazeProject | null>(initialProject ?? null)
   const [preferences, setPreferences] = useState(readPreferences)
   const [draft, setDraft] = useState<WaterMazeOptions>(() => readPreferences().generator)
@@ -91,7 +94,8 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const flowResume = useRef<FluidResume | undefined>(undefined)
   const [paused, setPaused] = useState(false)
   const [inflow, setInflow] = useState(true)
-  const [mode, setMode] = useState<'surface-3d' | 'free-surface'>('surface-3d')
+  // The water studio opens on the 2D view; 3D is one tap away.
+  const [mode, setMode] = useState<'surface-3d' | 'free-surface'>('free-surface')
   const [tab, setTab] = useState<'water' | 'material' | 'light' | 'maze'>('water')
   const [tuningOpen, setTuningOpen] = useState(false)
   const [focus, setFocus] = useState(false)
@@ -246,8 +250,8 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   return <main className={`water-studio${focus ? ' is-focused' : ''}${tuningOpen ? ' tuning-open' : ''}${mode === 'free-surface' ? ' is-2d' : ''}`} data-testid="water-studio" data-theme-name={preferences.look.theme}
     style={{ '--ws-scene': STUDIO_BACKGROUND, '--ws-material': selectedTheme.color } as CSSProperties}>
     <header className="ws-header">
-      <div className="ws-brand"><Waves size={25} strokeWidth={1.8} /><div><strong>MAZECRAFT</strong><span>WATER ATELIER</span></div></div>
-      <nav className="ws-navigation" aria-label="주 메뉴"><span aria-current="page">물 스튜디오</span><button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
+      <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome ?? onLibrary}><BrandMark /><div><strong>MazeCraft</strong><span>WATER GARDEN · 물의 정원</span></div></button>
+      <nav className="ws-navigation app-nav" aria-label="주 메뉴"><button onClick={onHome ?? onLibrary}>홈</button><span aria-current="page">물의 정원</span><button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
       <div className="ws-header-actions"><button className="ws-create-shortcut" aria-label="미로 만들기" onClick={openCreation}><Wand2 size={17} /><span>미로 만들기</span></button><button className="ws-icon" aria-label="몰입 화면" aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? <X size={19} /> : <Expand size={19} />}</button><button className="ws-save" aria-label={saveState === 'saved' ? '미로 저장 완료' : '미로 저장'} disabled={saveState === 'saving'} onClick={() => void save()}>{saveState === 'saved' ? <Check size={16} /> : <Save size={16} />}<span>{saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장 완료' : saveState === 'error' ? '다시 저장' : '미로 저장'}</span></button></div>
     </header>
     <div className="ws-workspace">

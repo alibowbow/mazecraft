@@ -15,9 +15,13 @@ async function capture(page: Page, testInfo: TestInfo, name: string, fullPage = 
 test('홈에서 간결한 브랜드와 하나의 프로젝트 가져오기 경로를 제공한다', async ({ page }, testInfo) => {
   await visitProjectLibrary(page)
 
-  await expect(page.getByRole('heading', { name: 'MazeCraft', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: /길을 설계하고/ })).toBeVisible()
+  // Two doors: the maze studio and the water garden.
+  await expect(page.getByRole('heading', { name: '미로 제작', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '물의 정원', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /새 미로 만들기/ })).toBeVisible()
-  await expect(page.getByRole('img', { name: '제도용 종이 위에 손으로 그린 미로와 설계 도구가 놓인 작업대' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /물의 정원 열기/ })).toBeVisible()
+  await expect(page.getByRole('img', { name: '제도용 종이 위에 손으로 그린 미로와 설계 도구' })).toBeVisible()
   await expect(page.getByLabel('메이즈크래프트 미로 미리보기')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: '무엇을 만들까요?' })).toBeVisible()
   await expect(page.getByText('풀어야 열리는 이야기', { exact: true })).toHaveCount(0)

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { waterStartupTimeout, e2eTimeout } from './helpers/runtimeBudget'
+import { openWaterGarden } from './helpers/navigation'
 
 const canvasSelector = '[data-testid="water-studio-canvas"] canvas.water-simulation-canvas'
 const presets = [['포슬린 가든', 'atelier'], ['캐스케이드', 'cascade'], ['트윈 플로우', 'split'], ['리본', 'serpentine'], ['워터 가든', 'garden']] as const
@@ -20,8 +21,10 @@ for (const [label, id] of presets) {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => { if (message.type() === 'error' && /THREE|shader|WebGL/i.test(message.text())) errors.push(message.text()) })
-    await page.goto('/')
+    await openWaterGarden(page)
     await page.getByRole('group', { name: '미로 프리셋' }).getByRole('button', { name: new RegExp(label) }).click()
+    // The studio opens in 2D; the water garden itself is the 3D view.
+    await page.getByRole('button', { name: '3D', exact: true }).click()
     await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: waterStartupTimeout })
     await expect(page.locator(canvasSelector)).toHaveAttribute('data-garden', id, { timeout: waterStartupTimeout })
     // Every garden starts dry and fills from its source.

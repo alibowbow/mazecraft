@@ -1,3 +1,4 @@
+import { BrandMark } from '../../components/BrandMark'
 import {
   ArrowLeftRight,
   CheckCircle2,
@@ -1302,8 +1303,8 @@ export function StudioScreen({
     >
       <header className="studio-header no-print" inert={compactLayout && sheetOpen ? '' : undefined} aria-hidden={compactLayout && sheetOpen ? true : undefined}>
         <button className="brand" onClick={onHome} aria-label="홈으로">
-          <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
-          <span><strong>MazeCraft</strong><small>제작실</small></span>
+          <BrandMark />
+          <span><strong>MazeCraft</strong><small>MAZE STUDIO</small></span>
         </button>
         <div className="studio-project-title">
           <small>현재 프로젝트</small>

@@ -17,9 +17,12 @@ import {
   Sun,
   Trash2,
   Type,
+  Waves,
+  PencilRuler,
 } from 'lucide-react'
-import { memo, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { BottomSheet } from '../../components/BottomSheet'
+import { BrandMark } from '../../components/BrandMark'
 import type { MazeProject } from '../../core/maze/types'
 
 export type ProjectTemplate = 'basic' | 'text' | 'image' | 'secret' | 'time-attack' | 'worksheet'
@@ -80,7 +83,12 @@ const ProjectMiniature = memo(function ProjectMiniature({ project }: { project: 
 interface HomeScreenProps {
   projects: MazeProject[]
   onCreate: (template: ProjectTemplate) => void
+  /** Open a saved maze in the water garden. */
   onOpen: (project: MazeProject) => void
+  /** Open a saved maze in the maze studio. */
+  onEdit: (project: MazeProject) => void
+  /** Enter the water garden with its collection pieces. */
+  onWater: () => void
   onDuplicate: (project: MazeProject) => void
   onDelete: (project: MazeProject) => void
   onExport: (project: MazeProject) => void
@@ -94,6 +102,8 @@ export function HomeScreen({
   projects,
   onCreate,
   onOpen,
+  onEdit,
+  onWater,
   onDuplicate,
   onDelete,
   onExport,
@@ -123,6 +133,11 @@ export function HomeScreen({
       return Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
     })
   }, [projectQuery, projectSort, projects])
+
+  // Arriving from a studio's "내 미로" link lands on the saved projects.
+  useEffect(() => {
+    if (location.hash === '#/library') document.getElementById('projects')?.scrollIntoView({ block: 'start' })
+  }, [])
 
   const runProjectAction = (
     action: (project: MazeProject) => void,
@@ -154,9 +169,14 @@ export function HomeScreen({
       />
       <header className="home-header">
         <a className="brand" href="#" aria-label="메이즈크래프트 홈">
-          <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
-          <span><strong>MazeCraft</strong><small>메이즈크래프트</small></span>
+          <BrandMark />
+          <span><strong>MazeCraft</strong><small>MAZE &amp; WATER ATELIER</small></span>
         </a>
+        <nav className="app-nav" aria-label="주 메뉴">
+          <a href="#templates">미로 제작</a>
+          <button type="button" onClick={onWater}>물의 정원</button>
+          <a href="#projects">내 미로</a>
+        </nav>
         <div className="home-header-actions">
           <span className="local-badge"><i /> 이 기기에 자동 저장</span>
           <button className="icon-button" aria-label={dark ? '라이트 모드' : '다크 모드'} onClick={onThemeToggle}>
@@ -165,32 +185,42 @@ export function HomeScreen({
         </div>
       </header>
 
-      <section className="home-hero" aria-labelledby="home-hero-title">
-        <div className="home-hero-copy">
-          <h1 id="home-hero-title">MazeCraft</h1>
-          <div className="home-hero-actions">
-            <button className="button hero-primary" onClick={() => onCreate('basic')}>새 미로 만들기 <ArrowRight size={17} /></button>
-            {latestProject ? (
-              <button className="button secondary continue-project" onClick={() => onOpen(latestProject)}>
-                <ArrowRight size={17} /> 최근 물 미로 열기
-              </button>
-            ) : (
-              <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}>
-                <FolderOpen size={17} /> 프로젝트 파일 열기
-              </button>
-            )}
-          </div>
+      <section className="hub-hero" aria-labelledby="home-hero-title">
+        <div className="hub-intro">
+          <p className="hub-eyebrow">MAZECRAFT · 미로와 물의 아틀리에</p>
+          <h1 id="home-hero-title">길을 설계하고,{' '}<br /><span>물을 흘려보내다</span></h1>
+          <p>종이 위에 미로를 그리듯 길을 짓고, 그 길 위로 물이 흘러가는 정원을 감상하세요. 두 작업실은 하나의 미로를 공유합니다.</p>
         </div>
-        <figure className="home-hero-visual">
-          <img
-            src="/assets/drafting-desk-v2.webp"
-            width="1536"
-            height="1024"
-            alt="제도용 종이 위에 손으로 그린 미로와 설계 도구가 놓인 작업대"
-            decoding="async"
-            fetchPriority="high"
-          />
-        </figure>
+        <div className="hub-doors">
+          <article className="hub-door door-maze">
+            <figure><img src="/assets/drafting-desk-v2.webp" width="1536" height="1024" alt="제도용 종이 위에 손으로 그린 미로와 설계 도구" decoding="async" fetchPriority="high" /></figure>
+            <div className="hub-door-copy">
+              <span className="hub-door-kicker"><PencilRuler size={15} /> 01 · MAZE STUDIO</span>
+              <h2>미로 제작</h2>
+              <p>도형·글자·이미지로 윤곽을 잡고, 난이도와 길을 다듬어 나만의 미로를 만듭니다.</p>
+              <div className="hub-door-actions">
+                <button className="button hero-primary" onClick={() => onCreate('basic')}>새 미로 만들기 <ArrowRight size={17} /></button>
+                {latestProject ? (
+                  <button className="button secondary continue-project" onClick={() => onEdit(latestProject)}>최근 미로 이어서</button>
+                ) : (
+                  <button className="button secondary file-button" onClick={() => importInputRef.current?.click()}><FolderOpen size={17} /> 파일 열기</button>
+                )}
+              </div>
+            </div>
+          </article>
+          <article className="hub-door door-water">
+            <figure><img src="/assets/water-garden.jpg" width="1164" height="776" alt="도자기 미로 정원을 따라 흐르는 물과 수차" decoding="async" /></figure>
+            <div className="hub-door-copy">
+              <span className="hub-door-kicker"><Waves size={15} /> 02 · WATER GARDEN</span>
+              <h2>물의 정원</h2>
+              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 차례로 움직이는 정원을 감상합니다.</p>
+              <div className="hub-door-actions">
+                <button className="button water-primary" onClick={onWater}>물의 정원 열기 <ArrowRight size={17} /></button>
+                {latestProject && <button className="button secondary" onClick={() => onOpen(latestProject)}>최근 미로에 물 흘리기</button>}
+              </div>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">
@@ -220,7 +250,7 @@ export function HomeScreen({
         </div>
       </section>
 
-      <section className="home-section projects-section" aria-labelledby="recent-title">
+      <section className="home-section projects-section" id="projects" aria-labelledby="recent-title">
         <div className="section-heading">
           <div>
             <p className="section-kicker">02 · 내 작업</p>
@@ -259,12 +289,13 @@ export function HomeScreen({
           <div className="project-grid">
             {visibleProjects.slice(0, 12).map((project) => (
               <article className="project-card" key={project.id}>
-                <button className="project-preview" onClick={() => onOpen(project)}>
+                <button className="project-preview" aria-label={`${project.title} 편집`} onClick={() => onEdit(project)}>
                   <ProjectMiniature project={project} />
-                  <span className="continue-label">물 미로 열기</span>
+                  <span className="continue-label">미로 편집</span>
                 </button>
+                <button className="project-water" onClick={() => onOpen(project)} aria-label={`${project.title} 물로 보기`}><Waves size={14} /> 물로 보기</button>
                 <div className="project-meta">
-                  <button className="project-title" onClick={() => onOpen(project)}>
+                  <button className="project-title" onClick={() => onEdit(project)}>
                     <strong>{project.title}</strong>
                     <small>{relativeTime(project.updatedAt)} · {project.grid.cols}×{project.grid.rows} · 최단 {project.mazeMetrics.pathLength}칸</small>
                   </button>
@@ -290,7 +321,7 @@ export function HomeScreen({
           </div>
         )}
       </section>
-      <footer className="home-footer">이 기기에 자동 저장 · 회원가입 없이 링크로 공유</footer>
+      <footer className="home-footer"><BrandMark size={22} /> MazeCraft · 이 기기에 자동 저장 · 회원가입 없이 링크로 공유</footer>
 
       <BottomSheet
         open={Boolean(actionProject)}
@@ -306,9 +337,13 @@ export function HomeScreen({
         closeLabel="프로젝트 메뉴 닫기"
       >
         <div className="project-action-list">
+          <button type="button" onClick={() => runProjectAction(onEdit)}>
+            <PencilRuler size={19} />
+            <span><strong>미로 편집</strong><small>제작실에서 이 미로를 다듬습니다</small></span>
+          </button>
           <button type="button" onClick={() => runProjectAction(onOpen)}>
-            <ArrowRight size={19} />
-            <span><strong>물 미로 열기</strong><small>물 스튜디오에서 이 미로에 물을 흘립니다</small></span>
+            <Waves size={19} />
+            <span><strong>물 흘리기</strong><small>물의 정원에서 이 미로에 물을 흘립니다</small></span>
           </button>
           <button type="button" onClick={() => runProjectAction(onDuplicate)}>
             <Copy size={19} />
