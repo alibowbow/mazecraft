@@ -1,29 +1,24 @@
 import * as THREE from 'three'
 import { StudioBotanicals } from './studioBotanicals'
-import { studioHdri } from './cascadeMaterials'
-import { STUDIO_BACKGROUND } from './lookdev'
+import { createGardenSky } from '../garden/environment'
+import { STUDIO_SAND } from './lookdev'
 
 /** Static studio assets are generated once; no image/network dependency. */
 export class StudioStage {
   readonly group = new THREE.Group()
-  readonly material: THREE.MeshBasicMaterial
+  readonly material: THREE.MeshStandardMaterial
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
   private readonly botanicals: StudioBotanicals
 
   constructor(centerX: number, centerY: number, width: number, height: number, groundZ = -0.665) {
-    // An untextured display-white sweep: object materials never tint it.
-    this.material = new THREE.MeshBasicMaterial({ color: STUDIO_BACKGROUND, toneMapped: false })
+    // Warm, lit sand that receives real shadows, matching the water gardens.
+    this.material = new THREE.MeshStandardMaterial({ color: STUDIO_SAND, roughness: 0.93, envMapIntensity: 0.6 })
     const geometry = new THREE.PlaneGeometry(width * 8, height * 8)
     const floor = new THREE.Mesh(geometry, this.material)
-    floor.name = 'limestone-studio-ground'; floor.position.set(centerX,centerY,groundZ)
+    floor.name = 'sand-studio-ground'; floor.position.set(centerX, centerY, groundZ)
+    floor.receiveShadow = true
     this.group.add(floor); this.geometries.push(geometry); this.materials.push(this.material)
-    const shadowMaterial = new THREE.ShadowMaterial({color:'#394654',opacity:0.60,depthWrite:false,toneMapped:false,shadowSide:THREE.BackSide})
-    const receiver = new THREE.Mesh(geometry, shadowMaterial)
-    receiver.name = 'studio-ground-shadow-receiver'
-    receiver.position.set(centerX,centerY,groundZ + 0.001)
-    receiver.receiveShadow = true
-    this.group.add(receiver); this.materials.push(shadowMaterial)
     this.botanicals = new StudioBotanicals(centerX, centerY, width, height)
     this.botanicals.group.position.z = groundZ + 0.705
     this.group.add(this.botanicals.group)
@@ -35,7 +30,7 @@ export class StudioStage {
   }
 }
 
-/** Bright courtyard fill and window strips keep glaze luminous from every angle. */
+/** The same daylight courtyard sky the water gardens reflect. */
 export function createAtelierEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
-  return studioHdri(renderer)
+  return createGardenSky(renderer, { sun: [-0.72, 0.30, 1.35], sunColor: new THREE.Color(0xfff4e2), warmth: 0.2 })
 }

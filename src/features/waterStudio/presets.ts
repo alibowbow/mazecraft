@@ -24,11 +24,11 @@ export interface WaterStudioPreset extends WaterStudioSize {
 }
 
 export const WATER_STUDIO_PRESETS: readonly WaterStudioPreset[] = [
-  { id: 'atelier', name: '포슬린 가든', caption: '원형 분수와 나선 수로를 품은 세 단의 도자기 정원', rows: 10, cols: 10 },
-  { id: 'cascade', name: '캐스케이드', caption: '상단 수원에서 세 개의 수조를 따라 내려오는 낙수', rows: 8, cols: 6 },
-  { id: 'split', name: '트윈 플로우', caption: '둘로 갈라져 다시 만나는 흐름', rows: 8, cols: 8 },
-  { id: 'serpentine', name: '리본', caption: '좌우를 가로지르는 긴 물길', rows: 8, cols: 6 },
-  { id: 'garden', name: '워터 가든', caption: '작은 섬을 감싸는 열린 수조', rows: 8, cols: 8 },
+  { id: 'atelier', name: '포슬린 가든', caption: '분수 섬과 나선을 지나 세 번 넘쳐 흐르는 도자기 미로', rows: 10, cols: 10 },
+  { id: 'cascade', name: '캐스케이드', caption: '세 개의 미로 수반을 계단처럼 타고 내려오는 폭포', rows: 8, cols: 6 },
+  { id: 'split', name: '트윈 플로우', caption: '양쪽 수반으로 갈라졌다 한곳에서 다시 만나는 물', rows: 8, cols: 8 },
+  { id: 'serpentine', name: '리본', caption: '물결 벽 사이를 지그재그로 흘러 네 번 떨어지는 수로', rows: 8, cols: 6 },
+  { id: 'garden', name: '워터 가든', caption: '중앙 분수에서 동심원 미로를 따라 퍼져 나가는 원형 정원', rows: 8, cols: 8 },
 ]
 
 function validateSize({ rows, cols }: WaterStudioSize): void {

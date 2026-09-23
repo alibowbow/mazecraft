@@ -3,8 +3,9 @@ import type { FluidLayout, FluidSnapshot, FluidDiagnostics } from './types'
 import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
-import { CascadePresentation3D } from './cascadePresentation3d'
-import type { CascadeSnapshot } from './cascadeTypes'
+import { GardenPresentation3D } from '../garden/presentation'
+import type { GardenSnapshot } from '../garden/simulation'
+import { gardenIdOf, type WaterSculpture } from '../garden'
 import { SurfaceTrackball } from './camera3d'
 import { buildFunnelVisual } from './funnelVisual'
 import { DEFAULT_WATER_APPEARANCE, type WaterAppearance } from './appearance'
@@ -316,7 +317,7 @@ export class FreeSurfaceRenderer {
   private readonly scene = new THREE.Scene()
   private readonly flatWalls = new THREE.Group()
   private readonly funnel: THREE.Group
-  private presentation3d: FreeSurfacePresentation3D | CascadePresentation3D | null = null
+  private presentation3d: FreeSurfacePresentation3D | GardenPresentation3D | null = null
   private basinSnapshot: BasinSnapshot | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private readonly trackball = new SurfaceTrackball()
@@ -368,7 +369,7 @@ export class FreeSurfaceRenderer {
     private readonly mount: HTMLElement,
     private readonly layout: FluidLayout,
     private readonly quality: 'low' | 'high',
-    private readonly sculpture?: 'terraced-fountain' | 'extruded-flow',
+    private readonly sculpture?: WaterSculpture,
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 1.5 : 1))
@@ -410,6 +411,14 @@ export class FreeSurfaceRenderer {
     // halving their colour-buffer traffic. Coverage still uses RGBA8 below.
     this.densityTarget.texture.format = THREE.RGFormat
     this.filterTarget.texture.format = THREE.RGFormat
+    // Half-float accumulation and blur: 8-bit splat sums saturated inside
+    // pools (flat, sticker-like water) and quantised the meniscus into steps.
+    // The final surface stays RGBA8 for its mip chain and readback.
+    const extensions = this.renderer.extensions
+    if (extensions.has('EXT_color_buffer_float') || extensions.has('EXT_color_buffer_half_float')) {
+      this.densityTarget.texture.type = THREE.HalfFloatType
+      this.filterTarget.texture.type = THREE.HalfFloatType
+    }
     // Mip-averaged binary coverage supplies a smooth thickness field without
     // the stepped rings caused by a few distant silhouette samples.
     this.surfaceTarget.texture.generateMipmaps = true
@@ -651,12 +660,13 @@ export class FreeSurfaceRenderer {
     this.canvas.dataset.basinOutletRate = String(snapshot.diagnostics.outletRate)
     this.canvas.dataset.basinInjectedVolume = String(snapshot.diagnostics.injected)
     this.canvas.dataset.basinOutletVolume = String(snapshot.diagnostics.discharged)
-    if ('cascade' in snapshot) {
-      const state = (snapshot as CascadeSnapshot).cascade
-      this.canvas.dataset.sculpture = 'terraced-fountain'
-      this.canvas.dataset.terraceCount = '3'
-      this.canvas.dataset.terraceDepths = JSON.stringify(state.depths)
-      this.canvas.dataset.terraceOutletRates = JSON.stringify(state.discharge)
+    if ('garden' in snapshot) {
+      const state = (snapshot as GardenSnapshot).garden
+      this.canvas.dataset.sculpture = 'garden'
+      this.canvas.dataset.garden = gardenIdOf(this.sculpture) ?? ''
+      this.canvas.dataset.poolCount = String(state.levels.length)
+      this.canvas.dataset.poolLevels = JSON.stringify(Array.from(state.levels, level => Math.round(level * 1e4) / 1e4))
+      this.canvas.dataset.spillRates = JSON.stringify(Array.from(state.discharge, rate => Math.round(rate * 1e6) / 1e6))
     }
     if (this.viewMode === 'surface-3d') this.draw()
   }
@@ -773,8 +783,9 @@ export class FreeSurfaceRenderer {
       ? '벽 안에 담긴 미로의 물. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     if (mode === 'surface-3d' && !this.presentation3d) {
-      this.presentation3d = this.sculpture === 'terraced-fountain'
-        ? new CascadePresentation3D(this.layout, this.renderer)
+      const garden = gardenIdOf(this.sculpture)
+      this.presentation3d = garden
+        ? new GardenPresentation3D(garden, this.renderer)
         : new FreeSurfacePresentation3D(this.layout, this.surfaceTarget.texture, this.renderer, this.sculpture === 'extruded-flow')
       if (this.sculpture === 'extruded-flow' && this.presentation3d instanceof FreeSurfacePresentation3D) {
         const material = new THREE.ShaderMaterial({
@@ -970,8 +981,10 @@ export class FreeSurfaceRenderer {
       this.presentation3d.updateWater(this.sculpture === 'extruded-flow' ? this.waterMaterial.uniforms.uTime.value : this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
       this.renderer.setRenderTarget(null)
       this.renderer.shadowMap.enabled = true
-      this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-      this.renderer.toneMappingExposure = 1.10
+      const presentation = this.presentation3d
+      // Neutral tone mapping keeps glaze and water hues true (ACES shifted them).
+      this.renderer.toneMapping = THREE.NeutralToneMapping
+      this.renderer.toneMappingExposure = presentation instanceof GardenPresentation3D ? presentation.exposure : 1.0
       this.renderer.render(this.presentation3d.scene, this.presentation3d.camera)
       this.renderer.toneMapping = THREE.NoToneMapping
       this.renderer.shadowMap.enabled = false

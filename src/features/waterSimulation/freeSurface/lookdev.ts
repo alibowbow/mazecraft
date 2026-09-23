@@ -5,6 +5,9 @@ export type WaterLight = 'daylight' | 'golden' | 'studio';
 /** The workspace belongs to the studio, not to the selected maze material. */
 export const STUDIO_BACKGROUND = '#ffffff';
 export const STUDIO_IVORY_BACKGROUND = '#fffdf9';
+/** 3D stage: warm courtyard sand and the haze it fades into. */
+export const STUDIO_SAND = '#d9c3a3';
+export const STUDIO_HAZE = '#efe5d6';
 
 export interface WaterLook {
   theme: WaterTheme;
