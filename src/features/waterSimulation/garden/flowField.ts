@@ -12,8 +12,10 @@ export interface GardenField {
   cell: number
   /** Geodesic distance from each pool's inflows (m); FAR outside pools. */
   entry: Float32Array
-  /** Per pool: its cells' entry distances, ascending — the wetting order. */
+  /** Per pool: its cells' wetting keys, ascending — the wetting order. */
   wettingOrder: Float32Array[]
+  /** Per pool: wetting key at which the front reaches its (nearest) outlet. */
+  outletKey: Float32Array
 }
 
 export const FAR = 1e4
@@ -216,13 +218,20 @@ export function buildGardenField(layout: GardenLayout, cell = 0.05, margin = 2.2
       : footprint[i] ? 0 : byte(0.5 + Math.min(2, outsideDistance[i] * cell) / 2 * 0.5)
     data[i * 4 + 3] = nearest[i] >= 0 ? nearest[i] + 1 : 0
   }
+  // Wetting key: water runs down the route to the outlet first; side bays
+  // and dead ends (cells off the shortest entry→exit path) wet only later,
+  // in proportion to how far they branch off it.
   const entry = new Float32Array(count).fill(FAR)
   const orders: number[][] = layout.pools.map(() => [])
+  const outletKey = new Float32Array(layout.pools.length)
   for (let i = 0; i < count; i++) if (pool[i] >= 0) {
     const d = Number.isFinite(fromEntry[i]) ? fromEntry[i] : 0
-    entry[i] = d
-    orders[pool[i]].push(d)
+    const detour = Number.isFinite(toExit[i]) && Number.isFinite(shortest[pool[i]]) ? Math.max(0, d + toExit[i] - shortest[pool[i]]) : 0
+    const key = d + detour * 2.5
+    entry[i] = key
+    orders[pool[i]].push(key)
   }
+  layout.pools.forEach((_, p) => { outletKey[p] = Number.isFinite(shortest[p]) ? shortest[p] : 0 })
   const wettingOrder = orders.map(list => Float32Array.from(list).sort())
   // Extend distances a few cells under the walls so bilinear filtering of
   // the wetting front never mixes a channel edge with the far sentinel.
@@ -235,7 +244,7 @@ export function buildGardenField(layout: GardenLayout, cell = 0.05, margin = 2.2
       if (best < FAR) entry[i] = best + cell
     }
   }
-  return { data, width, height, bounds: [x0, y0, width * cell, height * cell], cell, entry, wettingOrder }
+  return { data, width, height, bounds: [x0, y0, width * cell, height * cell], cell, entry, wettingOrder, outletKey }
 }
 
 const cache = new WeakMap<GardenLayout, GardenField>()

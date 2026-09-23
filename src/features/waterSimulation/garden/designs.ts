@@ -13,7 +13,12 @@ export interface SillSpec {
   points: Vec2[]
   /** Crest height above the basin's reference floor. */
   crest: number
+  /** A paddle wheel turns over this step. */
+  wheel?: boolean
 }
+
+/** Machinery a spout pours into: a tipping tube or a paddle wheel. */
+export type SpoutDevice = 'tipper' | 'wheel'
 
 export interface SpoutSpec {
   /** Point on the rim centreline. */
@@ -26,6 +31,7 @@ export interface SpoutSpec {
   crest: number
   /** Cantilever beyond the rim's outer face. */
   length: number
+  device?: SpoutDevice
 }
 
 export interface VesselSpec {
@@ -386,7 +392,7 @@ function drainBasin(spout: { at: Vec2; direction: Vec2 }, rimWidth: number, leng
   const cx = landing[0] + dx * reach, cy = landing[1] + dy * reach
   const along = Math.abs(dx) > Math.abs(dy)
   return {
-    name: 'receiving-basin', floor, wallHeight: 0.4, wallWidth: WALL, rimWidth: 0.4,
+    name: 'receiving-basin', floor, wallHeight: 0.46, wallWidth: WALL, rimWidth: 0.4,
     outline: roundedRect(cx, cy, along ? depth : width, along ? width : depth, Math.min(width, depth) * 0.45),
     walls: [], islands: [], sills: [], spouts: [], floors: [], planters: [],
     drain: { crest: 0.12, width: 2.0, at: [cx + dx * 0.2, cy + dy * 0.2] },
@@ -404,11 +410,20 @@ function inRoom(rooms: LatticeOptions['rooms'] = [], solids: Cell[] = []) {
 
 const WALL = 0.34
 const RIM = 0.5
+/** Horizontal travel of the source pour, lip to landing (m). */
+export const SOURCE_THROW = 0.3
 
 function source(landing: Vec2, towerOffset: Vec2, lipZ: number, width = 0.44): SourceSpec {
   const length = Math.hypot(towerOffset[0], towerOffset[1])
-  const lip: Vec2 = [landing[0] - towerOffset[0] / length * 0.14, landing[1] - towerOffset[1] / length * 0.14]
+  // The pour leaves the lip with some forward speed: set the lip back
+  // towards the tower so the water lands in the middle of the entry cell.
+  const lip: Vec2 = [landing[0] + towerOffset[0] / length * SOURCE_THROW, landing[1] + towerOffset[1] / length * SOURCE_THROW]
   return { tower: [landing[0] + towerOffset[0], landing[1] + towerOffset[1]], lip, lipZ, width }
+}
+
+function towards(from: Vec2, to: Vec2, distance: number): Vec2 {
+  const d = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1
+  return [from[0] + (to[0] - from[0]) / d * distance, from[1] + (to[1] - from[1]) / d * distance]
 }
 
 /** Origin that centres `cell` of a lattice on a given landing point. */
@@ -423,7 +438,7 @@ function atelier(): GardenDesign {
   const solids = [{ i: 6, j: 3 }]
   const entry = { i: 0, j: 5 }, exit = { i: 5, j: 0, side: 'south' as const }
   const maze = lattice({ cols, rows, pitch, origin, seed: 'atelier-garden-v2', rooms, solids, entry, exits: [exit], straightness: 0.55 })
-  const floor = 0.62, height = 0.95
+  const floor = 0.95, height = 0.95
   // Steps may not touch a merged room (its inner vertices carry no wall).
   const insideRoom = (cell: Cell) => rooms.some(room => cell.i >= room.i && cell.i < room.i + room.w && cell.j >= room.j && cell.j < room.j + room.h)
     || solids.some(solid => solid.i === cell.i && solid.j === cell.j)
@@ -440,8 +455,8 @@ function atelier(): GardenDesign {
     outline: latticeRim(maze, 0.9),
     walls: [...maze.walls, { points: spiral, width: 0.24 }],
     islands: [...maze.islands, circle(fountain[0], fountain[1], 0.5)],
-    sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.56 - 0.08 * k })),
-    spouts: [{ ...spout, width: 0.62, crest: 0.56 - 0.08 * sills.length, length: 0.5 }],
+    sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.56 - 0.08 * k, wheel: k % 2 === 1 })),
+    spouts: [{ ...spout, width: 0.62, crest: 0.56 - 0.08 * sills.length, length: 0.5, device: 'tipper' }],
     floors: sills.map((sill, k) => ({ seed: maze.center(sill.downstream), offset: -0.1 * (k + 1) })),
     planters: [maze.center({ i: 6, j: 3 })],
   }
@@ -449,7 +464,7 @@ function atelier(): GardenDesign {
   return {
     id: 'atelier',
     vessels: [main, drainBasin(spout, RIM, 0.5, 2.3, 1.35)],
-    source: source(maze.center(entry), [0, 1.95], floor + height + 0.55),
+    source: source(maze.center(entry), [0, 1.95], floor + height + 0.3),
     plants: [
       { kind: 'olive', at: [x0 - 1.2, y1 - 0.4], scale: 1.89 },
       { kind: 'rosemary', at: [x1 + 1.0, y0 + 1.4], scale: 1.59 },
@@ -461,7 +476,7 @@ function atelier(): GardenDesign {
 
 function cascade(): GardenDesign {
   const pitch = 1.1, cols = 4, rows = 3, length = 0.45
-  const floors = [2.4, 1.5, 0.6]
+  const floors = [2.85, 1.72, 0.62]
   const exits = [3, 0, 3]
   const vessels: VesselSpec[] = []
   let landing: Vec2 = [-0.8, 3.4]
@@ -475,10 +490,11 @@ function cascade(): GardenDesign {
     spout = maze.spout(exit)
     const sills = routeSills(maze, maze.routes[0], [0.34, 0.67], () => false)
     vessels.push({
-      name: `cascade-basin-${level}`, floor: floors[level], wallHeight: 0.8, wallWidth: 0.32, rimWidth: RIM,
+      name: `cascade-basin-${level}`, floor: floors[level], wallHeight: 0.88, wallWidth: 0.32, rimWidth: RIM,
       outline: latticeRim(maze, 0.75), walls: maze.walls, islands: [],
-      sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.34 - 0.08 * k })),
-      spouts: [{ ...spout, width: 0.56, crest: 0.34 - 0.08 * sills.length, length }],
+      sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.2 - 0.07 * k, wheel: k === 0 })),
+      // Two tipping tubes relay the water down; the last fall turns a wheel.
+      spouts: [{ ...spout, width: 0.78, crest: 0.2 - 0.07 * sills.length, length, device: level < 2 ? 'tipper' : 'wheel' }],
       floors: sills.map(sill => ({ seed: maze.center(sill.downstream), offset: -0.1 })),
       planters: [],
     })
@@ -487,7 +503,7 @@ function cascade(): GardenDesign {
   }
   vessels.push(drainBasin(spout, RIM, length, 2.0, 1.2))
   return {
-    id: 'cascade', vessels, source: source(firstLanding, [0, 1.85], floors[0] + 0.74 + 0.55, 0.42),
+    id: 'cascade', vessels, source: source(firstLanding, [0, 1.85], floors[0] + 0.88 + 0.3, 0.42),
     plants: [
       { kind: 'olive', at: [-4.2, 2.6], scale: 1.81 },
       { kind: 'rosemary', at: [3.9, -1.4], scale: 1.52 },
@@ -501,15 +517,15 @@ function split(): GardenDesign {
   const pitch = 1.0, length = 0.47
   const top = lattice({ cols: 5, rows: 3, pitch, origin: [-2.5, 1.5], seed: 'twin-top', entry: { i: 2, j: 2 },
     exits: [{ i: 0, j: 0, side: 'west' }, { i: 4, j: 0, side: 'east' }], rooms: [{ i: 1, j: 1, w: 3, h: 1 }], straightness: 0.3 })
-  const topFloor = 2.05
+  const topFloor = 2.3
   const topSpouts = [top.spout({ i: 0, j: 0, side: 'west' }), top.spout({ i: 4, j: 0, side: 'east' })]
   const vessels: VesselSpec[] = [{
     name: 'twin-upper', floor: topFloor, wallHeight: 0.72, wallWidth: 0.32, rimWidth: RIM,
     outline: latticeRim(top, 0.8), walls: top.walls, islands: [], sills: [],
-    spouts: topSpouts.map(spout => ({ ...spout, width: 0.5, crest: 0.18, length })),
+    spouts: topSpouts.map(spout => ({ ...spout, width: 0.5, crest: 0.18, length, device: 'wheel' as const })),
     floors: [], planters: [],
   }]
-  const sideFloor = 1.15
+  const sideFloor = 1.4
   const sideSpouts: { at: Vec2; direction: Vec2 }[] = []
   topSpouts.forEach((topSpout, k) => {
     const west = k === 0
@@ -524,8 +540,8 @@ function split(): GardenDesign {
     vessels.push({
       name: `twin-${west ? 'west' : 'east'}`, floor: sideFloor, wallHeight: 0.78, wallWidth: 0.32, rimWidth: RIM,
       outline: latticeRim(maze, 0.7), walls: maze.walls, islands: [],
-      sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.34 - 0.08 * k })),
-      spouts: [{ ...spout, width: 0.5, crest: 0.34 - 0.08 * sills.length, length }],
+      sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.34 - 0.08 * k, wheel: k === 1 })),
+      spouts: [{ ...spout, width: 0.5, crest: 0.34 - 0.08 * sills.length, length, device: 'tipper' }],
       floors: sills.map(sill => ({ seed: maze.center(sill.downstream), offset: -0.1 })), planters: [],
     })
   })
@@ -537,14 +553,14 @@ function split(): GardenDesign {
     entry: lowEntry, exits: [lowExit, { i: lowCols - 1, j: 1, side: 'east' }], straightness: 0.7 })
   const lowSpout = low.spout(lowExit)
   vessels.push({
-    name: 'twin-confluence', floor: 0.42, wallHeight: 0.72, wallWidth: 0.32, rimWidth: RIM,
+    name: 'twin-confluence', floor: 0.5, wallHeight: 0.72, wallWidth: 0.32, rimWidth: RIM,
     outline: latticeRim(low, 0.7), walls: low.walls, islands: [], sills: [],
-    spouts: [{ ...lowSpout, width: 0.8, crest: 0.18, length: 0.42 }], floors: [], planters: [],
+    spouts: [{ ...lowSpout, width: 0.8, crest: 0.18, length: 0.42, device: 'wheel' }], floors: [], planters: [],
   })
   vessels.push(drainBasin(lowSpout, RIM, 0.42, 2.1, 1.2, 0.04))
   return {
     id: 'split', vessels,
-    source: source(top.center({ i: 2, j: 2 }), [0, 1.8], topFloor + 0.72 + 0.55, 0.42),
+    source: source(top.center({ i: 2, j: 2 }), [0, 1.8], topFloor + 0.72 + 0.3, 0.42),
     plants: [
       { kind: 'olive', at: [-5.2, 3.6], scale: 1.59 },
       { kind: 'olive', at: [5.3, 3.3], scale: 1.45 },
@@ -559,7 +575,7 @@ function serpentine(): GardenDesign {
   // weir, so the water steps down along one long channel, run by run.
   const width = 8.6, runs = 5, runDepth = 1.22, step = 0.14
   const x0 = -width / 2, y0 = -runs * runDepth / 2 + 0.35
-  const floor = 1.0
+  const floor = 1.25
   const wave = (x: number, k: number) => Math.sin((x - x0) / width * TAU * 1.5 + k * 0.9) * 0.17
   const walls: Polyline[] = []
   const sills: SillSpec[] = []
@@ -580,7 +596,7 @@ function serpentine(): GardenDesign {
     const tipX = openEast ? end : start
     const rimX = openEast ? x0 + width : x0
     // Weir from the wall tip to the rim: run k spills into run k - 1.
-    sills.push({ points: [[tipX, y + wave(tipX, k)], [rimX, y + wave(tipX, k)]], crest: runFloor(k) + 0.3 })
+    sills.push({ points: [[tipX, y + wave(tipX, k)], [rimX, y + wave(tipX, k)]], crest: runFloor(k) + 0.3, wheel: true })
     floors.push({ seed: [0, y - runDepth / 2], offset: runFloor(k - 1) })
   }
   const exitEast = runs % 2 === 0
@@ -588,14 +604,14 @@ function serpentine(): GardenDesign {
   const main: VesselSpec = {
     name: 'ribbon-rill', floor, wallHeight: 0.76, wallWidth: 0.32, rimWidth: RIM,
     outline: roundedRect(0, y0 + runs * runDepth / 2, width, runs * runDepth, 0.85),
-    walls, islands: [], sills, spouts: [{ ...spout, width: 0.6, crest: runFloor(0) + 0.3, length: 0.5 }],
+    walls, islands: [], sills, spouts: [{ ...spout, width: 0.6, crest: runFloor(0) + 0.3, length: 0.5, device: 'tipper' }],
     floors, planters: [],
   }
   const landing: Vec2 = [(runs - 1) % 2 === 0 ? x0 + 0.62 : x0 + width - 0.62, y0 + runs * runDepth - runDepth / 2]
   return {
     id: 'serpentine',
     vessels: [main, drainBasin(spout, RIM, 0.5, 2.2, 1.3)],
-    source: source(landing, [0, 1.85], floor + 0.76 + 0.55),
+    source: source(landing, [0, 1.85], floor + 0.76 + 0.3),
     plants: [
       { kind: 'olive', at: [-5.6, 2.6], scale: 1.74 },
       { kind: 'rosemary', at: [5.5, 1.2], scale: 1.59 },
@@ -609,7 +625,7 @@ function waterGarden(): GardenDesign {
   // Concentric labyrinth. A central column pours into the inner ring; each
   // ring wall has one weir gap, and a radial baffle beside it sends the
   // water the long way round before it can step outward.
-  const cx = 0, cy = 0.5, floor = 0.62
+  const cx = 0, cy = 0.5, floor = 0.95
   const radii = [1.38, 2.3, 3.22]
   const rim = 4.25
   const gapAngles = [-Math.PI / 2 + 0.1, Math.PI / 2 + 0.25, -Math.PI / 2 - 0.35]
@@ -620,7 +636,7 @@ function waterGarden(): GardenDesign {
   radii.forEach((r, k) => {
     const g = gapAngles[k], h = gapHalf[k]
     walls.push({ points: arc(cx, cy, r, g + h, g + TAU - h) })
-    sills.push({ points: arc(cx, cy, r, g - h - 0.05, g + h + 0.05), crest: 0.4 - 0.1 * k })
+    sills.push({ points: arc(cx, cy, r, g - h - 0.05, g + h + 0.05), crest: 0.4 - 0.1 * k, wheel: true })
     const outer = k + 1 < radii.length ? radii[k + 1] : rim
     const b = g - h - 0.32
     walls.push({ points: [[cx + Math.cos(b) * r, cy + Math.sin(b) * r], [cx + Math.cos(b) * outer, cy + Math.sin(b) * outer]] })
@@ -636,13 +652,13 @@ function waterGarden(): GardenDesign {
     name: 'ring-garden', floor, wallHeight: 0.8, wallWidth: 0.32, rimWidth: 0.55,
     outline: circle(cx, cy, rim, 220), walls,
     islands: [circle(cx, cy, 0.55, 64)],
-    sills, spouts: [{ ...spout, width: 0.6, crest: 0.04, length: 0.5 }], floors, planters: [],
+    sills, spouts: [{ ...spout, width: 0.6, crest: 0.04, length: 0.5, device: 'tipper' }], floors, planters: [],
   }
   const landing: Vec2 = [cx + 0.98, cy + 0.42]
   return {
     id: 'garden',
     vessels: [main, drainBasin(spout, 0.55, 0.5, 2.0, 1.25)],
-    source: { tower: [cx, cy], lip: [landing[0] - 0.12, landing[1] - 0.05], lipZ: floor + 0.8 + 0.7, width: 0.34, round: true },
+    source: { tower: [cx, cy], lip: towards(landing, [cx, cy], SOURCE_THROW), lipZ: floor + 0.8 + 0.35, width: 0.34, round: true },
     plants: [
       { kind: 'olive', at: [-4.6, 4.0], scale: 1.81 },
       { kind: 'rosemary', at: [-4.9, -2.6], scale: 1.59 },

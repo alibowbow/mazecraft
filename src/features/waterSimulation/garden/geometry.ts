@@ -74,6 +74,22 @@ export interface GardenSolids {
   water: THREE.BufferGeometry
   trim: THREE.BufferGeometry
   planterSoil: THREE.BufferGeometry | null
+  /** Brass fittings: the source pipe and drain rings. */
+  brass: THREE.BufferGeometry
+  /** Dark openings: the pipe bore and drain holes. */
+  openings: THREE.BufferGeometry
+}
+
+/** Where the source pipe discharges, and at what height. */
+export function sourceMouth(layout: GardenLayout): { x: number; y: number; z: number } {
+  const { source } = layout
+  return { x: source.tower[0] + source.direction[0] * 0.66, y: source.tower[1] + source.direction[1] * 0.66, z: source.lipZ + 0.17 }
+}
+
+function clean(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const result = geometry.index ? geometry.toNonIndexed() : geometry
+  for (const name of Object.keys(result.attributes)) if (name !== 'position' && name !== 'normal') result.deleteAttribute(name)
+  return result
 }
 
 /** Critical depth over a broad crest carrying `q` m³/s across `width` m. */
@@ -164,6 +180,40 @@ export function buildGardenSolids(layout: GardenLayout): GardenSolids {
     const cheek = beam(a, b, 0.1, source.lipZ - 0.16, source.lipZ + 0.14, 0.045)
     if (cheek) trim.push(cheek)
   }
+  // Source pipe: a brass spout leaving the pier cap over the channel.
+  const brass: THREE.BufferGeometry[] = [], openings: THREE.BufferGeometry[] = []
+  const mouth = sourceMouth(layout)
+  const pipeRadius = Math.min(0.09, source.width * 0.22)
+  const heading = Math.atan2(source.direction[1], source.direction[0])
+  const place = (geometry: THREE.BufferGeometry, x: number, y: number, z: number) => {
+    geometry.rotateZ(heading - Math.PI / 2)
+    geometry.translate(x, y, z)
+    return geometry
+  }
+  const pipe = new THREE.CylinderGeometry(pipeRadius, pipeRadius, 0.58, 24, 1, true)
+  brass.push(clean(place(pipe, source.tower[0] + source.direction[0] * 0.37, source.tower[1] + source.direction[1] * 0.37, mouth.z)))
+  const lipRing = new THREE.TorusGeometry(pipeRadius, 0.018, 10, 28)
+  lipRing.rotateX(Math.PI / 2)
+  brass.push(clean(place(lipRing, mouth.x, mouth.y, mouth.z)))
+  const bore = new THREE.CircleGeometry(pipeRadius * 0.95, 24)
+  bore.rotateX(Math.PI / 2)
+  openings.push(clean(place(bore, source.tower[0] + source.direction[0] * 0.6, source.tower[1] + source.direction[1] * 0.6, mouth.z)))
+  // Drains: a brass ring and a dark throat on the trough floor.
+  for (const edge of layout.edges) if (edge.kind === 'drain') {
+    const [x, y] = edge.points[0]
+    const floor = layout.pools[edge.a].floor
+    const ring = new THREE.TorusGeometry(0.15, 0.026, 12, 40)
+    ring.translate(x, y, floor + 0.012)
+    brass.push(clean(ring))
+    const hole = new THREE.CircleGeometry(0.14, 40)
+    hole.translate(x, y, floor + 0.004)
+    openings.push(clean(hole))
+    for (let bar = -2; bar <= 2; bar++) {
+      const grate = new THREE.BoxGeometry(0.02, 0.26 * Math.cos(Math.asin(bar * 0.05 / 0.14)), 0.012)
+      grate.translate(x + bar * 0.05, y, floor + 0.01)
+      brass.push(clean(grate))
+    }
+  }
   const merge = (list: THREE.BufferGeometry[]) => {
     const merged = mergeGeometries(list, false)!
     list.forEach(geometry => geometry.dispose())
@@ -173,5 +223,6 @@ export function buildGardenSolids(layout: GardenLayout): GardenSolids {
   return {
     walls: merge(walls), beds: merge(beds), water: merge(water), trim: merge(trim),
     planterSoil: soil.length ? merge(soil) : null,
+    brass: merge(brass), openings: merge(openings),
   }
 }

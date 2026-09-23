@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import type { GardenLayout } from './layout'
 import type { GardenState } from './simulation'
-import { criticalDepth } from './geometry'
+import { criticalDepth, sourceMouth } from './geometry'
+import { TIPPER_ARM, TIPPER_RADIUS, tipperPoint } from './mechanics'
 import { createCurtainMaterial, createDropletMaterial, MAX_IMPACTS, type CurtainUniforms, type GardenUniforms } from './materials'
 
 const G = 9.81
@@ -39,8 +40,8 @@ export class GardenFalls {
 
   constructor(private readonly layout: GardenLayout, private readonly uniforms: GardenUniforms) {
     this.group.name = 'garden-falls'
-    // Two curtains for the source, two per spout, one per weir.
-    const count = 2 + layout.edges.reduce((sum, edge) => sum + (edge.kind === 'spout' ? 2 : edge.kind === 'sill' ? 1 : 0), 0)
+    // Two curtains for the source, two per spout, one per weir, one per tipper.
+    const count = 2 + layout.tippers.length + layout.edges.reduce((sum, edge) => sum + (edge.kind === 'spout' ? 2 : edge.kind === 'sill' ? 1 : 0), 0)
     for (let i = 0; i < count; i++) {
       const { material, uniforms: own } = createCurtainMaterial(uniforms)
       const mesh = new THREE.Mesh(this.geometry, material)
@@ -86,14 +87,14 @@ export class GardenFalls {
 
   /** A free fall from a lip at `z` with horizontal speed `v` onto `level`. */
   private fall(index: number, x: number, y: number, z: number, direction: readonly [number, number], level: number,
-    q: number, width: number, aeration: number, dt: number): void {
+    q: number, width: number, aeration: number, dt: number, flare = 0.18): void {
     const drop = Math.max(0, z - level)
     const depth = Math.max(0.01, criticalDepth(q, width))
     const velocity = THREE.MathUtils.clamp(q / (width * depth), 0.25, 2.2)
     const time = Math.sqrt(2 * drop / G)
     const reach = velocity * time
     const strength = THREE.MathUtils.smoothstep(q, 0, 0.012)
-    this.sheet(index, new THREE.Vector3(x, y, z), direction, reach, drop, width * 0.96, 0.18, strength, aeration, velocity, dt)
+    this.sheet(index, new THREE.Vector3(x, y, z), direction, reach, drop, width * 0.96, flare, strength, aeration, velocity, dt)
     if (strength > 0.002 && drop > 0.03) {
       this.targets.push({ x: x + direction[0] * reach, y: y + direction[1] * reach, z: level, radius: width * 0.55, strength: Math.min(1, strength * (0.35 + drop)) })
     }
@@ -116,9 +117,11 @@ export class GardenFalls {
     const { source } = layout
     const q0 = inflow ? state.sourceRate : 0
     const h0 = criticalDepth(q0, source.width)
-    const channelStart = new THREE.Vector3(source.tower[0] + source.direction[0] * 0.2, source.tower[1] + source.direction[1] * 0.2, source.lipZ + h0)
+    // The water leaves the brass pipe mouth, drops into the channel and runs to the lip.
+    const mouth = sourceMouth(layout)
+    const channelStart = new THREE.Vector3(mouth.x, mouth.y, mouth.z - 0.02)
     const channelLength = Math.hypot(source.lip[0] - channelStart.x, source.lip[1] - channelStart.y)
-    this.sheet(index++, channelStart, source.direction, channelLength, 0, source.width * 0.98, 0, THREE.MathUtils.smoothstep(q0, 0, 0.012), 0.12, 0.6, dt)
+    this.sheet(index++, channelStart, source.direction, channelLength, channelStart.z - (source.lipZ + h0), Math.min(source.width * 0.98, 0.16 + h0), 0.8, THREE.MathUtils.smoothstep(q0, 0, 0.012), 0.12, 0.6, dt)
     this.fall(index++, source.lip[0], source.lip[1], source.lipZ + h0 * 0.85, source.direction, level(source.pool), q0, source.width, 0.45, dt)
     for (const edge of layout.edges) {
       const q = state.discharge[edge.index]
@@ -131,7 +134,16 @@ export class GardenFalls {
         const strength = THREE.MathUtils.smoothstep(flow, 0, 0.012)
         this.sheet(index++, new THREE.Vector3(at[0], at[1], upstream - 0.004), edge.normal, Math.hypot(end[0] - at[0], end[1] - at[1]),
           Math.max(0, upstream - (edge.crest + h)), edge.width * 0.98, 0, strength, 0.1, 0.8, dt)
-        this.fall(index++, end[0], end[1], edge.crest + h * 0.9, edge.normal, level(edge.b), flow, edge.width, 0.5, dt)
+        // A jet over a tipper lands in its raised mouth; once the tube has
+        // swung down it falls straight through to the pool.
+        let landing = level(edge.b)
+        if (edge.tipper !== undefined) {
+          const tipper = layout.tippers[edge.tipper], angle = state.tipperAngles[edge.tipper]
+          if (angle > 0) landing = Math.max(landing, tipperPoint(tipper, -TIPPER_ARM * 0.8, angle)[2] + TIPPER_RADIUS * 0.4)
+        }
+        // The jet over a tipper gathers into the tube's mouth.
+        const gather = edge.tipper !== undefined ? TIPPER_RADIUS * 2.2 / edge.width - 1 : 0.18
+        this.fall(index++, end[0], end[1], edge.crest + h * 0.9, edge.normal, landing, flow, edge.width, edge.tipper !== undefined ? 0.2 : 0.5, dt, gather)
       } else if (edge.kind === 'sill') {
         const forward = q >= 0
         const up = forward ? edge.a : edge.b, down = forward ? edge.b : edge.a
@@ -155,6 +167,23 @@ export class GardenFalls {
           this.targets.push({ x: start.x + direction[0] * reach, y: start.y + direction[1] * reach, z: lowerLevel, radius: edge.width * 0.5, strength: Math.min(1, strength * (0.3 + drop * 1.5)) })
         }
       }
+    }
+    // Each tipper's surge pours from its mouth, back under the spout.
+    for (const tipper of layout.tippers) {
+      const i = tipper.index, pour = state.tipperPours[i], angle = state.tipperAngles[i]
+      const [x, y, z] = tipperPoint(tipper, -TIPPER_ARM, angle, -TIPPER_RADIUS * 0.6)
+      const strength = THREE.MathUtils.smoothstep(pour, 0, 0.05)
+      const back: [number, number] = [-tipper.direction[0], -tipper.direction[1]]
+      const lower = level(tipper.pool)
+      const drop = Math.max(0, z - lower)
+      const reach = 0.04 + Math.min(0.9, pour / (TIPPER_RADIUS * 2 * 0.06)) * 0.02
+      this.sheet(index++, new THREE.Vector3(x, y, z), back, reach, drop, TIPPER_RADIUS * 1.7, 0.9, strength, 0.55, 1.2, dt)
+      if (strength > 0.01) this.targets.push({ x: x + back[0] * reach, y: y + back[1] * reach, z: lower, radius: 0.32, strength: Math.min(1, strength * (0.5 + drop)) })
+    }
+    const drain = layout.edges.find(edge => edge.kind === 'drain')
+    if (drain) {
+      const rate = Math.max(0, state.discharge[drain.index])
+      this.uniforms.uDrain.value.set(drain.points[0][0], drain.points[0][1], level(drain.a), THREE.MathUtils.smoothstep(rate, 0, 0.05))
     }
     const impacts = this.uniforms.uImpacts.value, heights = this.uniforms.uImpactZ.value
     const count = Math.min(MAX_IMPACTS, this.targets.length)

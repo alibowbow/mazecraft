@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { GARDEN_IDS, createGardenDesign } from './designs'
 import { compileGarden, type GardenLayout } from './layout'
 import { GardenSimulation } from './simulation'
+import { tipperLowest } from './mechanics'
 
 const grid = { rows: 8, cols: 8, activeCellCount: 64 }
 
@@ -51,6 +52,11 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
   it.each([0.1, 0.65, 1, 2.5])('conserves water and stays inside its walls at %s× supply', inflow => {
     const simulation = new GardenSimulation(layout, grid)
     for (let second = 0; second < (inflow < 0.5 ? 1500 : 600); second++) simulation.advance(1, inflow)
+    // Tippers deliver in surges: compare what left with what came in over
+    // two minutes, allowing for the loads the tubes may be holding.
+    const before = simulation.snapshot().diagnostics
+    const [injected0, drained0] = [before.injected, before.discharged]
+    for (let second = 0; second < 120; second++) simulation.advance(1, inflow)
     const state = simulation.snapshot()
     const available = state.initialStoredVolume + state.diagnostics.injected
     expect(state.diagnostics.massError / available).toBeLessThan(1e-9)
@@ -61,8 +67,31 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
       expect(state.garden.levels[i]).toBeGreaterThan(pool.floor + 0.02)
     })
     // Near steady state the drain returns what the source supplies.
-    expect(state.diagnostics.outletRate).toBeGreaterThan(state.sourceRate * 0.9)
+    const supplied = state.diagnostics.injected - injected0, drained = state.diagnostics.discharged - drained0
+    const held = layout.tippers.reduce((sum, tipper) => sum + tipper.capacity, 0)
+    expect(Math.abs(drained - supplied)).toBeLessThan(supplied * 0.05 + held)
     for (const edge of layout.edges) expect(state.garden.discharge[edge.index], `${edge.kind} ${edge.index}`).toBeGreaterThan(0)
+  })
+
+  it('works its machinery: tippers cycle in surges and clear the water at 1× supply', () => {
+    expect(layout.tippers.length + layout.wheels.length, 'every garden has moving parts').toBeGreaterThanOrEqual(3)
+    const simulation = new GardenSimulation(layout, grid)
+    for (let second = 0; second < 300; second++) simulation.advance(1, 1)
+    const tips = new Array(layout.tippers.length).fill(0), pouring = new Array(layout.tippers.length).fill(false)
+    const highest = new Float64Array(layout.pools.length).fill(-Infinity)
+    for (let step = 0; step < 1200; step++) {
+      simulation.advance(0.05, 1)
+      const { garden } = simulation.snapshot()
+      garden.tipperPours.forEach((pour, i) => { if (pour > 0 && !pouring[i]) tips[i]++; pouring[i] = pour > 0 })
+      garden.levels.forEach((level, i) => { highest[i] = Math.max(highest[i], level) })
+    }
+    for (const tipper of layout.tippers) {
+      // One surge every few seconds at 1× supply, never a steady trickle.
+      expect(tips[tipper.index], `tipper ${tipper.index}`).toBeGreaterThanOrEqual(8)
+      expect(tips[tipper.index]).toBeLessThanOrEqual(40)
+      expect(tipperLowest(tipper), 'the tipped mouth stays above the surge').toBeGreaterThan(highest[tipper.pool] + 0.1)
+    }
+    for (const wheel of layout.wheels) expect(wheel.z - wheel.radius, `wheel ${wheel.index} clears its bed`).toBeGreaterThan(wheel.base)
   })
 
   it('starts dry and wets its channels progressively from the source', () => {
@@ -93,7 +122,9 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     expect(draining.diagnostics.injected).toBe(flowing.diagnostics.injected)
     expect(draining.diagnostics.stored).toBeLessThan(flowing.diagnostics.stored)
     expect(draining.diagnostics.massError).toBeLessThan(1e-9)
-    layout.pools.forEach((_, i) => expect(draining.garden.levels[i]).toBeLessThanOrEqual(flowingLevels[i] + 1e-9))
+    // Pools below a tipper still take its occasional surge as the upper pools drain.
+    const surged = new Set(layout.tippers.map(tipper => tipper.pool))
+    layout.pools.forEach((_, i) => { if (!surged.has(i)) expect(draining.garden.levels[i]).toBeLessThanOrEqual(flowingLevels[i] + 1e-9) })
     simulation.reset()
     const reset = simulation.snapshot()
     expect(reset.diagnostics.time).toBe(0)

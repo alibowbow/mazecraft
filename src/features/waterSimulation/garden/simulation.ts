@@ -2,6 +2,7 @@ import type { BasinSnapshot } from '../freeSurface/basinSimulation'
 import type { FluidLayout } from '../freeSurface/types'
 import type { GardenLayout } from './layout'
 import { gardenField, FAR, type GardenField } from './flowField'
+import { FILLING, POURING, RETURNING, TIPPER_POUR_TIME, TIPPER_RETURN_TIME, TIPPER_TIP_TIME, TIPPER_TIPPED, TIPPING, tipperAngle, type TipperPhase } from './mechanics'
 
 const STEP = 1 / 120
 /** Rectangular sharp-crested weir, Q = C·w·h^1.5 (SI, Cd ≈ 0.62). */
@@ -34,6 +35,10 @@ export interface GardenState {
   /** Wetting front: entry distance (m) reached so far; FAR once the bed is wet, -1 when dry. */
   readonly fronts: Float32Array
   readonly sourceRate: number
+  /** Per tipper: tilt (rad), load as a share of capacity, and surge rate (m³/s). */
+  readonly tipperAngles: Float32Array
+  readonly tipperLoads: Float32Array
+  readonly tipperPours: Float32Array
 }
 
 export interface GardenSnapshot extends BasinSnapshot {
@@ -71,6 +76,14 @@ export class GardenSimulation {
   private readonly depth: Float32Array
   private readonly velocity: Float32Array
   private readonly connections: Uint8Array
+  /** Tipping tubes: stored load, phase, time in phase and current surge. */
+  private readonly tipVolume: Float64Array
+  private readonly tipPhase: Uint8Array
+  private readonly tipTime: Float64Array
+  private readonly tipPour: Float64Array
+  private readonly tipperAngles: Float32Array
+  private readonly tipperLoads: Float32Array
+  private readonly tipperPours: Float32Array
   private readonly totalArea: number
   private time = 0
   private accumulator = 0
@@ -103,6 +116,40 @@ export class GardenSimulation {
     this.depth = new Float32Array(cells)
     this.velocity = new Float32Array(cells * 2)
     this.connections = new Uint8Array(cells).fill(255)
+    const tippers = layout.tippers.length
+    this.tipVolume = new Float64Array(tippers)
+    this.tipPhase = new Uint8Array(tippers)
+    this.tipTime = new Float64Array(tippers)
+    this.tipPour = new Float64Array(tippers)
+    this.tipperAngles = new Float32Array(tippers)
+    this.tipperLoads = new Float32Array(tippers)
+    this.tipperPours = new Float32Array(tippers)
+  }
+
+  /**
+   * Each tube fills from its spout until it holds its capacity, swings down,
+   * pours the whole load into the pool below in one surge and swings back.
+   */
+  private advanceTippers(): void {
+    for (const tipper of this.layout.tippers) {
+      const i = tipper.index
+      let phase = this.tipPhase[i] as TipperPhase
+      this.tipTime[i] += STEP
+      const t = this.tipTime[i], load = this.tipVolume[i]
+      if (phase === FILLING && load >= tipper.capacity) { phase = TIPPING; this.tipTime[i] = 0 }
+      else if (phase === TIPPING && t >= TIPPER_TIP_TIME) { phase = POURING; this.tipTime[i] = 0 }
+      else if (phase === POURING && t >= TIPPER_POUR_TIME) { phase = RETURNING; this.tipTime[i] = 0 }
+      else if (phase === RETURNING && t >= TIPPER_RETURN_TIME) { phase = FILLING; this.tipTime[i] = 0 }
+      this.tipPhase[i] = phase
+      const angle = tipperAngle(phase, this.tipTime[i], load / tipper.capacity)
+      const tilt = Math.max(0, Math.min(1, angle / TIPPER_TIPPED))
+      // Whatever is left at the end of the pour leaves with it.
+      const rate = phase === POURING && this.tipTime[i] + STEP >= TIPPER_POUR_TIME ? load / STEP : tilt * 1.8 * tipper.capacity / TIPPER_POUR_TIME
+      const out = Math.min(load, rate * STEP)
+      this.tipVolume[i] -= out
+      this.volumes[tipper.pool] += out
+      this.tipPour[i] = out / STEP
+    }
   }
 
   private reach(pool: number): number {
@@ -110,9 +157,14 @@ export class GardenSimulation {
     return order.length ? order[order.length - 1] : 0
   }
 
-  /** A pool can only spill once its front has wetted the whole bed. */
+  /** Whole bed wet: side bays included. */
   private wet(pool: number): boolean {
     return this.front[pool] >= this.reach(pool) - 1e-9
+  }
+
+  /** A pool can spill as soon as its front has run down to its outlet. */
+  private reachedOutlet(pool: number): boolean {
+    return this.front[pool] >= this.field.outletKey[pool] - 0.3
   }
 
   /** Wetted share of a pool's bed behind its front. */
@@ -135,8 +187,10 @@ export class GardenSimulation {
     }
   }
 
+  /** Water stands on the wetted part of the bed only. */
   level(pool: number): number {
-    return this.floors[pool] + this.volumes[pool] / this.areas[pool]
+    const share = this.wet(pool) ? 1 : Math.max(0.05, this.wetShare(pool))
+    return this.floors[pool] + this.volumes[pool] / (this.areas[pool] * share)
   }
 
   /** The walls are sculpted, not simulated: their height never limits water. */
@@ -147,13 +201,13 @@ export class GardenSimulation {
     for (let k = 0; k < edges.length; k++) {
       const edge = edges[k]
       const levelA = this.level(edge.a)
-      if (!this.wet(edge.a) && (edge.b < 0 || !this.wet(edge.b))) { this.flow[k] = 0; continue }
+      if (!this.reachedOutlet(edge.a) && (edge.b < 0 || !this.reachedOutlet(edge.b))) { this.flow[k] = 0; continue }
       if (edge.b < 0 || edge.kind === 'spout') {
-        if (!this.wet(edge.a)) { this.flow[k] = 0; continue }
+        if (!this.reachedOutlet(edge.a)) { this.flow[k] = 0; continue }
         // Drains and spouts only ever discharge outward and downward.
         const head = levelA - edge.crest
         let q = head > 0 ? WEIR_COEFFICIENT * edge.width * head ** 1.5 : 0
-        if (edge.kind === 'spout' && edge.b >= 0) {
+        if (edge.kind === 'spout' && edge.b >= 0 && edge.tipper === undefined) {
           const back = this.level(edge.b) - edge.crest
           q *= villemonte(Math.max(head, 1e-9), back)
         }
@@ -166,7 +220,7 @@ export class GardenSimulation {
       const up = forward ? edge.a : edge.b, down = forward ? edge.b : edge.a
       const upperLevel = forward ? levelA : levelB, lowerLevel = forward ? levelB : levelA
       const head = upperLevel - edge.crest
-      if (head <= 0 || !this.wet(up)) { this.flow[k] = 0; continue }
+      if (head <= 0 || !this.reachedOutlet(up)) { this.flow[k] = 0; continue }
       let q = WEIR_COEFFICIENT * edge.width * head ** 1.5 * villemonte(head, lowerLevel - edge.crest)
       // Never transfer more than half of what would equalise the two pools.
       const a = this.areas[up], b = this.areas[down]
@@ -205,9 +259,12 @@ export class GardenSimulation {
       for (let k = 0; k < edges.length; k++) {
         const q = this.flow[k] * STEP, edge = edges[k]
         this.volumes[edge.a] -= q
-        if (edge.b >= 0) this.volumes[edge.b] += q
+        // While a tube is swung away, its jet falls straight into the pool.
+        if (edge.tipper !== undefined && this.tipPhase[edge.tipper] === FILLING) this.tipVolume[edge.tipper] += q
+        else if (edge.b >= 0) this.volumes[edge.b] += q
         else { this.drained += q; this.drainRate += this.flow[k] }
       }
+      this.advanceTippers()
       for (let i = 0; i < this.volumes.length; i++) {
         const limit = (this.maxLevels[i] + FREEBOARD - this.floors[i]) * this.areas[i]
         if (this.volumes[i] > limit) { this.escaped += this.volumes[i] - limit; this.volumes[i] = limit }
@@ -222,6 +279,7 @@ export class GardenSimulation {
     this.volumes.set(this.initialVolumes)
     this.flow.fill(0)
     this.front.fill(-1)
+    this.tipVolume.fill(0); this.tipPhase.fill(FILLING); this.tipTime.fill(0); this.tipPour.fill(0)
     this.time = 0; this.accumulator = 0
     this.injected = 0; this.drained = 0; this.escaped = 0
     this.sourceRate = 0; this.drainRate = 0
@@ -237,11 +295,19 @@ export class GardenSimulation {
       this.discharge[k] = q
       const [from, to] = q >= 0 ? [edge.a, edge.b] : [edge.b, edge.a]
       this.outflow[from] += Math.abs(q)
-      if (to >= 0) this.inflowSum[to] += Math.abs(q)
+      if (to >= 0 && edge.tipper === undefined) this.inflowSum[to] += Math.abs(q)
       const head = Math.max(0.02, this.level(from) - edge.crest)
       maxVelocity = Math.max(maxVelocity, Math.abs(q) / (edge.width * head))
     }
     let stored = 0, wetArea = 0
+    for (const tipper of this.layout.tippers) {
+      const i = tipper.index, load = this.tipVolume[i]
+      stored += load
+      this.inflowSum[tipper.pool] += this.tipPour[i]
+      this.tipperAngles[i] = tipperAngle(this.tipPhase[i] as TipperPhase, this.tipTime[i], load / tipper.capacity)
+      this.tipperLoads[i] = Math.min(1, load / tipper.capacity)
+      this.tipperPours[i] = this.tipPour[i]
+    }
     for (let i = 0; i < this.volumes.length; i++) {
       const film = this.areas[i] * WETTING_FILM
       const volume = this.volumes[i]
@@ -251,7 +317,7 @@ export class GardenSimulation {
         // Spreading: water stands on the wetted part of the bed only.
         const share = Math.max(1e-3, this.wetShare(i))
         this.fronts[i] = this.front[i]
-        this.levels[i] = this.floors[i] + Math.min(0.12, Math.max(WETTING_FILM, volume / (this.areas[i] * share)))
+        this.levels[i] = Math.max(this.floors[i] + WETTING_FILM, this.level(i))
         wetArea += this.areas[i] * share
       } else {
         this.fronts[i] = FAR
@@ -264,7 +330,8 @@ export class GardenSimulation {
     return {
       rows: this.grid.rows, cols: this.grid.cols, depth: this.depth, velocity: this.velocity, connections: this.connections,
       initialStoredVolume: this.initialStoredVolume, sourceRate: this.sourceRate,
-      garden: { time: this.time, levels: this.levels, discharge: this.discharge, throughflow: this.throughflow, fronts: this.fronts, sourceRate: this.sourceRate },
+      garden: { time: this.time, levels: this.levels, discharge: this.discharge, throughflow: this.throughflow, fronts: this.fronts, sourceRate: this.sourceRate,
+        tipperAngles: this.tipperAngles, tipperLoads: this.tipperLoads, tipperPours: this.tipperPours },
       diagnostics: {
         time: this.time, count: 0, injected: this.injected, discharged: this.drained, escaped: this.escaped, stored,
         massError: Math.abs(this.initialStoredVolume + this.injected - this.drained - this.escaped - stored),

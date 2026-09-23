@@ -1,8 +1,11 @@
-import { createGardenDesign, type GardenDesign, type GardenId, type VesselSpec } from './designs'
+import { createGardenDesign, SOURCE_THROW, type GardenDesign, type GardenId, type VesselSpec } from './designs'
 import {
   boundsOf, difference, offset, polygon, regionArea, regionContains, regions, simplifyRing, soften, strokes, union,
   type Bounds, type Region, type Shape2, type Vec2,
 } from './polygon'
+import {
+  SILL_WHEEL_LIFT, SILL_WHEEL_RADIUS, SPOUT_WHEEL_DROP, spoutWheelRadius, TIPPER_RADIUS, tipperFrame, tipperLanding, type TipperFrame,
+} from './mechanics'
 
 /** Walls are cut this far under their faces so water edges hide inside them. */
 export const WATER_TUCK = 0.03
@@ -61,6 +64,40 @@ export interface Edge {
   lipStart?: Vec2
   lipEnd?: Vec2
   landing?: Vec2
+  /** Index into `tippers` when this spout pours into a tipping tube. */
+  tipper?: number
+}
+
+/** A tipping tube between a spout and the pool below it. */
+export interface Tipper extends TipperFrame {
+  index: number
+  edge: number
+  /** Pool that receives each surge. */
+  pool: number
+  width: number
+  /** Load (m³) at which the tube tips. */
+  capacity: number
+  landing: Vec2
+  /** Bed under the pivot, where its two posts stand. */
+  base: number
+}
+
+/** A paddle wheel driven by one edge's discharge (purely kinetic). */
+export interface Wheel {
+  index: number
+  edge: number
+  center: Vec2
+  z: number
+  /** Unit vector along the axle. */
+  axis: Vec2
+  /** Unit direction the water travels under/over it. */
+  direction: Vec2
+  radius: number
+  width: number
+  /** Overshot wheels are fed from above by a spout; undershot ones sit on a step. */
+  overshot: boolean
+  /** Bed below the wheel, for its supports. */
+  base: number
 }
 
 export interface GardenLayout {
@@ -69,6 +106,8 @@ export interface GardenLayout {
   vessels: CompiledVessel[]
   pools: Pool[]
   edges: Edge[]
+  tippers: Tipper[]
+  wheels: Wheel[]
   source: { pool: number; tower: Vec2; lip: Vec2; landing: Vec2; lipZ: number; width: number; direction: Vec2; round: boolean }
   bounds: Bounds
   height: number
@@ -119,6 +158,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   const pools: Pool[] = []
   const edges: Edge[] = []
   const pendingSpouts: { vessel: number; spout: VesselSpec['spouts'][number] }[] = []
+  const sillWheels: number[] = []
   design.vessels.forEach((spec, vesselIndex) => {
     const rim = { points: spec.outline, closed: true }
     let rimShape = strokes([rim], spec.rimWidth / 2)
@@ -174,6 +214,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
         width: Math.max(0.2, polylineLength(sill.points) - spec.wallWidth), points: sill.points.slice(), normal: n,
       }
       edges.push(edge)
+      if (sill.wheel) sillWheels.push(edge.index)
       compiled.sills.push({ regions: regions(sillShapes[k]).map(smooth), crest, edge: edge.index })
     })
     for (const spout of spec.spouts) pendingSpouts.push({ vessel: vesselIndex, spout })
@@ -186,26 +227,37 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   })
   const findPool = (point: Vec2, below: number, except = -1) => pools.find(pool => pool.vessel !== except
     && design.vessels[pool.vessel].floor < below && regionContains(pool.region, point))
+  const tippers: Tipper[] = [], wheels: Wheel[] = []
+  const spoutWheels: number[] = []
   for (const { vessel, spout } of pendingSpouts) {
     const spec = design.vessels[vessel]
     const direction = normalize(spout.direction)
     const inner = add(spout.at, direction, -(spec.rimWidth / 2 + 0.16))
     const source = pools.find(pool => pool.vessel === vessel && regionContains(pool.region, inner))
     const lipEnd = add(spout.at, direction, spec.rimWidth / 2 + spout.length)
-    const landing = add(lipEnd, direction, 0.2)
     const crest = spec.floor + spout.crest
+    const frame = spout.device === 'tipper' ? tipperFrame(lipEnd, direction, crest) : null
+    const landing = frame ? tipperLanding(frame) : add(lipEnd, direction, 0.2)
     const target = findPool(landing, crest, vessel)
     if (!source) throw new Error(`${design.id}/${spec.name}: spout has no pool behind it`)
     if (!target) throw new Error(`${design.id}/${spec.name}: spout at ${spout.at.map(v => v.toFixed(2))} lands outside every lower pool (${landing.map(v => v.toFixed(2))})`)
-    edges.push({
+    const edge: Edge = {
       index: edges.length, kind: 'spout', a: source.index, b: target.index, crest, width: spout.width,
       points: [spout.at], normal: direction, lipStart: add(spout.at, direction, -spec.rimWidth / 2), lipEnd, landing,
-    })
+    }
+    edges.push(edge)
+    if (frame) {
+      edge.tipper = tippers.length
+      tippers.push({
+        ...frame, index: tippers.length, edge: edge.index, pool: target.index, width: TIPPER_RADIUS * 2,
+        capacity: Math.max(0.15, Math.min(0.3, target.area * 0.1)), landing, base: 0,
+      })
+    } else if (spout.device === 'wheel') spoutWheels.push(edge.index)
   }
   // Orient every step downstream: its upper side is the pool the water
   // reaches first from the source.
   const hops = new Array<number>(pools.length).fill(Infinity)
-  const firstPool = findPool(add(design.source.lip, normalize([design.source.lip[0] - design.source.tower[0], design.source.lip[1] - design.source.tower[1]]), 0.14), design.source.lipZ)
+  const firstPool = findPool(add(design.source.lip, normalize([design.source.lip[0] - design.source.tower[0], design.source.lip[1] - design.source.tower[1]]), SOURCE_THROW), design.source.lipZ)
   if (firstPool) {
     hops[firstPool.index] = 0
     for (let changed = true; changed;) {
@@ -234,9 +286,28 @@ export function compileGarden(design: GardenDesign): GardenLayout {
     const own = pools.filter(pool => pool.vessel === vessel.index)
     if (own.length) vessel.baseFloor = Math.min(...own.map(pool => pool.floor))
   }
+  // Machinery stands on the finished beds.
+  for (const tipper of tippers) tipper.base = pools[tipper.pool].floor
+  for (const index of spoutWheels) {
+    const edge = edges[index], floor = pools[edge.b].floor
+    const radius = spoutWheelRadius(edge.crest, floor)
+    wheels.push({
+      index: wheels.length, edge: index, center: add(edge.lipEnd!, edge.normal, radius * 0.75), z: edge.crest - SPOUT_WHEEL_DROP - radius,
+      axis: [-edge.normal[1], edge.normal[0]], direction: edge.normal, radius, width: edge.width * 0.92, overshot: true, base: floor,
+    })
+  }
+  for (const index of sillWheels) {
+    const edge = edges[index]
+    const { point, tangent } = midpoint(edge.points)
+    wheels.push({
+      index: wheels.length, edge: index, center: add(point, edge.normal, SILL_WHEEL_RADIUS + 0.04), z: edge.crest + SILL_WHEEL_LIFT,
+      axis: tangent, direction: edge.normal, radius: SILL_WHEEL_RADIUS, width: Math.max(0.3, edge.width * 0.78), overshot: false,
+      base: pools[edge.b].floor,
+    })
+  }
   const { source: sourceSpec } = design
   const direction = normalize([sourceSpec.lip[0] - sourceSpec.tower[0], sourceSpec.lip[1] - sourceSpec.tower[1]])
-  const landing = add(sourceSpec.lip, direction, 0.14)
+  const landing = add(sourceSpec.lip, direction, SOURCE_THROW)
   const sourcePool = findPool(landing, sourceSpec.lipZ)
   if (!sourcePool) throw new Error(`${design.id}: the source lands outside the water`)
   const bounds = boundsOf([
@@ -244,7 +315,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
     [sourceSpec.tower],
   ])
   return {
-    id: design.id, design, vessels, pools, edges,
+    id: design.id, design, vessels, pools, edges, tippers, wheels,
     source: { pool: sourcePool.index, tower: sourceSpec.tower, lip: sourceSpec.lip, landing, lipZ: sourceSpec.lipZ, width: sourceSpec.width, direction, round: !!sourceSpec.round },
     bounds, height: Math.max(sourceSpec.lipZ + 0.3, ...vessels.map(vessel => vessel.top)),
   }
