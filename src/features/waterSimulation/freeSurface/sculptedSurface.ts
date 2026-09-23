@@ -201,7 +201,9 @@ export class SculptedSurface {
           vec2 world = uLiquidBounds.xy + p * uLiquidBounds.zw;
           vec4 basin = basinAt(world);
           float speed = min(1.0, length(basin.gb) * 2.0);
-          vec2 phase = ripplePhase(world - basin.gb * uLiquidTime * 0.06, uLiquidTime);
+          // Phase depends on time alone; speed scales amplitude only. Multiplying
+          // time by a spatially varying speed sheared the waves without bound.
+          vec2 phase = ripplePhase(world, uLiquidTime);
           float waves = (sin(phase.x) * 0.0028 + sin(phase.y) * 0.0018) * (0.2 + speed * 0.8) * uLiquidStyle;
           return uBasinFloorZ + basin.r + waves * smoothstep(0.002, 0.07, basin.r);
         }
@@ -295,9 +297,9 @@ export class SculptedSurface {
           float wet = uBasinEnabled > 0.5 ? liquid.b * smoothstep(0.003, 0.045, liquid.r) : smoothstep(0.12, 0.29, liquid.r);
           float motion = smoothstep(0.03, 0.30, liquid.g / max(liquid.r, 0.01));
           if (uBasinEnabled > 0.5) motion = 0.22 + motion * 0.78;
-          float t = uLiquidTime * motion;
+          float t = uLiquidTime;
           vec2 phase = ripplePhase(vBodyPoint, t);
-          vec2 warp = vec2(sin(phase.x), sin(phase.y)) * 0.044 * uLiquidStyle;
+          vec2 warp = vec2(sin(phase.x), sin(phase.y)) * 0.044 * uLiquidStyle * motion;
           vec2 causticUv = vBodyPoint * 0.29 + warp + vec2(t * 0.008, -t * 0.004);
           float primary = texture2D(uCaustic, causticUv).r;
           vec2 secondaryUv = mat2(0.80, 0.60, -0.60, 0.80) * causticUv * 1.17 + vec2(0.21, 0.37) - warp * 0.7;

@@ -10,7 +10,7 @@ import { SculptedSurface } from './sculptedSurface'
 import type { BasinSnapshot } from './basinSimulation'
 import { BasinFixtures } from './basinFixtures'
 import type { WaterAppearance } from './appearance'
-import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_BACKGROUND, WATER_LIGHTS, type WaterLook } from './lookdev'
+import { DEFAULT_WATER_LOOK, getWaterTheme, normalizeWaterLook, STUDIO_HAZE, WATER_LIGHTS, type WaterLook } from './lookdev'
 
 // Particle centers stop at the solver bounds, but their optical footprints can
 // extend .392 cells farther. Preserve the whole silhouette at the board edge.
@@ -163,7 +163,7 @@ export class FreeSurfacePresentation3D {
     this.look = normalizeWaterLook(next, this.look)
     const palette = getWaterTheme(this.look.theme)
     const lighting = WATER_LIGHTS[this.look.light]
-    this.scene.background = new THREE.Color(STUDIO_BACKGROUND)
+    this.scene.background = new THREE.Color(STUDIO_HAZE)
     this.wallTop.color.set(this.look.wallColor ?? palette.wall)
     this.wallSide.color.set(this.look.wallColor ?? palette.wallSide)
     this.wallTop.roughness = palette.roughness
@@ -185,7 +185,7 @@ export class FreeSurfacePresentation3D {
     this.ambient.groundColor.set(lighting.ground)
     this.ambient.intensity = lighting.ambient * 0.25
     this.key.color.set(lighting.color)
-    this.key.intensity = lighting.intensity * 1.0
+    this.key.intensity = lighting.intensity * 1.25
     const lightDistance = Math.max(16, this.sculptureHeight * 1.4)
     this.key.position.set(this.centerX + lighting.direction[0] * lightDistance, this.centerY + lighting.direction[1] * lightDistance, lighting.direction[2] * lightDistance)
     this.fill.color.set(lighting.fill)

@@ -9,6 +9,7 @@ import { AQUA_WATER_APPEARANCE, upgradeWaterPresetColor, WATER_COLOR_PRESETS, ty
 import { DEFAULT_WATER_LOOK, STUDIO_BACKGROUND, WATER_THEMES, normalizeWaterLook, type WaterLook } from '../waterSimulation/freeSurface/lookdev'
 import type { WaterSurfaceStyle } from '../waterSimulation/rendering'
 import { WATER_STUDIO_PRESETS, createWaterStudioProject, type WaterStudioPresetId } from './presets'
+import type { WaterSculpture } from '../waterSimulation/garden'
 import { createGeneratedWaterMaze, DEFAULT_WATER_MAZE, WATER_MAZE_SHAPES, type WaterMazeOptions } from './createMaze'
 import './waterStudio.css'
 
@@ -112,11 +113,12 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     setResolutionPreview(null)
     return () => { if (resolutionTimer.current) clearTimeout(resolutionTimer.current) }
   }, [project])
-  const sculpture = useMemo(() => preferences.source === 'flow'
-    && (preferences.preset === 'atelier' || preferences.preset === 'cascade')
+  // Unedited collection pieces at their own resolution are authored water
+  // gardens; any edit or resize shows the editable grid as a raised basin.
+  const sculpture = useMemo<WaterSculpture | undefined>(() => preferences.source === 'flow' && !preferences.size
     && JSON.stringify(project.mazeGraph) === JSON.stringify(generatedProject.mazeGraph)
-    ? 'terraced-fountain' as const : customProject || preferences.source === 'generated' ? 'extruded-flow' as const : undefined,
-  [preferences.source, preferences.preset, project.mazeGraph, generatedProject.mazeGraph, customProject])
+    ? `garden:${preferences.preset}` : customProject || preferences.source === 'generated' ? 'extruded-flow' : undefined,
+  [preferences.source, preferences.preset, preferences.size, project.mazeGraph, generatedProject.mazeGraph, customProject])
   const onProjectChangeRef = useRef(onProjectChange)
   onProjectChangeRef.current = onProjectChange
   useEffect(() => { setCustomProject(initialProject ?? null) }, [initialProject])

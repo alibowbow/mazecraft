@@ -13,6 +13,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "clipper-lib": "^6.4.2",
     "fflate": "^0.8.2",
     "lucide-react": "^0.468.0",
     "qrcode": "^1.5.4",

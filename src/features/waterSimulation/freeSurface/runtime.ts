@@ -5,8 +5,9 @@ import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
 import { BasinSimulation, type BasinSnapshot } from './basinSimulation'
-import { CascadeSimulation } from './cascadeSimulation'
-import { createCascadeSurfaces } from './cascadeGeometry'
+import { GardenSimulation } from '../garden/simulation'
+import { gardenLayout } from '../garden/layout'
+import { gardenIdOf, type WaterSculpture } from '../garden'
 import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers, FluidResume } from './types'
 import type { WaterAppearance } from './appearance'
 import type { WaterLook } from './lookdev'
@@ -26,7 +27,7 @@ const EMPTY_PARTICLE_DIAGNOSTICS: FluidDiagnostics = {
 export class FreeSurfaceRuntime {
   private readonly layout
   private readonly renderer: FreeSurfaceRenderer
-  private readonly basin: BasinSimulation | CascadeSimulation
+  private readonly basin: BasinSimulation | GardenSimulation
   private basinSnapshot: BasinSnapshot
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private worker: Worker | null = null
@@ -64,13 +65,14 @@ export class FreeSurfaceRuntime {
     private readonly onError: (message: string) => void,
     private readonly onMetrics: (metrics: WaterRuntimeMetrics) => void,
     _reducedMotion = false,
-    private readonly sculpture?: 'terraced-fountain' | 'extruded-flow',
+    private readonly sculpture?: WaterSculpture,
     private readonly resume?: FluidResume,
   ) {
     this.layout = buildFluidLayout(project, resume?.capacity)
     if (resume) { this.layout.capacity = Math.max(this.layout.capacity, resume.snapshot.count); this.paused = resume.paused; this.inflowEnabled = resume.inflow; this.inflow = resume.inflow ? 1 : 0 }
-    this.basin = sculpture === 'terraced-fountain'
-      ? new CascadeSimulation(this.layout, createCascadeSurfaces().map(surface => surface.area) as [number, number, number])
+    const garden = gardenIdOf(sculpture)
+    this.basin = garden
+      ? new GardenSimulation(gardenLayout(garden), this.layout)
       : new BasinSimulation(project, this.layout)
     this.basinSnapshot = this.basin.snapshot()
     this.renderer = new FreeSurfaceRenderer(mount, this.layout, quality, sculpture)
