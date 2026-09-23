@@ -844,9 +844,13 @@ export class FreeSurfaceRenderer {
     this.width = Math.max(1, this.mount.clientWidth)
     this.height = Math.max(1, this.mount.clientHeight)
     // Bound GPU work on high-DPR and large displays without changing physics.
-    const maxPixels = this.quality === 'high' ? 1_600_000 : 900_000
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality === 'high' ? 1.5 : 1,
-      Math.sqrt(maxPixels / (this.width * this.height))))
+    // The garden has no particle surface to filter, so its budget goes to
+    // crisp basin edges on high-DPR tablets and phones instead.
+    const garden = Boolean(gardenIdOf(this.sculpture))
+    const maxPixels = garden ? (this.quality === 'high' ? 3_200_000 : 2_000_000) : this.quality === 'high' ? 1_600_000 : 900_000
+    const maxRatio = garden ? (this.quality === 'high' ? 2 : 1.5) : this.quality === 'high' ? 1.5 : 1
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxRatio,
+      Math.max(garden ? 1 : 0, Math.sqrt(maxPixels / (this.width * this.height)))))
     this.renderer.setSize(this.width, this.height, false)
     const ratio = this.renderer.getPixelRatio()
     const maxSize = this.quality === 'high' ? 1280 : 960

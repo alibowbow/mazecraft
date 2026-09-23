@@ -223,6 +223,18 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         reflectedLight.indirectDiffuse *= gardenAo;
         reflectedLight.indirectSpecular *= mix(1.0, gardenAo, 0.75);
       `)
+    // Specular anti-aliasing: where the normal turns faster than a pixel
+    // (rounded crowns, tile edges far away) widen the highlight instead of
+    // letting it break into a stair-stepped line of sparkles.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+      {
+        vec3 gardenDx = dFdx(normal), gardenDy = dFdy(normal);
+        float gardenKernel = min(0.5 * (dot(gardenDx, gardenDx) + dot(gardenDy, gardenDy)), 0.14);
+        material.roughness = min(1.0, sqrt(material.roughness * material.roughness + gardenKernel));
+        #ifdef USE_CLEARCOAT
+          material.clearcoatRoughness = min(1.0, sqrt(material.clearcoatRoughness * material.clearcoatRoughness + gardenKernel));
+        #endif
+      }`)
     if (kind === 'wall') {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -236,7 +248,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           #endif`)
     }
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v6`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v7`
   return material
 }
 
