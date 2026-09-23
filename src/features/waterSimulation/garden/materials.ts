@@ -27,6 +27,8 @@ export function createGardenUniforms(field: GardenField) {
     uLevels: { value: new Float32Array(MAX_POOLS).fill(-10) },
     uFloors: { value: new Float32Array(MAX_POOLS) },
     uPoolFlow: { value: new Float32Array(MAX_POOLS) },
+    /** Garden-wide current: one speed for every pool, so ripples never jump at a step. */
+    uFlowMean: { value: 0 },
     uGardenTime: { value: 0 },
     uGardenStyle: { value: 1 },
     uImpacts: { value: Array.from({ length: MAX_IMPACTS }, () => new THREE.Vector4()) },
@@ -123,13 +125,16 @@ export interface CeramicLook {
  */
 export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | 'bed' | 'trim'): THREE.MeshPhysicalMaterial {
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0xf2ece2, roughness: kind === 'bed' ? 0.36 : 0.3, metalness: 0,
-    clearcoat: kind === 'bed' ? 0.55 : 1, clearcoatRoughness: kind === 'bed' ? 0.12 : 0.045,
-    ior: 1.5, envMapIntensity: 1, sheen: kind === 'wall' ? 0.25 : 0, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff1dc),
+    color: 0xf2ece2, roughness: kind === 'bed' ? 0.3 : 0.18, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: kind === 'bed' ? 0.06 : 0.012,
+    ior: 1.5, envMapIntensity: 1.35, sheen: 0, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff1dc),
   })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
     shader.vertexShader = FORCE_WORLDPOS + shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vGardenNormal;')
+      .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\nvGardenNormal = normalize(mat3(modelMatrix) * objectNormal);')
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vGardenNormal;')
     if (kind === 'wall') {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float aFloor;\nuniform float uWallScale;')
@@ -140,14 +145,22 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
     }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
-        // Glaze pools thicker (slightly deeper tone) in hollows and thins on
-        // crowns; a faint mottling breaks up the uniform, moulded look.
-        float glazeCloud = gardenNoise(vGardenWorld.xy * 1.7 + vGardenWorld.z * 0.9) * 0.6 + gardenNoise(vGardenWorld.xy * 5.3) * 0.4;
-        diffuseColor.rgb *= 0.965 + glazeCloud * 0.05;
-        float speck = step(0.985, gardenHash(floor(vGardenWorld.xy * 140.0) + floor(vGardenWorld.z * 140.0)));
-        diffuseColor.rgb *= 1.0 - speck * 0.08;`)
-      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = clamp(roughnessFactor * (0.85 + gardenNoise(vGardenWorld.xy * 3.1) * 0.3), 0.04, 1.0);`)
+        vec3 stoneNormal = normalize(vGardenNormal);
+        ${kind === 'bed' ? `
+          // Pool floor: small glass mosaic tiles set in pale grout, each tile
+          // a slightly different tint, as in a hotel pool.
+          vec2 tileUv = vGardenWorld.xy / 0.055;
+          vec2 tileCell = floor(tileUv), tileFrac = fract(tileUv);
+          float tileTint = gardenHash(tileCell);
+          float grout = 1.0 - smoothstep(0.035, 0.09, min(min(tileFrac.x, 1.0 - tileFrac.x), min(tileFrac.y, 1.0 - tileFrac.y)));
+          float groutFade = 1.0 - smoothstep(0.35, 0.9, length(fwidth(tileUv)));
+          vec3 tile = diffuseColor.rgb * mix(vec3(0.95, 0.99, 1.0), vec3(1.02, 1.01, 0.99), tileTint);
+          diffuseColor.rgb = mix(tile, diffuseColor.rgb * vec3(0.86, 0.87, 0.86), grout * groutFade * 0.8);
+        ` : `
+          // Polished vitreous china: one clean, even white. Its luxury is in
+          // the crisp mirror reflections of the clear coat, not in pattern.
+        `}`)
+
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec3 gardenNormal = inverseTransformDirection(normal, viewMatrix);
         ${kind === 'bed' ? `
@@ -176,7 +189,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         reflectedLight.indirectSpecular *= mix(1.0, gardenAo, 0.75);
       `)
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v1`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v4`
   return material
 }
 
@@ -215,6 +228,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform float uLevels[GARDEN_MAX_POOLS];
         uniform float uFloors[GARDEN_MAX_POOLS];
         uniform float uPoolFlow[GARDEN_MAX_POOLS];
+        uniform float uFlowMean;
         uniform float uFront[GARDEN_MAX_POOLS];
         uniform float uGardenTime;
         uniform float uGardenStyle;
@@ -237,7 +251,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         int gardenPoolIndex = int(aPool + 0.5);
         float poolLevel = uLevels[gardenPoolIndex];
         vec4 waveField = texture2D(uGardenField, (position.xy - uGardenBounds.xy) / uGardenBounds.zw);
-        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uPoolFlow[gardenPoolIndex];
+        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uFlowMean;
         float waveSpeed = length(waveFlow);
         float wallDistance = waveField.b < 0.499 ? waveField.b : 0.5;
         float settled = step(9000.0, uFront[gardenPoolIndex]);
@@ -275,7 +289,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
       .replace('#include <begin_vertex>', `
         vec3 transformed = vec3(position.xy, poolLevel + waveHeight);
         vPoolDepth = poolLevel - uFloors[gardenPoolIndex];
-        vPoolFlow = uPoolFlow[gardenPoolIndex];
+        vPoolFlow = uFlowMean;
         vPoolFront = uFront[gardenPoolIndex];`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -357,9 +371,9 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         // the true depth below.
         .replace('material.thickness = thickness;', 'material.thickness = 0.04;')
         .replace('totalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );',
-          'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3(max(0.02, vPoolDepth) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
+          'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3((0.2 + 0.25 * clamp(vPoolDepth, 0.0, 0.6)) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
   }
-  material.customProgramCacheKey = () => 'garden-water-v1'
+  material.customProgramCacheKey = () => 'garden-water-v2'
   return material
 }
 
