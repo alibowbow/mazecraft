@@ -125,9 +125,9 @@ export interface CeramicLook {
  */
 export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | 'bed' | 'trim'): THREE.MeshPhysicalMaterial {
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0xf2ece2, roughness: kind === 'bed' ? 0.3 : 0.22, metalness: 0,
-    clearcoat: 1, clearcoatRoughness: kind === 'bed' ? 0.06 : 0.02,
-    ior: 1.5, envMapIntensity: 1.25, sheen: 0, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff1dc),
+    color: 0xf2ece2, roughness: kind === 'bed' ? 0.3 : 0.18, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: kind === 'bed' ? 0.06 : 0.012,
+    ior: 1.5, envMapIntensity: 1.35, sheen: 0, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff1dc),
   })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
@@ -157,22 +157,10 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           vec3 tile = diffuseColor.rgb * mix(vec3(0.95, 0.99, 1.0), vec3(1.02, 1.01, 0.99), tileTint);
           diffuseColor.rgb = mix(tile, diffuseColor.rgb * vec3(0.86, 0.87, 0.86), grout * groutFade * 0.8);
         ` : `
-          // Polished marble: soft grey veins drifting through a warm white
-          // body, with the odd thread of gold, continuous over every face.
-          vec3 mp = vGardenWorld * 0.9;
-          float warp = gardenNoise(mp.xy * 1.1 + mp.z * 0.7) * 1.6 + gardenNoise(mp.yz * 2.3 - mp.x * 0.5) * 0.8 + gardenNoise(mp.xz * 4.7) * 0.35;
-          float band = mp.x * 0.8 + mp.y * 0.55 + mp.z * 0.9 + warp * 2.2;
-          float vein = 1.0 - smoothstep(0.0, 0.12, abs(sin(band * 2.4)));
-          float hair = 1.0 - smoothstep(0.0, 0.05, abs(sin(band * 6.1 + warp * 3.0)));
-          float cloud = gardenNoise(mp.xy * 0.6 + mp.z * 0.4);
-          float veinMask = smoothstep(0.2, 0.6, gardenNoise(mp.yx * 0.45 + 3.1));
-          diffuseColor.rgb *= 0.97 + cloud * 0.05;
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.58, 0.6, 0.63), vein * veinMask * 0.62 + hair * veinMask * 0.3);
-          float gold = (1.0 - smoothstep(0.0, 0.035, abs(sin(band * 1.3 + 1.7)))) * smoothstep(0.62, 0.85, gardenNoise(mp.xy * 0.3 + 7.0));
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.78, 0.63, 0.38), gold * 0.7);
+          // Polished vitreous china: one clean, even white. Its luxury is in
+          // the crisp mirror reflections of the clear coat, not in pattern.
         `}`)
-      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = clamp(roughnessFactor * (0.85 + gardenNoise(vGardenWorld.xy * 3.1) * 0.3), 0.04, 1.0);`)
+
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec3 gardenNormal = inverseTransformDirection(normal, viewMatrix);
         ${kind === 'bed' ? `
@@ -201,7 +189,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         reflectedLight.indirectSpecular *= mix(1.0, gardenAo, 0.75);
       `)
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v3`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v4`
   return material
 }
 

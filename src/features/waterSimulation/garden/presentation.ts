@@ -21,7 +21,7 @@ interface Glaze { glaze: string; bed: string; roughness: number; clearcoat: numb
 
 /** Glaze recipes per collection colour: real ceramic tones, not flat plastic. */
 export const GARDEN_GLAZES: Record<WaterTheme, Glaze> = {
-  porcelain: { glaze: '#f3f0ea', bed: '#eef6f5', roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.018, sheen: 0 },
+  porcelain: { glaze: '#f4f2ee', bed: '#eef6f5', roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.012, sheen: 0 },
   glacier: { glaze: '#a9d0e2', bed: '#e3f1f6', roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0.15 },
   terrace: { glaze: '#c6724e', bed: '#e8c3a6', roughness: 0.62, clearcoat: 0.12, clearcoatRoughness: 0.4, sheen: 0.35 },
   sage: { glaze: '#98c2a3', bed: '#e7f1e8', roughness: 0.26, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0.2 },
