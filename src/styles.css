@@ -1,51 +1,56 @@
 :root {
   color-scheme: light;
-  font-family: Inter, Pretendard, "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --bg: #f4f4ee;
+  font-family: "Pretendard Variable", Pretendard, Inter, "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* MazeCraft follows the water atelier: warm ivory, deep ink-teal text,
+     one water-teal accent, hairline rules and light, spaced type. */
+  --bg: #faf9f5;
   --surface: #ffffff;
-  --surface-2: #f8f8f4;
-  --surface-3: #eeeee7;
-  --ink: #202522;
-  --muted: #6d746f;
-  --line: #dfe1d9;
-  --line-strong: #c9cdc4;
-  --primary: #126a56;
-  --primary-hover: #0c5948;
-  --primary-soft: #dceee7;
-  --accent: #ff6c4b;
-  --danger: #c5433c;
-  --warning: #b16c10;
-  --focus: #2c7df0;
-  --acid: #d9ff57;
-  --violet: #6c5ce7;
-  --water: #28b7df;
-  --shadow: 0 18px 52px rgba(31, 38, 33, 0.11);
-  --panel-shadow: 0 12px 34px rgba(31, 38, 33, 0.08);
-  --radius: 14px;
+  --surface-2: #f6f5f0;
+  --surface-3: #eeede7;
+  --ink: #283d40;
+  --muted: #738183;
+  --line: #dedfd8;
+  --line-strong: #cfd4cc;
+  --primary: #267e87;
+  --primary-hover: #1f6b73;
+  --primary-soft: #e7f2f4;
+  --accent: #bb956c;
+  --danger: #bf4a3f;
+  --warning: #a8691a;
+  --focus: #55aaba;
+  /* Highlight chips: the atelier's pale water, read with dark text. */
+  --acid: #e0eff0;
+  --violet: #6c63c7;
+  --water: #388e85;
+  --shadow: 0 18px 44px rgba(40, 61, 64, 0.08);
+  --panel-shadow: 0 8px 24px rgba(40, 61, 64, 0.05);
+  --radius: 10px;
+  --eyebrow: #6e8180;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #171a18;
-  --surface: #202421;
-  --surface-2: #282d29;
-  --surface-3: #303631;
-  --ink: #f2f4ef;
-  --muted: #abb2ac;
-  --line: #3a413b;
-  --line-strong: #505950;
-  --primary: #54c7a3;
-  --primary-hover: #77d9ba;
-  --primary-soft: #193b32;
-  --accent: #ff8164;
+  --bg: #121a1b;
+  --surface: #182224;
+  --surface-2: #1d2a2c;
+  --surface-3: #243335;
+  --ink: #e9efee;
+  --muted: #9aaaab;
+  --line: #2b3a3c;
+  --line-strong: #3a4c4e;
+  --primary: #6cc3c9;
+  --primary-hover: #8fd3d8;
+  --primary-soft: #1b3739;
+  --accent: #d6b28a;
   --danger: #ff8179;
   --warning: #efb55b;
-  --focus: #79acff;
-  --acid: #c7ed4b;
-  --violet: #9d91ff;
-  --water: #55d2f4;
-  --shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
-  --panel-shadow: 0 15px 40px rgba(0, 0, 0, 0.24);
+  --focus: #79c1cf;
+  --acid: #d6eaec;
+  --violet: #a39bff;
+  --water: #6cc3b8;
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  --panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  --eyebrow: #8fa3a4;
 }
 
 * {
@@ -4781,7 +4786,7 @@ svg {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: #2c332f;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .studio-stage-rail button > strong {
@@ -4791,7 +4796,7 @@ svg {
 
 .studio-stage-rail button:hover {
   color: #ffffff;
-  background: #2a312d;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .studio-stage-rail button.active {
@@ -5060,3 +5065,215 @@ svg {
   .water-simulation-controls .water-speed-control > svg { display: none; }
   .water-simulation-controls .water-speed-control select { min-width: 44px; padding: 0 3px; }
 }
+
+
+/* ==========================================================================
+   MazeCraft design system, after the water atelier
+   Light ivory, hairline rules, one teal accent, and light headings with
+   spaced uppercase labels. The home and the maze studio share it.
+   ========================================================================== */
+
+h1, h2, h3 { font-weight: 500; letter-spacing: -0.045em; }
+
+.button { min-height: 44px; border-radius: 8px; font-size: 0.82rem; font-weight: 600; }
+.button.secondary { border-color: #d7ded6; background: var(--surface); }
+:root[data-theme="dark"] .button.secondary { border-color: var(--line-strong); }
+.icon-button { border-radius: 50%; border-color: transparent; background: transparent; }
+.icon-button:hover { background: var(--surface-3); }
+
+/* Brand: the atelier's waves and a spaced word mark */
+.brand { gap: 12px; }
+.brand-logo { flex: none; color: var(--primary); }
+.brand > span:last-child { display: grid; gap: 3px; line-height: 1; }
+.brand strong { font-size: 16px; font-weight: 650; letter-spacing: 0.18em; }
+.brand small { color: var(--muted); font-size: 8px; font-weight: 500; letter-spacing: 0.28em; }
+
+/* Header: shared with the water studio */
+.home-header {
+  display: flex;
+  align-items: stretch;
+  gap: 32px;
+  height: 70px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(14px);
+}
+.home-header .brand { align-self: center; }
+.home-header .home-header-actions { align-self: center; }
+
+.app-nav {
+  display: flex;
+  align-items: stretch;
+  gap: 30px;
+  margin-left: auto;
+  font-size: 13px;
+}
+.app-nav a,
+.app-nav button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  background: transparent;
+}
+.app-nav a:hover,
+.app-nav button:hover { color: var(--ink); }
+.app-nav [aria-current="page"] { color: var(--ink); border-bottom-color: var(--primary); font-weight: 650; }
+
+.home-header .local-badge {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.home-header .local-badge i { width: 5px; height: 5px; background: #388e85; box-shadow: none; }
+
+.home-shell::before { display: none; }
+
+/* Home: the two doors */
+.hub-hero { padding: clamp(40px, 5.5vw, 70px) 0 clamp(44px, 6vw, 72px); }
+.hub-intro { max-width: 1100px; margin-bottom: clamp(28px, 3.6vw, 44px); }
+
+.hub-eyebrow,
+.hub-door-kicker,
+.section-kicker {
+  color: var(--eyebrow);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+}
+.hub-eyebrow { margin: 0 0 16px; }
+
+.hub-intro h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 4.1vw, 3.5rem);
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: -0.055em;
+}
+.hub-intro h1 br { display: none; }
+@media (max-width: 1100px) { .hub-intro h1 br { display: inline; } }
+.hub-intro h1 span { color: var(--primary); }
+
+.hub-intro > p:last-child {
+  max-width: 540px;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+  line-height: 1.75;
+}
+
+.hub-doors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(16px, 2vw, 24px);
+}
+
+.hub-door {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+@media (hover: hover) {
+  .hub-door:hover { border-color: #c9d6d3; box-shadow: var(--shadow); }
+}
+
+.hub-door figure {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 2.3 / 1;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-3);
+}
+.hub-door img { width: 100%; height: 100%; display: block; object-fit: cover; transition: transform 700ms ease; }
+@media (hover: hover) { .hub-door:hover img { transform: scale(1.025); } }
+
+.hub-door-copy { display: grid; align-content: start; gap: 10px; padding: clamp(20px, 2.2vw, 28px); }
+.hub-door-kicker { display: inline-flex; align-items: center; gap: 7px; }
+.hub-door-kicker svg { color: var(--primary); }
+.hub-door h2 { margin: 0; font-size: clamp(1.45rem, 2vw, 1.8rem); font-weight: 500; }
+.hub-door p { max-width: 440px; margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.7; }
+.hub-door-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.hero-primary,
+.water-primary {
+  color: #ffffff;
+  background: var(--primary);
+}
+.hero-primary:hover,
+.water-primary:hover { color: #ffffff; background: var(--primary-hover); }
+:root[data-theme="dark"] .hero-primary,
+:root[data-theme="dark"] .water-primary { color: #0f1718; }
+
+.section-heading h2 { font-weight: 500; }
+.template-card { border-radius: 12px; box-shadow: none; }
+.template-card:hover .template-open { color: var(--ink); }
+
+.project-card { position: relative; border-radius: 12px; }
+.project-water {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 10px;
+  color: var(--primary);
+  border: 1px solid #cfe0df;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.project-water:hover { color: #ffffff; background: var(--primary); }
+
+.home-footer { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.home-footer .brand-logo { width: 16px; height: 16px; }
+
+/* Maze studio: a light rail and the atelier header */
+.studio-header { background: color-mix(in srgb, var(--bg) 94%, var(--surface)); }
+.studio-header .brand { color: var(--ink); background: transparent; }
+.studio-header .brand small { white-space: nowrap; }
+.studio-header .brand:hover { background: var(--surface-2); }
+
+.studio-stage-rail {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: none;
+}
+.studio-stage-rail .stage-rail-heading { color: var(--eyebrow); }
+.studio-stage-rail button { color: var(--muted); }
+.studio-stage-rail button > span { background: var(--surface-2); }
+.studio-stage-rail button:hover { color: var(--ink); background: var(--surface-2); }
+.studio-stage-rail button.active { color: var(--primary); border-color: var(--acid); background: var(--acid); }
+.studio-stage-rail button.active::before { color: color-mix(in srgb, var(--primary) 70%, transparent); }
+.studio-stage-rail button.active > span { background: rgba(255, 255, 255, 0.7); }
+:root[data-theme="dark"] .studio-stage-rail button.active { color: #1d4d52; }
+
+.loading-screen .brand-logo,
+.route-loading .brand-logo { width: 34px; height: 34px; margin-bottom: 6px; }
+
+@media (max-width: 900px) {
+  .app-nav { display: none; }
+}
+@media (max-width: 760px) {
+  .hub-doors { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .home-header .local-badge { display: none; }
+  .brand small { display: none; }
+}
+.studio-header .brand strong { font-size: 14px; letter-spacing: 0.14em; }
+.studio-header .brand > span:last-child { justify-items: start; }

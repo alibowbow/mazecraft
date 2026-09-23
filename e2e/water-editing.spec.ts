@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { MazeProject } from '../src/core/maze'
+import { openWaterGarden } from './helpers/navigation'
 
 async function ready(page: Page) {
   await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: 90_000 })
@@ -35,7 +36,9 @@ test('custom water retains the same gravity and inlet across 2D/3D, edits live, 
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => localStorage.setItem('mazecraft.water-studio.v1', JSON.stringify({ source: 'generated', generator: { rows: 8, cols: 8, seed: 'live-water', shape: 'rectangle' } })))
-  await page.goto('/')
+  await openWaterGarden(page)
+  await ready(page)
+  await page.getByRole('button', { name: '3D', exact: true }).click()
   const canvas = await ready(page)
   await expect(canvas).toHaveAttribute('data-water-model', 'position-based-free-surface')
   await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
@@ -108,7 +111,7 @@ test('image-to-maze preserves photo aspect and interior gaps and opens in 2D, re
   test.setTimeout(180_000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  await page.goto('/')
+  await openWaterGarden(page)
   await ready(page)
   await pause(page)
   await page.getByRole('tab', { name: '미로', exact: true }).click()
@@ -141,7 +144,9 @@ test('image-to-maze preserves photo aspect and interior gaps and opens in 2D, re
 test('15.9 mobile garden has an overhead inlet and controls outside the canvas', async ({ page }, info) => {
   test.setTimeout(120_000)
   await page.addInitScript(() => localStorage.setItem('mazecraft.water-studio.v1', JSON.stringify({ preset: 'garden', look: { theme: 'porcelain', light: 'daylight' }, color: '#16aeb7' })))
-  await page.goto('/')
+  await openWaterGarden(page)
+  await ready(page)
+  await page.getByRole('button', { name: '3D', exact: true }).click()
   const canvas = await ready(page)
   await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
   await expect.poll(async () => Number(await canvas.getAttribute('data-basin-time')), { timeout: 30_000 }).toBeGreaterThan(0)

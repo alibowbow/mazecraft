@@ -22,6 +22,7 @@ import {
   validateMaze,
 } from '../core/maze'
 import { HomeScreen, type ProjectTemplate } from '../features/home/HomeScreen'
+import { BrandMark } from '../components/BrandMark'
 import { ProjectService } from '../features/projects/projectService'
 import {
   createRemixProject,
@@ -97,7 +98,7 @@ function isLastWaterSelection(id: string): boolean {
 function RouteFallback({ label }: { label: string }) {
   return (
     <main className="route-loading" aria-live="polite">
-      <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
+      <BrandMark size={40} />
       <strong>{label}</strong>
       <span className="route-loading-bar" aria-hidden="true"><i /></span>
     </main>
@@ -270,11 +271,9 @@ export function App() {
         if (isLastWaterSelection(recovered.id)) setWaterProject(recovered)
         dispatch({ type: 'OPEN' })
       }
-      // Restore a classic editor project in its editor. Mounting the default
-      // water preset here would replace the recovered project through the
-      // WaterStudio onProjectChange effect before the user could resume it.
-      const recoveredRoute = recovered && !isLastWaterSelection(recovered.id) ? 'studio' : 'water'
-      setRoute(location.hash === '#/library' ? 'home' : recoveredRoute)
+      // MazeCraft opens on its home: the maze studio and the water garden are
+      // two doors from there. A recovered project is offered on the home.
+      setRoute('home')
     })()
     return () => {
       active = false
@@ -284,7 +283,7 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
     const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-    themeColor?.setAttribute('content', dark ? '#171a18' : '#f7f7f2')
+    themeColor?.setAttribute('content', dark ? '#0f171a' : '#f4f2ec')
   }, [dark])
 
   useEffect(
@@ -436,6 +435,14 @@ export function App() {
       rememberWaterSelection(project.id)
     }
     setGenerationTrace([])
+    setLibraryLocation(false)
+    setRoute('home')
+  }
+
+  const openWater = () => {
+    // The hub's door opens the water garden's own collection.
+    setWaterProject(null)
+    setLibraryLocation(false)
     setRoute('water')
   }
 
@@ -492,7 +499,7 @@ export function App() {
     : false
 
   if (route === 'loading') {
-    return <main className="loading-screen" aria-live="polite"><span className="brand-mark" aria-hidden="true"><span /><span /><span /></span><strong>MazeCraft</strong><p>프로젝트를 복구하고 있습니다…</p></main>
+    return <main className="loading-screen" aria-live="polite"><BrandMark size={40} /><strong>MazeCraft</strong><p>프로젝트를 복구하고 있습니다…</p></main>
   }
 
   return (
@@ -503,6 +510,7 @@ export function App() {
             initialProject={waterProject}
             onProjectChange={rememberWaterProject}
             onLibrary={() => { setWaterProject(project); setLibraryLocation(true); void refreshProjects(); setRoute('home') }}
+            onHome={() => { setWaterProject(project); setLibraryLocation(false); void refreshProjects(); setRoute('home') }}
             onEdit={(next) => { void editWaterProject(next) }}
             onSave={async (next) => { await service.save(next, false); rememberWaterSelection(next.id); await refreshProjects(); toast('미로를 저장했습니다.') }}
             onShare={(next) => { setProject(next); setShareMode('water'); setShareOpen(true) }}
@@ -510,12 +518,12 @@ export function App() {
         </Suspense>
       )}
       {route === 'home' && (
-        <>
-        <div className="water-collection-back"><button onClick={() => { setLibraryLocation(false); setRoute('water') }}>← 물 스튜디오</button></div>
         <HomeScreen
           projects={projects}
           onCreate={(template) => void createProject(template)}
           onOpen={openWaterProject}
+          onEdit={openProject}
+          onWater={openWater}
           onDuplicate={(source) => void duplicate(source)}
           onDelete={(source) => void remove(source)}
           onExport={(source) => setExportProject(source)}
@@ -523,7 +531,6 @@ export function App() {
           onThemeToggle={toggleTheme}
           dark={dark}
         />
-        </>
       )}
       {route === 'studio' && project && (
         <Suspense fallback={<RouteFallback label="제작실을 여는 중…" />}>

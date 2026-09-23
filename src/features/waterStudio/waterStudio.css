@@ -2,7 +2,7 @@
   --ws-ink: #283d40; --ws-muted: #738183; --ws-accent: #267e87; --ws-line: #dedfd8;
   --ws-preview-water: #a9d6d2; --ws-preview-wall: #fff9ea;
   height: 100dvh; min-height: 0; display: grid; grid-template-rows: 70px minmax(0, 1fr) 126px;
-  background: #faf9f5; color: var(--ws-ink); overflow: hidden; font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #faf9f5; color: var(--ws-ink); overflow: hidden; font-family: 'Pretendard Variable', Pretendard, Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .water-studio *, .water-studio *::before, .water-studio *::after { box-sizing: border-box; }
 .water-studio button, .water-studio select, .water-studio input { font: inherit; }
@@ -451,3 +451,10 @@
 .water-studio .ws-view-controls .ws-icon[aria-pressed="true"] { background: var(--ws-ink, #1f2a2c); color: #fff; }
 .water-studio .ws-start { position: absolute; z-index: 2; left: 50%; bottom: 96px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 999px; background: var(--ws-ink, #1f2a2c); color: #fff; font-size: 14px; font-weight: 600; box-shadow: 0 10px 30px rgba(20, 40, 45, 0.22); }
 .water-studio .ws-start:hover { filter: brightness(1.12); }
+/* The brand is also the way home. */
+.water-studio .ws-brand { padding: 0; text-align: left; border-radius: 0; }
+.water-studio .ws-brand:hover { background: none; }
+.water-studio .ws-brand:hover strong { color: var(--ws-accent); }
+@media (max-width: 800px) {
+  .water-studio .ws-navigation > button:first-of-type { display: none; }
+}

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readShareHash } from '../src/features/share/codec'
 import { e2eTimeout, waterStartupTimeout } from './helpers/runtimeBudget'
+import { openWaterGarden } from './helpers/navigation'
 
 // CI uses CPU-backed WebGL: a fresh transmission shader takes about 43 seconds
 // to present its first frame there. Keep normal UI/behavior assertions strict,
@@ -21,10 +22,16 @@ async function pause(page: Page) {
   await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
 }
 
-async function openStudio(page: Page) {
-  await page.goto('/')
+/** Home → the water garden door. The studio opens on its 2D view. */
+async function openStudio(page: Page, view: '2d' | '3d' = '2d') {
+  await openWaterGarden(page)
   const canvas = await waitForStudio(page)
-  await expect(canvas).toHaveAttribute('data-view-mode', 'surface-3d')
+  await expect(canvas).toHaveAttribute('data-view-mode', 'free-surface')
+  if (view === '3d') {
+    await page.getByRole('button', { name: '3D', exact: true }).click()
+    await expect(canvas).toHaveAttribute('data-view-mode', 'surface-3d')
+    await waitForStudio(page)
+  }
   return canvas
 }
 
@@ -42,7 +49,7 @@ test('water studio opens dry, flows once started, and tunes appearance without r
   test.setTimeout(e2eTimeout(90_000))
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  const canvas = await openStudio(page)
+  const canvas = await openStudio(page, '3d')
   // Nothing flows until the viewer starts the water.
   await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
   expect((await fluidState(page)).stored).toBe(0)
@@ -80,6 +87,8 @@ test('water studio opens dry, flows once started, and tunes appearance without r
   await page.screenshot({ path: testInfo.outputPath('water-studio-tuned.png') })
 
   await page.reload()
+  // A reload lands on the home; the water garden keeps the tuned look.
+  await page.getByRole('button', { name: '물의 정원 열기', exact: true }).click()
   await waitForStudio(page)
   await pause(page)
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')
@@ -103,9 +112,9 @@ test('water studio presets remain editable and can be saved to the project colle
   await page.getByRole('button', { name: '미로 저장', exact: true }).click()
   await expect(page.getByRole('button', { name: '미로 저장 완료', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '내 미로', exact: true }).click()
-  await expect(page.getByRole('button', { name: '← 물 스튜디오', exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '주 메뉴' }).getByRole('button', { name: '물의 정원', exact: true })).toBeVisible()
   await expect(page.getByText('트윈 플로우', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '← 물 스튜디오', exact: true }).click()
+  await page.getByRole('navigation', { name: '주 메뉴' }).getByRole('button', { name: '물의 정원', exact: true }).click()
   await waitForStudio(page)
   await pause(page)
   await page.getByRole('tab', { name: '미로', exact: true }).click()
@@ -153,6 +162,8 @@ test('edited water graph survives the editor round trip and opens as water in a 
   expect(edited.mazeGraph.rows).toBe(10)
   await page.getByRole('button', { name: '닫기', exact: true }).last().click()
   await page.getByRole('button', { name: '홈으로', exact: true }).click()
+  // Back on the home, the edited maze opens in the water garden.
+  await page.getByRole('button', { name: '편집한 작은 물 미로 물로 보기', exact: true }).click()
   await waitForStudio(page)
   await pause(page)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('편집한 작은 물 미로')
@@ -169,7 +180,7 @@ test('edited water graph survives the editor round trip and opens as water in a 
     const shared = await fresh.newPage()
     await shared.goto(waterLink)
     await waitForStudio(shared)
-    await expect(shared.getByTestId('water-studio-canvas')).toHaveAttribute('data-view-mode', 'surface-3d')
+    await expect(shared.getByTestId('water-studio-canvas')).toHaveAttribute('data-view-mode', 'free-surface')
     await expect(shared.getByRole('heading', { level: 1 })).toHaveText('편집한 작은 물 미로')
     await pause(shared)
     await shared.getByRole('button', { name: '현재 미로 공유', exact: true }).click()
