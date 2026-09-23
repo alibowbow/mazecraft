@@ -537,6 +537,7 @@ export class FreeSurfaceRenderer {
     this.scene.add(this.funnel)
 
     this.canvas.addEventListener('pointerdown', this.onPointerDown)
+    this.canvas.addEventListener('contextmenu', this.onContextMenu)
     this.canvas.addEventListener('pointermove', this.onPointerMove)
     this.canvas.addEventListener('pointerup', this.onPointerUp)
     this.canvas.addEventListener('pointercancel', this.onPointerUp)
@@ -796,7 +797,7 @@ export class FreeSurfaceRenderer {
     this.canvas.dataset.waterDetail = mode === 'surface-3d' ? 'multiband-ripples' : 'flat-meniscus'
     this.canvas.dataset.waterModel = mode === 'surface-3d' && this.sculpture !== 'extruded-flow' ? 'hydraulic-basin' : 'position-based-free-surface'
     this.canvas.setAttribute('aria-label', mode === 'surface-3d'
-      ? '벽 안에 담긴 미로의 물. 드래그로 회전하고 두 손가락으로 이동·확대합니다.'
+      ? '벽 안에 담긴 미로의 물. 드래그로 회전하고, 오른쪽 버튼 드래그나 두 손가락으로 이동·확대합니다.'
       : '중력에 따라 흐르는 미로의 물. 드래그로 이동하고 스크롤 또는 두 손가락으로 확대합니다.')
     if (mode === 'surface-3d' && !this.presentation3d) {
       const garden = gardenIdOf(this.sculpture)
@@ -1022,9 +1023,16 @@ export class FreeSurfaceRenderer {
     this.triangles = this.renderer.info.render.triangles
   }
 
+  /** A right- or middle-button mouse drag pans instead of orbiting. */
+  private panDrag = false
+
   private onPointerDown = (event: PointerEvent): void => {
-    if (event.pointerType === 'mouse' && event.button !== 0) return
+    if (event.pointerType === 'mouse' && event.button !== 0 && event.button !== 1 && event.button !== 2) return
     if (this.pointers.size >= 2) return
+    if (event.pointerType === 'mouse') {
+      this.panDrag = event.button !== 0
+      if (event.button === 1) event.preventDefault()
+    }
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     this.canvas.setPointerCapture(event.pointerId)
     this.canvas.style.cursor = 'grabbing'
@@ -1049,7 +1057,7 @@ export class FreeSurfaceRenderer {
       this.pinchDistance = pinch.distance
       this.pinchCenterX = pinch.x
       this.pinchCenterY = pinch.y
-    } else if (this.viewMode === 'surface-3d' && !event.shiftKey) {
+    } else if (this.viewMode === 'surface-3d' && !event.shiftKey && !this.panDrag) {
       const rect = this.canvas.getBoundingClientRect()
       this.trackball.rotate(
         previous.x - rect.left, previous.y - rect.top,
@@ -1069,8 +1077,11 @@ export class FreeSurfaceRenderer {
     this.pointers.delete(event.pointerId)
     if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId)
     if (this.pointers.size < 2) this.pinchDistance = 0
-    if (this.pointers.size === 0) this.canvas.style.cursor = 'grab'
+    if (this.pointers.size === 0) { this.canvas.style.cursor = 'grab'; this.panDrag = false }
   }
+
+  // Right-drag pans the view, so the browser menu stays out of the way.
+  private onContextMenu = (event: MouseEvent): void => { event.preventDefault() }
 
   private getPinch(): { distance: number; x: number; y: number } {
     const points = this.pointers.values()
@@ -1130,6 +1141,7 @@ export class FreeSurfaceRenderer {
     this.disposed = true
     this.observer.disconnect()
     this.canvas.removeEventListener('pointerdown', this.onPointerDown)
+    this.canvas.removeEventListener('contextmenu', this.onContextMenu)
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
     this.canvas.removeEventListener('pointercancel', this.onPointerUp)
