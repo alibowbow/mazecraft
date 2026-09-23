@@ -11,6 +11,7 @@ import { buildGardenSolids } from './geometry'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
 import { GardenPlants } from './plants'
+import { GardenDevices } from './devices'
 import { createGardenSky } from './environment'
 import type { GardenSnapshot } from './simulation'
 
@@ -58,6 +59,8 @@ export class GardenPresentation3D {
   private readonly materials: THREE.Material[] = []
   private readonly falls: GardenFalls
   private readonly plants: GardenPlants
+  private readonly devices: GardenDevices
+  private shadowFrame = 0
   private readonly sun = new THREE.DirectionalLight(0xfff4e2, 3)
   private readonly sky = new THREE.HemisphereLight(0xdfeeff, 0xd9c6a8, 0.0)
   private readonly shadows = new StudioShadows()
@@ -122,6 +125,8 @@ export class GardenPresentation3D {
     this.geometries.push(groundGeometry)
     this.scene.add(groundMesh)
 
+    this.devices = new GardenDevices(layout, this.trimMaterial, brass)
+    this.content.add(this.devices.group)
     this.falls = new GardenFalls(layout, this.uniforms)
     this.content.add(this.falls.group)
     this.plants = new GardenPlants()
@@ -251,6 +256,12 @@ export class GardenPresentation3D {
     })
     this.uniforms.uGardenTime.value = state.time
     this.falls.update(state, this.inflow)
+    this.devices.update(state)
+    // Moving machinery casts moving shadows: refresh them at a gentle rate.
+    if (this.devices.moved && ++this.shadowFrame % 3 === 0) {
+      this.sun.shadow.needsUpdate = true
+      this.renderer.shadowMap.needsUpdate = true
+    }
   }
 
   updateWater(time: number, style: number): void {
@@ -285,7 +296,7 @@ export class GardenPresentation3D {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.falls.dispose(); this.plants.dispose()
+    this.falls.dispose(); this.plants.dispose(); this.devices.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uLeafShade]) uniform.value.dispose()
