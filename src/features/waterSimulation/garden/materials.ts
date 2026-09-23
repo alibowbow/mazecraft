@@ -369,8 +369,8 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
     uStrength: { value: 0 }, uAeration: { value: 0.6 }, uTravel: { value: 0 }, uCurtainTint: { value: new THREE.Color(0.75, 0.93, 0.95) },
   }
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, roughness: 0.1, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    envMapIntensity: 1.3, ior: 1.333, specularIntensity: 1, sheen: 0.4, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffffff),
+    color: 0xffffff, roughness: 0.04, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    envMapIntensity: 1.4, ior: 1.333, specularIntensity: 1, transmission: 1, thickness: 0.05,
   })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
@@ -433,19 +433,22 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         float edge = smoothstep(0.0, 0.12, vCurtainUv.x) * smoothstep(1.0, 0.88, vCurtainUv.x);
         float lip = smoothstep(0.0, 0.04, along);
         // Aeration grows with the fall; the tail breaks into ragged fingers.
-        float aerated = uAeration * smoothstep(0.02, 0.85, along);
-        float white = clamp(aerated * 1.25 + (streaks - 0.5) * 1.1, 0.0, 1.0);
-        float tail = 1.0 - smoothstep(0.7, 1.0, along) * (1.0 - smoothstep(0.35, 0.75, streaks));
-        diffuseColor.rgb = mix(uCurtainTint * (0.9 + 0.1 * streaks), vec3(1.0), white);
-        float glassy = mix(0.28, 0.5, streaks) * (0.6 + 0.4 * vCurtainFacing);
-        diffuseColor.a = uStrength * edge * lip * tail * mix(glassy, 0.97, white);`)
+        // Clear, refracting water; only the bottom of a real drop aerates.
+        float aerated = uAeration * smoothstep(0.45, 1.0, along);
+        float white = smoothstep(0.35, 0.85, aerated * (0.55 + streaks * 0.9));
+        float tail = 1.0 - smoothstep(0.85, 1.0, along) * (1.0 - smoothstep(0.35, 0.75, streaks));
+        diffuseColor.rgb = mix(uCurtainTint, vec3(1.0), white);
+        diffuseColor.a = uStrength * edge * lip * tail * mix(0.9, 0.97, white);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(0.05, 0.6, white);`)
+        roughnessFactor = mix(0.03, 0.55, white);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        // Rope-like corrugation of a falling sheet: bends refraction and glints.
         vec2 streakSlope = streak.xy * 2.0 - 1.0;
-        normal = normalize(normal + vec3(streakSlope.x * 0.6, streakSlope.y * 0.2, 0.0));`)
+        normal = normalize(normal + vec3(streakSlope.x * 0.35 + (fine - 0.5) * 0.3, streakSlope.y * 0.1, 0.0));`)
+      .replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment
+        .replace('material.transmission = transmission;', 'material.transmission = transmission * (1.0 - white);'))
   }
-  material.customProgramCacheKey = () => 'garden-curtain-v2'
+  material.customProgramCacheKey = () => 'garden-curtain-v3'
   return { material, uniforms: own }
 }
 

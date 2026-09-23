@@ -14,12 +14,13 @@ export const GARDEN_SOURCE_FLOW = 0.14
  * the whole bed is wet does the level rise towards the weirs.
  */
 export const WETTING_FILM = 0.02
+/** Hydraulics run in real time. */
+export const HYDRAULIC_TIME_LAPSE = 1
 /**
- * Time-lapse: the pools fill at garden scale (tens of cubic metres), which
- * would take minutes in real time. Hydraulics advance this many seconds per
- * displayed second; ripples, falls and spray keep the real clock.
+ * A spreading film cannot outrun gravity: the wetting front advances at
+ * most this fast (m/s), roughly √(g·h) for a few centimetres of water.
  */
-export const HYDRAULIC_TIME_LAPSE = 4
+export const FRONT_SPEED = 0.75
 const FREEBOARD = 0.04
 
 export interface GardenState {
@@ -64,6 +65,8 @@ export class GardenSimulation {
   private readonly discharge: Float32Array
   private readonly throughflow: Float32Array
   private readonly fronts: Float32Array
+  /** Wetting front per pool (m along the wetting order); -1 while dry. */
+  private readonly front: Float64Array
   private readonly field: GardenField
   private readonly depth: Float32Array
   private readonly velocity: Float32Array
@@ -95,10 +98,41 @@ export class GardenSimulation {
     this.discharge = new Float32Array(layout.edges.length)
     this.throughflow = new Float32Array(count)
     this.fronts = new Float32Array(count)
+    this.front = new Float64Array(count).fill(-1)
     const cells = grid.rows * grid.cols
     this.depth = new Float32Array(cells)
     this.velocity = new Float32Array(cells * 2)
     this.connections = new Uint8Array(cells).fill(255)
+  }
+
+  private reach(pool: number): number {
+    const order = this.field.wettingOrder[pool]
+    return order.length ? order[order.length - 1] : 0
+  }
+
+  /** A pool can only spill once its front has wetted the whole bed. */
+  private wet(pool: number): boolean {
+    return this.front[pool] >= this.reach(pool) - 1e-9
+  }
+
+  /** Wetted share of a pool's bed behind its front. */
+  private wetShare(pool: number): number {
+    const order = this.field.wettingOrder[pool], front = this.front[pool]
+    if (front < 0 || !order.length) return 0
+    let low = 0, high = order.length
+    while (low < high) { const mid = (low + high) >> 1; if (order[mid] <= front) low = mid + 1; else high = mid }
+    return low / order.length
+  }
+
+  private advanceFronts(): void {
+    for (let i = 0; i < this.volumes.length; i++) {
+      if (this.volumes[i] <= 1e-9) { this.front[i] = -1; continue }
+      const order = this.field.wettingOrder[i]
+      const share = Math.min(1, this.volumes[i] / (this.areas[i] * WETTING_FILM))
+      const target = share >= 1 || !order.length ? this.reach(i) : order[Math.floor(share * order.length)]
+      if (this.front[i] < 0) this.front[i] = 0
+      this.front[i] = Math.min(Math.max(this.front[i], target), this.front[i] + FRONT_SPEED * STEP)
+    }
   }
 
   level(pool: number): number {
@@ -113,7 +147,9 @@ export class GardenSimulation {
     for (let k = 0; k < edges.length; k++) {
       const edge = edges[k]
       const levelA = this.level(edge.a)
+      if (!this.wet(edge.a) && (edge.b < 0 || !this.wet(edge.b))) { this.flow[k] = 0; continue }
       if (edge.b < 0 || edge.kind === 'spout') {
+        if (!this.wet(edge.a)) { this.flow[k] = 0; continue }
         // Drains and spouts only ever discharge outward and downward.
         const head = levelA - edge.crest
         let q = head > 0 ? WEIR_COEFFICIENT * edge.width * head ** 1.5 : 0
@@ -130,7 +166,7 @@ export class GardenSimulation {
       const up = forward ? edge.a : edge.b, down = forward ? edge.b : edge.a
       const upperLevel = forward ? levelA : levelB, lowerLevel = forward ? levelB : levelA
       const head = upperLevel - edge.crest
-      if (head <= 0) { this.flow[k] = 0; continue }
+      if (head <= 0 || !this.wet(up)) { this.flow[k] = 0; continue }
       let q = WEIR_COEFFICIENT * edge.width * head ** 1.5 * villemonte(head, lowerLevel - edge.crest)
       // Never transfer more than half of what would equalise the two pools.
       const a = this.areas[up], b = this.areas[down]
@@ -146,6 +182,7 @@ export class GardenSimulation {
     const { edges, source } = this.layout
     this.accumulator += Math.min(0.5, seconds) * HYDRAULIC_TIME_LAPSE
     while (this.accumulator + 1e-10 >= STEP) {
+      this.advanceFronts()
       this.computeFlows()
       this.outflow.fill(0)
       for (let k = 0; k < edges.length; k++) {
@@ -184,6 +221,7 @@ export class GardenSimulation {
   reset(): void {
     this.volumes.set(this.initialVolumes)
     this.flow.fill(0)
+    this.front.fill(-1)
     this.time = 0; this.accumulator = 0
     this.injected = 0; this.drained = 0; this.escaped = 0
     this.sourceRate = 0; this.drainRate = 0
@@ -207,15 +245,14 @@ export class GardenSimulation {
     for (let i = 0; i < this.volumes.length; i++) {
       const film = this.areas[i] * WETTING_FILM
       const volume = this.volumes[i]
-      if (volume <= 1e-9) {
+      if (volume <= 1e-9 || this.front[i] < 0) {
         this.levels[i] = this.floors[i] - 0.01; this.fronts[i] = -1
-      } else if (volume < film) {
-        // Spreading: the wet footprint holds the film, in wetting order.
-        const order = this.field.wettingOrder[i]
-        const k = Math.min(order.length - 1, Math.floor(volume / film * order.length))
-        this.fronts[i] = order.length ? order[k] : FAR
-        this.levels[i] = this.floors[i] + WETTING_FILM
-        wetArea += this.areas[i] * volume / film
+      } else if (!this.wet(i)) {
+        // Spreading: water stands on the wetted part of the bed only.
+        const share = Math.max(1e-3, this.wetShare(i))
+        this.fronts[i] = this.front[i]
+        this.levels[i] = this.floors[i] + Math.min(0.12, Math.max(WETTING_FILM, volume / (this.areas[i] * share)))
+        wetArea += this.areas[i] * share
       } else {
         this.fronts[i] = FAR
         this.levels[i] = this.level(i)

@@ -94,12 +94,8 @@ export function buildGardenSolids(layout: GardenLayout): GardenSolids {
       const solid = roundedSolid(region, 0, vessel.top, 0.11, spec.floor)
       if (solid) walls.push(solid)
     }
-    // Weirs stand on the lowest bed of their vessel.
-    for (const sill of vessel.sills) for (const region of sill.regions) {
-      const solid = roundedSolid(region, vessel.baseFloor - 0.05, sill.crest, 0.06)
-      if (solid) walls.push(solid)
-    }
-    // Beds: the full interior at the lowest level, raised slabs for upper pools.
+    // Beds: the full interior at the lowest level, raised terraces for upper
+    // pools. Each terrace edge is a clean step the water pours over.
     for (const region of vessel.interior) beds.push(flat(region, vessel.baseFloor))
     for (const pool of layout.pools.filter(p => p.vessel === vessel.index)) {
       if (pool.floor > vessel.baseFloor + 0.001) {

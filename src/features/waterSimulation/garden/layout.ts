@@ -7,9 +7,15 @@ import {
 /** Walls are cut this far under their faces so water edges hide inside them. */
 export const WATER_TUCK = 0.03
 export const SPOUT_SILL_RADIUS = 0.07
-export const SILL_WIDTH = 0.2
-/** Water depth each pool holds below its lowest outlet crest. */
-export const BED_DEPTH = 0.17
+/**
+ * Weirs are not walls: a pool ends where the bed steps down. The step is
+ * modelled as a hair-thin cut that separates the two pools' water.
+ */
+export const STEP_CUT = 0.006
+/** Water standing on a terrace below its step edge (the wetting film). */
+export const BED_DEPTH = 0.02
+/** Receiving troughs keep a real pool below their drain. */
+export const TROUGH_DEPTH = 0.17
 
 export interface CompiledVessel {
   index: number
@@ -121,13 +127,18 @@ export function compileGarden(design: GardenDesign): GardenLayout {
     const wallShapes = widths.map(width => strokes(spec.walls.filter(wall => (wall.width ?? spec.wallWidth) === width), width / 2))
     const raw = union(rimShape, ...wallShapes, polygon(...spec.islands))
     const walls = soften(raw, 0.1, 0.07)
-    const sillShapes = spec.sills.map(sill => strokes([{ points: sill.points }], SILL_WIDTH / 2))
+    const sillShapes = spec.sills.map(sill => {
+      // Reach a little into the walls at both ends so the cut always seals.
+      const p = sill.points, n = p.length
+      const extend = (from: Vec2, to: Vec2): Vec2 => { const d = normalize([to[0] - from[0], to[1] - from[1]]); return add(to, d, 0.1) }
+      return strokes([{ points: [extend(p[1], p[0]), ...p, extend(p[n - 2], p[n - 1])] }], STEP_CUT)
+    })
     const spoutSills = spec.spouts.map(spout => {
       const direction = normalize(spout.direction), across: Vec2 = [-direction[1], direction[0]]
       return strokes([{ points: [add(spout.at, across, -spout.width / 2 - 0.05), add(spout.at, across, spout.width / 2 + 0.05)] }], SPOUT_SILL_RADIUS)
     })
     const interior = polygon(spec.outline)
-    const obstacles = offset(union(walls, ...sillShapes, ...spoutSills), -WATER_TUCK)
+    const obstacles = union(offset(union(walls, ...spoutSills), -WATER_TUCK), ...sillShapes)
     const free = regions(difference(interior, obstacles)).filter(region => regionArea(region) > 0.04)
     const vesselPools = free.map(region => {
       const offsets = spec.floors.filter(floor => regionContains(region, floor.seed)).map(floor => floor.offset)
@@ -191,11 +202,33 @@ export function compileGarden(design: GardenDesign): GardenLayout {
       points: [spout.at], normal: direction, lipStart: add(spout.at, direction, -spec.rimWidth / 2), lipEnd, landing,
     })
   }
+  // Orient every step downstream: its upper side is the pool the water
+  // reaches first from the source.
+  const hops = new Array<number>(pools.length).fill(Infinity)
+  const firstPool = findPool(add(design.source.lip, normalize([design.source.lip[0] - design.source.tower[0], design.source.lip[1] - design.source.tower[1]]), 0.14), design.source.lipZ)
+  if (firstPool) {
+    hops[firstPool.index] = 0
+    for (let changed = true; changed;) {
+      changed = false
+      for (const edge of edges) if (edge.b >= 0) {
+        const next = Math.min(hops[edge.a], hops[edge.b]) + 1
+        if (hops[edge.a] > next) { hops[edge.a] = next; changed = true }
+        if (hops[edge.b] > next) { hops[edge.b] = next; changed = true }
+      }
+    }
+  }
+  for (const edge of edges) if (edge.kind === 'sill' && hops[edge.b] < hops[edge.a]) {
+    const a = edge.a
+    edge.a = edge.b; edge.b = a
+    edge.normal = [-edge.normal[0], -edge.normal[1]]
+  }
   // Raise each bed to a fixed depth below its lowest outlet: pools fill in
   // seconds rather than minutes, and walls keep plenty of freeboard.
   for (const pool of pools) {
     const outlets = edges.filter(edge => edge.a === pool.index && edge.kind !== 'drain').map(edge => edge.crest)
-    if (outlets.length) pool.floor = Math.max(pool.floor, Math.min(...outlets) - BED_DEPTH)
+    // Terraces: the bed sits just under its step edge, so the water runs
+    // shallow across each level and pours over the edge onto the next.
+    if (outlets.length) pool.floor = Math.min(...outlets) - BED_DEPTH
   }
   for (const vessel of vessels) {
     const own = pools.filter(pool => pool.vessel === vessel.index)

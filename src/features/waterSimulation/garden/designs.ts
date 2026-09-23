@@ -359,7 +359,12 @@ function routeSills(maze: Lattice, route: Cell[], fractions: number[], avoid: (c
   let lastIndex = 1
   for (const fraction of fractions) {
     let k = Math.max(lastIndex + 1, Math.round(fraction * (route.length - 1)))
-    while (k < route.length - 1 && (avoid(route[k - 1]) || avoid(route[k]))) k++
+    const { x0, y0, x1, y1 } = maze.bounds
+    // A step line must end on a wall or on the straight part of the rim;
+    // the rim's rounded corners do not pass through lattice corners.
+    const atCorner = (a: Cell, b: Cell) => maze.sillBetween(a, b).some(([x, y]) =>
+      (Math.abs(x - x0) < 1e-6 || Math.abs(x - x1) < 1e-6) && (Math.abs(y - y0) < 1e-6 || Math.abs(y - y1) < 1e-6))
+    while (k < route.length - 1 && (avoid(route[k - 1]) || avoid(route[k]) || atCorner(route[k - 1], route[k]))) k++
     if (k >= route.length - 1) break
     result.push({ points: maze.sillBetween(route[k - 1], route[k]), downstream: route[k] })
     lastIndex = k
@@ -418,8 +423,11 @@ function atelier(): GardenDesign {
   const solids = [{ i: 6, j: 3 }]
   const entry = { i: 0, j: 5 }, exit = { i: 5, j: 0, side: 'south' as const }
   const maze = lattice({ cols, rows, pitch, origin, seed: 'atelier-garden-v2', rooms, solids, entry, exits: [exit], straightness: 0.55 })
-  const floor = 0.62, height = 0.8
-  const sills = routeSills(maze, maze.routes[0], [0.34, 0.68], inRoom(rooms, solids))
+  const floor = 0.62, height = 0.95
+  // Steps may not touch a merged room (its inner vertices carry no wall).
+  const insideRoom = (cell: Cell) => rooms.some(room => cell.i >= room.i && cell.i < room.i + room.w && cell.j >= room.j && cell.j < room.j + room.h)
+    || solids.some(solid => solid.i === cell.i && solid.j === cell.j)
+  const sills = routeSills(maze, maze.routes[0], [0.12, 0.26, 0.4, 0.54, 0.68, 0.82], insideRoom)
   const fountain = maze.vertex(4, 3)
   const spiralCenter = maze.vertex(1, 1)
   const spiral = Array.from({ length: 160 }, (_, k) => {
@@ -432,8 +440,8 @@ function atelier(): GardenDesign {
     outline: latticeRim(maze, 0.9),
     walls: [...maze.walls, { points: spiral, width: 0.24 }],
     islands: [...maze.islands, circle(fountain[0], fountain[1], 0.5)],
-    sills: sills.map((sill, k) => ({ points: sill.points, crest: [0.36, 0.24][k] })),
-    spouts: [{ ...spout, width: 0.62, crest: 0.12, length: 0.5 }],
+    sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.56 - 0.08 * k })),
+    spouts: [{ ...spout, width: 0.62, crest: 0.56 - 0.08 * sills.length, length: 0.5 }],
     floors: sills.map((sill, k) => ({ seed: maze.center(sill.downstream), offset: -0.1 * (k + 1) })),
     planters: [maze.center({ i: 6, j: 3 })],
   }
@@ -465,12 +473,12 @@ function cascade(): GardenDesign {
     const exit = { i: exits[level], j: 0, side: 'south' as const }
     const maze = lattice({ cols, rows, pitch, origin, seed: `cascade-level-${level}`, entry, exits: [exit], straightness: 0.35 })
     spout = maze.spout(exit)
-    const sills = routeSills(maze, maze.routes[0], [0.5], () => false)
+    const sills = routeSills(maze, maze.routes[0], [0.34, 0.67], () => false)
     vessels.push({
-      name: `cascade-basin-${level}`, floor: floors[level], wallHeight: 0.74, wallWidth: 0.32, rimWidth: RIM,
+      name: `cascade-basin-${level}`, floor: floors[level], wallHeight: 0.8, wallWidth: 0.32, rimWidth: RIM,
       outline: latticeRim(maze, 0.75), walls: maze.walls, islands: [],
-      sills: sills.map(sill => ({ points: sill.points, crest: 0.32 })),
-      spouts: [{ ...spout, width: 0.56, crest: 0.16, length }],
+      sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.34 - 0.08 * k })),
+      spouts: [{ ...spout, width: 0.56, crest: 0.34 - 0.08 * sills.length, length }],
       floors: sills.map(sill => ({ seed: maze.center(sill.downstream), offset: -0.1 })),
       planters: [],
     })
@@ -512,12 +520,12 @@ function split(): GardenDesign {
       seed: `twin-side-${k}`, entry, exits: [exit], straightness: 0.4 })
     const spout = maze.spout(exit)
     sideSpouts.push(spout)
-    const sills = routeSills(maze, maze.routes[0], [0.5], () => false)
+    const sills = routeSills(maze, maze.routes[0], [0.34, 0.67], () => false)
     vessels.push({
-      name: `twin-${west ? 'west' : 'east'}`, floor: sideFloor, wallHeight: 0.7, wallWidth: 0.32, rimWidth: RIM,
+      name: `twin-${west ? 'west' : 'east'}`, floor: sideFloor, wallHeight: 0.78, wallWidth: 0.32, rimWidth: RIM,
       outline: latticeRim(maze, 0.7), walls: maze.walls, islands: [],
-      sills: sills.map(sill => ({ points: sill.points, crest: 0.32 })),
-      spouts: [{ ...spout, width: 0.5, crest: 0.16, length }],
+      sills: sills.map((sill, k) => ({ points: sill.points, crest: 0.34 - 0.08 * k })),
+      spouts: [{ ...spout, width: 0.5, crest: 0.34 - 0.08 * sills.length, length }],
       floors: sills.map(sill => ({ seed: maze.center(sill.downstream), offset: -0.1 })), planters: [],
     })
   })
