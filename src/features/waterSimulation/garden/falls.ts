@@ -3,6 +3,7 @@ import type { GardenLayout } from './layout'
 import type { GardenState } from './simulation'
 import { criticalDepth, sourceMouth } from './geometry'
 import { TIPPER_ARM, TIPPER_RADIUS, tipperPoint } from './mechanics'
+import { PROFILE_SAMPLES, transportEdges } from './simulation'
 import { createCurtainMaterial, createDropletMaterial, MAX_IMPACTS, type CurtainUniforms, type GardenUniforms } from './materials'
 
 const G = 9.81
@@ -41,7 +42,8 @@ export class GardenFalls {
   constructor(private readonly layout: GardenLayout, private readonly uniforms: GardenUniforms) {
     this.group.name = 'garden-falls'
     // Two curtains for the source, two per spout, one per weir, one per tipper.
-    const count = 2 + layout.tippers.length + layout.edges.reduce((sum, edge) => sum + (edge.kind === 'spout' ? 2 : edge.kind === 'sill' ? 1 : 0), 0)
+    // Chutes and norias: intake (or bucket dump) plus outfall; siphons: outfall.
+    const count = 2 + layout.tippers.length + layout.edges.reduce((sum, edge) => sum + (edge.kind === 'chute' || edge.kind === 'lift' ? 2 : edge.kind === 'siphon' ? 1 : 0), 0) + layout.edges.reduce((sum, edge) => sum + (edge.kind === 'spout' ? 2 : edge.kind === 'sill' ? 1 : 0), 0)
     for (let i = 0; i < count; i++) {
       const { material, uniforms: own } = createCurtainMaterial(uniforms)
       const mesh = new THREE.Mesh(this.geometry, material)
@@ -179,6 +181,36 @@ export class GardenFalls {
       const reach = 0.04 + Math.min(0.9, pour / (TIPPER_RADIUS * 2 * 0.06)) * 0.02
       this.sheet(index++, new THREE.Vector3(x, y, z), back, reach, drop, TIPPER_RADIUS * 1.7, 0.9, strength, 0.55, 1.2, dt)
       if (strength > 0.01) this.targets.push({ x: x + back[0] * reach, y: y + back[1] * reach, z: lower, radius: 0.32, strength: Math.min(1, strength * (0.5 + drop)) })
+    }
+    // Chutes, noria troughs and siphons.
+    transportEdges(layout).forEach((edge, row) => {
+      const path = edge.path!, first = path[0], last = path[path.length - 1], before = path[path.length - 2]
+      const arriving = Math.max(0, state.channelFlow[row * PROFILE_SAMPLES + PROFILE_SAMPLES - 1])
+      const width = edge.kind === 'lift' ? layout.lifts[edge.lift!].width * 0.9 : edge.width
+      if (edge.kind === 'chute') {
+        const q = Math.max(0, state.discharge[edge.index]), at = edge.points[0], upstream = level(edge.a)
+        const h = criticalDepth(q, width)
+        this.sheet(index++, new THREE.Vector3(at[0], at[1], upstream - 0.004), edge.normal, Math.hypot(first[0] - at[0], first[1] - at[1]),
+          Math.max(0, upstream - (edge.crest + h)), width * 0.98, 0, THREE.MathUtils.smoothstep(q, 0, 0.012), 0.1, 0.8, dt)
+      } else {
+        // Noria buckets tip over the top of the wheel into the trough beside it.
+        const lift = layout.lifts[edge.lift!], load = Math.max(0, state.liftLoads[edge.lift!])
+        const toward: [number, number] = [first[0] - lift.center[0], first[1] - lift.center[1]]
+        const reach = Math.hypot(toward[0], toward[1]) || 1
+        const top = lift.hub + lift.radius - 0.05
+        this.sheet(index++, new THREE.Vector3(lift.center[0], lift.center[1], top), [toward[0] / reach, toward[1] / reach], reach, Math.max(0, top - first[2] - 0.02),
+          Math.min(0.3, width * 0.6), 0.3, THREE.MathUtils.smoothstep(load, 0, 0.02), 0.35, 1.0, dt)
+      }
+      const dx = last[0] - before[0], dy = last[1] - before[1], l = Math.hypot(dx, dy) || 1
+      this.fall(index++, last[0], last[1], last[2] + criticalDepth(arriving, width) * 0.9, [dx / l, dy / l], level(edge.b), arriving, width, 0.5, dt)
+    })
+    for (const siphon of layout.siphons) {
+      const edge = layout.edges[siphon.edge], q = Math.max(0, state.discharge[edge.index])
+      const mouth = siphon.path[siphon.path.length - 1]
+      // A full-bore jet straight down out of the pipe mouth.
+      this.sheet(index++, new THREE.Vector3(mouth[0], mouth[1], mouth[2]), edge.normal, 0.02, Math.max(0, mouth[2] - level(edge.b)),
+        siphon.diameter * 0.6, 0.5, THREE.MathUtils.smoothstep(q, 0, 0.02), 0.7, 1.6, dt)
+      if (q > 0.01) this.targets.push({ x: mouth[0], y: mouth[1], z: level(edge.b), radius: siphon.diameter * 1.4, strength: Math.min(1, q * 5) })
     }
     const drain = layout.edges.find(edge => edge.kind === 'drain')
     if (drain) {

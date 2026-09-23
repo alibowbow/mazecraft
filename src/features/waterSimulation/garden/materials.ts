@@ -548,3 +548,74 @@ export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vec
   material.customProgramCacheKey = () => 'garden-sand-ground-v1'
   return { material, background }
 }
+
+export interface ChannelUniforms {
+  uChannelFlow: THREE.IUniform<THREE.DataTexture>
+  uChannelTint: THREE.IUniform<THREE.Color>
+}
+
+/**
+ * Water running along chutes and troughs. The flow texture holds the
+ * simulated discharge sampled along every channel (one row each), so the
+ * advancing head, its foam and the depth all follow the transit lines.
+ */
+export function createChannelWaterMaterial(uniforms: GardenUniforms, flow: THREE.DataTexture): { material: THREE.MeshPhysicalMaterial; uniforms: ChannelUniforms } {
+  const own: ChannelUniforms = { uChannelFlow: { value: flow }, uChannelTint: { value: new THREE.Color(0.72, 0.92, 0.94) } }
+  const material = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, roughness: 0.05, metalness: 0, transparent: true, depthWrite: false,
+    envMapIntensity: 1.3, ior: 1.333, specularIntensity: 1, transmission: 1, thickness: 0.04,
+  })
+  material.onBeforeCompile = shader => {
+    inject(shader, uniforms)
+    Object.assign(shader.uniforms, own)
+    const common = `
+        uniform sampler2D uChannelFlow;
+        attribute float aAlong;
+        attribute float aRow;
+        attribute float aSide;
+        attribute float aLength;
+        attribute float aWidth;
+        varying float vFlow;
+        varying float vAhead;
+        varying vec2 vChannel;
+        float channelFlow(float along) { return texture2D(uChannelFlow, vec2(along, aRow)).r; }`
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${common}`)
+      .replace('#include <begin_vertex>', `
+        vFlow = channelFlow(aAlong);
+        vAhead = channelFlow(min(1.0, aAlong + 0.35 / aLength));
+        // Critical depth over the channel width, crowned in the middle.
+        float depth = clamp(pow(max(vFlow, 0.0) / (1.705 * aWidth), 0.6667), 0.0, 0.13);
+        vec3 transformed = position;
+        transformed.z += 0.004 + depth * (1.0 + 0.12 * (1.0 - aSide * aSide));
+        vChannel = vec2(aAlong * aLength, aSide * aWidth * 0.5);`)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform sampler2D uRipplesA;
+        uniform sampler2D uRipplesB;
+        uniform vec3 uChannelTint;
+        varying float vFlow;
+        varying float vAhead;
+        varying vec2 vChannel;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float wet = smoothstep(0.0005, 0.004, vFlow);
+        if (wet < 0.01) discard;
+        // The advancing head: churned white where water has nothing ahead.
+        float head = 1.0 - smoothstep(0.0005, 0.006, vAhead);
+        vec2 flowUv = vec2(vChannel.x * 0.9 - uGardenTime * 1.4, vChannel.y * 1.6);
+        vec4 ripple = texture2D(uRipplesA, flowUv * vec2(0.5, 1.0));
+        float fine = texture2D(uRipplesB, vec2(vChannel.x * 2.1 - uGardenTime * 2.2, vChannel.y * 3.0)).a;
+        float white = clamp(head * (0.55 + fine * 0.6) + smoothstep(0.62, 0.9, ripple.a * 0.6 + fine * 0.5) * 0.35, 0.0, 1.0);
+        diffuseColor.rgb = mix(uChannelTint, vec3(1.0), white);
+        diffuseColor.a = wet * mix(0.9, 0.97, white);`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = mix(0.04, 0.5, white);`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        vec2 channelSlope = ripple.xy * 2.0 - 1.0;
+        normal = normalize(normal + vec3(channelSlope * 0.35, 0.0) + vec3((fine - 0.5) * 0.25));`)
+      .replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment
+        .replace('material.transmission = transmission;', 'material.transmission = transmission * (1.0 - white);'))
+  }
+  material.customProgramCacheKey = () => 'garden-channel-water-v1'
+  return { material, uniforms: own }
+}

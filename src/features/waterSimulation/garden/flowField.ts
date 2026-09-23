@@ -158,9 +158,9 @@ export function buildGardenField(layout: GardenLayout, cell = 0.05, margin = 2.2
   for (const p of layout.pools) {
     const exits: Vec2[] = [], entries: Vec2[] = []
     for (const edge of layout.edges) {
-      const points = edge.kind === 'sill' ? along(edge.points) : edge.kind === 'spout' ? [edge.points[0]] : edge.points
+      const points = edge.kind === 'sill' ? along(edge.points) : [edge.points[0]]
       if (edge.a === p.index) exits.push(...points)
-      if (edge.b === p.index) entries.push(...(edge.kind === 'spout' ? [edge.landing!] : points))
+      if (edge.b === p.index) entries.push(...(edge.landing ? [edge.landing] : points))
     }
     if (layout.source.pool === p.index) entries.push(layout.source.landing)
     seeds(toExit, exits, p.index, 0.45)
