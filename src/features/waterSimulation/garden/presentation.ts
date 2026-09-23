@@ -447,7 +447,7 @@ export class GardenPresentation3D {
     this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
-    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uLeafShade]) uniform.value.dispose()
+    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB]) uniform.value.dispose()
     this.environment?.dispose()
     this.sun.shadow.dispose()
     this.scene.clear()
