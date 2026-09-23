@@ -133,7 +133,11 @@ const WALL_TILE_GLSL = /* glsl */ `
     tileUv.x += mod(floor(tileUv.y), 2.0) * 0.5;
     vec2 cell = floor(tileUv), f = fract(tileUv);
     vec2 footprint = fwidth(tileUv);
-    float face = 1.0 - smoothstep(0.3, 0.5, abs(stoneNormal.z));
+    // Tiles cover the upright faces only (by the triangle's own facet, not
+    // the smoothed normal); the rounded crown and foot stay plain glaze, so
+    // the pattern ends on a clean line instead of a zigzag.
+    vec3 facet = normalize(cross(dFdx(vGardenWorld), dFdy(vGardenWorld)));
+    float face = 1.0 - smoothstep(0.12, 0.2, abs(facet.z));
     wallFade = (1.0 - smoothstep(0.25, 0.7, max(footprint.x, footprint.y))) * face;
     float h = gardenHash(cell + 17.0), k = gardenHash(cell + 3.1);
     // Box-filtered grout lines: exact up close, their mean shade far away.
@@ -248,7 +252,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           #endif`)
     }
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v7`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v8`
   return material
 }
 
