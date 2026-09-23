@@ -50,7 +50,7 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
 
   it.each([0.1, 0.65, 1, 2.5])('conserves water and stays inside its walls at %s× supply', inflow => {
     const simulation = new GardenSimulation(layout, grid)
-    for (let second = 0; second < 600; second++) simulation.advance(1, inflow)
+    for (let second = 0; second < (inflow < 0.5 ? 900 : 300); second++) simulation.advance(1, inflow)
     const state = simulation.snapshot()
     const available = state.initialStoredVolume + state.diagnostics.injected
     expect(state.diagnostics.massError / available).toBeLessThan(1e-9)
@@ -65,9 +65,27 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     for (const edge of layout.edges) expect(state.garden.discharge[edge.index], `${edge.kind} ${edge.index}`).toBeGreaterThan(0)
   })
 
+  it('starts dry and wets its channels progressively from the source', () => {
+    const simulation = new GardenSimulation(layout, grid)
+    const dry = simulation.snapshot()
+    expect(dry.diagnostics.stored).toBe(0)
+    expect(Array.from(dry.garden.fronts).every(front => front < 0)).toBe(true)
+    const fronts: number[] = []
+    for (let step = 0; step < 8; step++) {
+      simulation.advance(0.25, 1)
+      const state = simulation.snapshot()
+      fronts.push(state.garden.fronts[layout.source.pool])
+      // Water has not yet reached the receiving basin in the first seconds.
+      const drainPool = layout.edges.find(edge => edge.kind === 'drain')!.a
+      expect(state.garden.fronts[drainPool]).toBeLessThan(0)
+    }
+    expect(fronts[0]).toBeGreaterThan(0)
+    for (let k = 1; k < fronts.length; k++) expect(fronts[k]).toBeGreaterThanOrEqual(fronts[k - 1])
+  })
+
   it('drains towards the weir crests when the supply stops, then resets exactly', () => {
     const simulation = new GardenSimulation(layout, grid)
-    simulation.advance(60, 0.65)
+    for (let second = 0; second < 200; second++) simulation.advance(1, 0.65)
     const flowing = simulation.snapshot()
     const flowingLevels = Array.from(flowing.garden.levels)
     for (let second = 0; second < 180; second++) simulation.advance(1, 0)
@@ -79,6 +97,6 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     simulation.reset()
     const reset = simulation.snapshot()
     expect(reset.diagnostics.time).toBe(0)
-    expect(reset.diagnostics.stored).toBeCloseTo(reset.initialStoredVolume, 12)
+    expect(reset.diagnostics.stored).toBe(0)
   })
 })

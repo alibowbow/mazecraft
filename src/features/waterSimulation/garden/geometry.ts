@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
+import { TessellateModifier } from 'three/addons/modifiers/TessellateModifier.js'
 import type { GardenLayout } from './layout'
 import { offset, regions, shapeOf, type Region, type Vec2 } from './polygon'
 
@@ -112,10 +113,16 @@ export function buildGardenSolids(layout: GardenLayout): GardenSolids {
       soil.push(disc)
     }
   }
-  // Water sheets: one flat region per pool, lifted to its level in the shader.
+  // Water sheets: one region per pool, finely tessellated so the vertex
+  // shader can raise real waves; lifted to the pool's level on the GPU.
+  const tessellate = new TessellateModifier(0.14, 9)
   for (const pool of layout.pools) {
-    const geometry = new THREE.ShapeGeometry(toShape(pool.region), 4)
-    geometry.deleteAttribute('uv')
+    const flatSheet = new THREE.ShapeGeometry(toShape(pool.region), 4)
+    flatSheet.deleteAttribute('uv'); flatSheet.deleteAttribute('normal')
+    const geometry = tessellate.modify(flatSheet)
+    flatSheet.dispose()
+    for (const name of Object.keys(geometry.attributes)) if (name !== 'position') geometry.deleteAttribute(name)
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(geometry.getAttribute('position').count * 3).map((_, i) => i % 3 === 2 ? 1 : 0), 3))
     geometry.setAttribute('aPool', new THREE.Float32BufferAttribute(new Float32Array(geometry.getAttribute('position').count).fill(pool.index), 1))
     water.push(geometry)
   }

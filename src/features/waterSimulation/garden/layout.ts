@@ -8,6 +8,8 @@ import {
 export const WATER_TUCK = 0.03
 export const SPOUT_SILL_RADIUS = 0.07
 export const SILL_WIDTH = 0.2
+/** Water depth each pool holds below its lowest outlet crest. */
+export const BED_DEPTH = 0.17
 
 export interface CompiledVessel {
   index: number
@@ -188,6 +190,16 @@ export function compileGarden(design: GardenDesign): GardenLayout {
       index: edges.length, kind: 'spout', a: source.index, b: target.index, crest, width: spout.width,
       points: [spout.at], normal: direction, lipStart: add(spout.at, direction, -spec.rimWidth / 2), lipEnd, landing,
     })
+  }
+  // Raise each bed to a fixed depth below its lowest outlet: pools fill in
+  // seconds rather than minutes, and walls keep plenty of freeboard.
+  for (const pool of pools) {
+    const outlets = edges.filter(edge => edge.a === pool.index && edge.kind !== 'drain').map(edge => edge.crest)
+    if (outlets.length) pool.floor = Math.max(pool.floor, Math.min(...outlets) - BED_DEPTH)
+  }
+  for (const vessel of vessels) {
+    const own = pools.filter(pool => pool.vessel === vessel.index)
+    if (own.length) vessel.baseFloor = Math.min(...own.map(pool => pool.floor))
   }
   const { source: sourceSpec } = design
   const direction = normalize([sourceSpec.lip[0] - sourceSpec.tower[0], sourceSpec.lip[1] - sourceSpec.tower[1]])

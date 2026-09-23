@@ -5,7 +5,8 @@ import { criticalDepth } from './geometry'
 import { createCurtainMaterial, createDropletMaterial, MAX_IMPACTS, type CurtainUniforms, type GardenUniforms } from './materials'
 
 const G = 9.81
-const DROPLETS_PER_IMPACT = 18
+const crestZ0 = (crest: number, h: number, lower: number) => Math.max(crest + h * 0.85, lower) + 0.006
+const DROPLETS_PER_IMPACT = 36
 
 interface Curtain {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshPhysicalMaterial>
@@ -29,7 +30,7 @@ export interface FallTarget {
 export class GardenFalls {
   readonly group = new THREE.Group()
   private readonly curtains: Curtain[] = []
-  private readonly geometry = new THREE.PlaneGeometry(1, 1, 8, 28)
+  private readonly geometry = new THREE.PlaneGeometry(1, 1, 12, 40)
   private readonly droplets: THREE.InstancedMesh
   private readonly dropletGeometry: THREE.BufferGeometry
   private readonly dropletMaterial: THREE.MeshStandardMaterial
@@ -143,10 +144,13 @@ export class GardenFalls {
         const h = criticalDepth(flow, edge.width)
         const velocity = THREE.MathUtils.clamp(flow / (edge.width * Math.max(0.01, h)), 0.2, 1.8)
         const fallTime = Math.sqrt(2 * Math.max(0, drop) / G)
-        const reach = 0.2 + velocity * fallTime
+        const reach = 0.1 + velocity * Math.sqrt(2 * Math.max(0, crestZ0(edge.crest, h, lowerLevel) - lowerLevel) / G)
         const strength = THREE.MathUtils.smoothstep(flow, 0, 0.01) * THREE.MathUtils.smoothstep(drop, 0.005, 0.03)
-        const start = new THREE.Vector3(mid[0] - direction[0] * 0.1, mid[1] - direction[1] * 0.1, upperLevel - 0.003)
-        this.sheet(index++, start, direction, reach, Math.max(0, drop), edge.width * 0.98, 0.04, strength, THREE.MathUtils.clamp(0.1 + drop * 2.2, 0.1, 0.7), velocity, dt)
+        // The nappe leaves from the crest itself (dry weir top), so it never
+        // intersects the rippling pool surfaces on either side.
+        const crestZ = Math.max(edge.crest + h * 0.85, lowerLevel) + 0.006
+        const start = new THREE.Vector3(mid[0], mid[1], crestZ)
+        this.sheet(index++, start, direction, reach, Math.max(0, crestZ - lowerLevel + 0.02), edge.width * 0.98, 0.04, strength, THREE.MathUtils.clamp(0.1 + drop * 2.2, 0.1, 0.7), velocity, dt)
         if (strength > 0.01 && drop > 0.03) {
           this.targets.push({ x: start.x + direction[0] * reach, y: start.y + direction[1] * reach, z: lowerLevel, radius: edge.width * 0.5, strength: Math.min(1, strength * (0.3 + drop * 1.5)) })
         }
