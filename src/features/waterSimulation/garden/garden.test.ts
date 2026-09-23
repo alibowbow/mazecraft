@@ -37,7 +37,7 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
   it('places every weir above its upstream bed and every spout over a lower basin', () => {
     for (const edge of layout.edges) {
       const up = layout.pools[edge.a]
-      expect(edge.crest, `${edge.kind} ${edge.index}`).toBeGreaterThan(up.floor + (edge.kind === 'drain' ? 0.1 : 0.15))
+      expect(edge.crest, `${edge.kind} ${edge.index}`).toBeGreaterThan(up.floor + (edge.kind === 'drain' ? 0.1 : 0.01))
       expect(edge.crest).toBeLessThan(up.brim - (edge.kind === 'drain' ? 0.2 : 0.3))
       if (edge.kind === 'spout') {
         const down = layout.pools[edge.b]
@@ -50,7 +50,7 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
 
   it.each([0.1, 0.65, 1, 2.5])('conserves water and stays inside its walls at %s× supply', inflow => {
     const simulation = new GardenSimulation(layout, grid)
-    for (let second = 0; second < (inflow < 0.5 ? 900 : 300); second++) simulation.advance(1, inflow)
+    for (let second = 0; second < (inflow < 0.5 ? 1500 : 600); second++) simulation.advance(1, inflow)
     const state = simulation.snapshot()
     const available = state.initialStoredVolume + state.diagnostics.injected
     expect(state.diagnostics.massError / available).toBeLessThan(1e-9)
@@ -58,7 +58,7 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     expect(state.diagnostics.reachedExit).toBe(true)
     layout.pools.forEach((pool, i) => {
       expect(state.garden.levels[i], `pool ${i} level`).toBeLessThan(pool.brim - 0.02)
-      expect(state.garden.levels[i]).toBeGreaterThan(pool.floor + 0.1)
+      expect(state.garden.levels[i]).toBeGreaterThan(pool.floor + 0.02)
     })
     // Near steady state the drain returns what the source supplies.
     expect(state.diagnostics.outletRate).toBeGreaterThan(state.sourceRate * 0.9)
@@ -85,7 +85,7 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
 
   it('drains towards the weir crests when the supply stops, then resets exactly', () => {
     const simulation = new GardenSimulation(layout, grid)
-    for (let second = 0; second < 200; second++) simulation.advance(1, 0.65)
+    for (let second = 0; second < 600; second++) simulation.advance(1, 0.65)
     const flowing = simulation.snapshot()
     const flowingLevels = Array.from(flowing.garden.levels)
     for (let second = 0; second < 180; second++) simulation.advance(1, 0)

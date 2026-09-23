@@ -119,7 +119,7 @@ export class GardenFalls {
     const channelStart = new THREE.Vector3(source.tower[0] + source.direction[0] * 0.2, source.tower[1] + source.direction[1] * 0.2, source.lipZ + h0)
     const channelLength = Math.hypot(source.lip[0] - channelStart.x, source.lip[1] - channelStart.y)
     this.sheet(index++, channelStart, source.direction, channelLength, 0, source.width * 0.98, 0, THREE.MathUtils.smoothstep(q0, 0, 0.012), 0.12, 0.6, dt)
-    this.fall(index++, source.lip[0], source.lip[1], source.lipZ + h0 * 0.85, source.direction, level(source.pool), q0, source.width, 0.7, dt)
+    this.fall(index++, source.lip[0], source.lip[1], source.lipZ + h0 * 0.85, source.direction, level(source.pool), q0, source.width, 0.45, dt)
     for (const edge of layout.edges) {
       const q = state.discharge[edge.index]
       if (edge.kind === 'spout') {
@@ -131,7 +131,7 @@ export class GardenFalls {
         const strength = THREE.MathUtils.smoothstep(flow, 0, 0.012)
         this.sheet(index++, new THREE.Vector3(at[0], at[1], upstream - 0.004), edge.normal, Math.hypot(end[0] - at[0], end[1] - at[1]),
           Math.max(0, upstream - (edge.crest + h)), edge.width * 0.98, 0, strength, 0.1, 0.8, dt)
-        this.fall(index++, end[0], end[1], edge.crest + h * 0.9, edge.normal, level(edge.b), flow, edge.width, 0.8, dt)
+        this.fall(index++, end[0], end[1], edge.crest + h * 0.9, edge.normal, level(edge.b), flow, edge.width, 0.5, dt)
       } else if (edge.kind === 'sill') {
         const forward = q >= 0
         const up = forward ? edge.a : edge.b, down = forward ? edge.b : edge.a
@@ -150,7 +150,7 @@ export class GardenFalls {
         // intersects the rippling pool surfaces on either side.
         const crestZ = Math.max(edge.crest + h * 0.85, lowerLevel) + 0.006
         const start = new THREE.Vector3(mid[0], mid[1], crestZ)
-        this.sheet(index++, start, direction, reach, Math.max(0, crestZ - lowerLevel + 0.02), edge.width * 0.98, 0.04, strength, THREE.MathUtils.clamp(0.1 + drop * 2.2, 0.1, 0.7), velocity, dt)
+        this.sheet(index++, start, direction, reach, Math.max(0, crestZ - lowerLevel + 0.02), edge.width * 0.98, 0.04, strength, THREE.MathUtils.clamp(drop * 1.5, 0, 0.35), velocity, dt)
         if (strength > 0.01 && drop > 0.03) {
           this.targets.push({ x: start.x + direction[0] * reach, y: start.y + direction[1] * reach, z: lowerLevel, radius: edge.width * 0.5, strength: Math.min(1, strength * (0.3 + drop * 1.5)) })
         }
