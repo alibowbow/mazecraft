@@ -77,32 +77,6 @@ export const GARDEN_COMMON_GLSL = /* glsl */ `
     return mix(mix(gardenHash(i), gardenHash(i + vec2(1.0, 0.0)), u.x),
       mix(gardenHash(i + vec2(0.0, 1.0)), gardenHash(i + vec2(1.0, 1.0)), u.x), u.y);
   }
-  // Craquelure: the fine crackle of a fired glaze. F2 − F1 of a jittered
-  // cell grid gives the distance to the nearest crack.
-  vec2 gardenCell(vec2 i) {
-    return vec2(gardenHash(i), gardenHash(i + vec2(17.3, 9.1))) * 0.8 + 0.1;
-  }
-  float gardenCrack(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    float d1 = 8.0, d2 = 8.0;
-    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-      vec2 g = vec2(float(x), float(y));
-      float d = length(g + gardenCell(i + g) - f);
-      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
-    }
-    return d2 - d1;
-  }
-  // Cracks on the face's dominant plane, faded out once finer than a pixel.
-  float gardenCraquelure(vec3 p, vec3 n) {
-    vec3 a = abs(n);
-    vec2 uv = a.z > max(a.x, a.y) ? p.xy : (a.x > a.y ? p.yz : p.xz);
-    vec2 coarse = uv * 7.5, fine = uv * 19.0 + 3.7;
-    float fadeCoarse = 1.0 - smoothstep(0.25, 0.8, length(fwidth(coarse)));
-    float fadeFine = 1.0 - smoothstep(0.25, 0.8, length(fwidth(fine)));
-    float c = (1.0 - smoothstep(0.012, 0.06, gardenCrack(coarse))) * fadeCoarse;
-    float f = (1.0 - smoothstep(0.0, 0.04, gardenCrack(fine))) * fadeFine * 0.55;
-    return max(c, f);
-  }
   // Refracted-sunlight network: the classic tileable iterated-domain caustic
   // (period 2π in p). Band-limited by the pixel footprint so distant beds
   // settle to their mean brightness instead of shimmering.
@@ -151,9 +125,9 @@ export interface CeramicLook {
  */
 export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | 'bed' | 'trim'): THREE.MeshPhysicalMaterial {
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0xf2ece2, roughness: kind === 'bed' ? 0.36 : 0.3, metalness: 0,
-    clearcoat: kind === 'bed' ? 0.55 : 1, clearcoatRoughness: kind === 'bed' ? 0.12 : 0.045,
-    ior: 1.5, envMapIntensity: 1, sheen: kind === 'wall' ? 0.25 : 0, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff1dc),
+    color: 0xf2ece2, roughness: kind === 'bed' ? 0.3 : 0.22, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: kind === 'bed' ? 0.06 : 0.02,
+    ior: 1.5, envMapIntensity: 1.25, sheen: 0, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff1dc),
   })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
@@ -171,27 +145,32 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
     }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <color_fragment>', `#include <color_fragment>
-        // Fired glaze over a stoneware body. The glaze pools deeper (richer
-        // tone) in hollows and thins over rounded crowns, where the warm body
-        // shows through; soft mottling, iron specks and a fine craquelure
-        // make it read as ceramic rather than moulded plastic.
-        vec3 glazeNormal = normalize(vGardenNormal);
-        float glazeCloud = gardenNoise(vGardenWorld.xy * 1.7 + vGardenWorld.z * 0.9) * 0.6 + gardenNoise(vGardenWorld.xy * 5.3 + vGardenWorld.z * 2.1) * 0.4;
-        diffuseColor.rgb *= 0.93 + glazeCloud * 0.1;
-        // Glaze thickness shifts the tone a little, as a real firing does.
-        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.97, 1.0, 1.02), smoothstep(0.45, 0.8, gardenNoise(vGardenWorld.xy * 0.8 - vGardenWorld.z * 0.6)));
-        float crown = smoothstep(0.12, 0.45, glazeNormal.z) * (1.0 - smoothstep(0.72, 0.96, glazeNormal.z));
-        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.03, 0.985, 0.94), crown * 0.55);
-        float speck = step(0.988, gardenHash(floor(vGardenWorld.xy * 150.0) + floor(vGardenWorld.z * 150.0)));
-        diffuseColor.rgb *= 1.0 - speck * 0.12;
-        float crackle = gardenCraquelure(vGardenWorld, glazeNormal);
-        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.72, 0.71, 0.68), crackle * 0.48);`)
-      .replace('#include <clearcoat_normal_fragment_maps>', `#include <clearcoat_normal_fragment_maps>
-        // Orange peel: the gentle waviness of a real glaze surface bends the
-        // mirrored sky, where a moulded surface would reflect it flat.
-        vec2 peel = vec2(gardenNoise(vGardenWorld.xy * 11.0 + vGardenWorld.z * 7.0), gardenNoise(vGardenWorld.yx * 11.0 - vGardenWorld.z * 5.0)) - 0.5;
-        vec2 swell = vec2(gardenNoise(vGardenWorld.xy * 2.3 + vGardenWorld.z), gardenNoise(vGardenWorld.yx * 2.3 - vGardenWorld.z)) - 0.5;
-        clearcoatNormal = normalize(clearcoatNormal + mat3(viewMatrix) * vec3(peel * 0.05 + swell * 0.07, 0.0));`)
+        vec3 stoneNormal = normalize(vGardenNormal);
+        ${kind === 'bed' ? `
+          // Pool floor: small glass mosaic tiles set in pale grout, each tile
+          // a slightly different tint, as in a hotel pool.
+          vec2 tileUv = vGardenWorld.xy / 0.055;
+          vec2 tileCell = floor(tileUv), tileFrac = fract(tileUv);
+          float tileTint = gardenHash(tileCell);
+          float grout = 1.0 - smoothstep(0.035, 0.09, min(min(tileFrac.x, 1.0 - tileFrac.x), min(tileFrac.y, 1.0 - tileFrac.y)));
+          float groutFade = 1.0 - smoothstep(0.35, 0.9, length(fwidth(tileUv)));
+          vec3 tile = diffuseColor.rgb * mix(vec3(0.95, 0.99, 1.0), vec3(1.02, 1.01, 0.99), tileTint);
+          diffuseColor.rgb = mix(tile, diffuseColor.rgb * vec3(0.86, 0.87, 0.86), grout * groutFade * 0.8);
+        ` : `
+          // Polished marble: soft grey veins drifting through a warm white
+          // body, with the odd thread of gold, continuous over every face.
+          vec3 mp = vGardenWorld * 0.9;
+          float warp = gardenNoise(mp.xy * 1.1 + mp.z * 0.7) * 1.6 + gardenNoise(mp.yz * 2.3 - mp.x * 0.5) * 0.8 + gardenNoise(mp.xz * 4.7) * 0.35;
+          float band = mp.x * 0.8 + mp.y * 0.55 + mp.z * 0.9 + warp * 2.2;
+          float vein = 1.0 - smoothstep(0.0, 0.12, abs(sin(band * 2.4)));
+          float hair = 1.0 - smoothstep(0.0, 0.05, abs(sin(band * 6.1 + warp * 3.0)));
+          float cloud = gardenNoise(mp.xy * 0.6 + mp.z * 0.4);
+          float veinMask = smoothstep(0.2, 0.6, gardenNoise(mp.yx * 0.45 + 3.1));
+          diffuseColor.rgb *= 0.97 + cloud * 0.05;
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.58, 0.6, 0.63), vein * veinMask * 0.62 + hair * veinMask * 0.3);
+          float gold = (1.0 - smoothstep(0.0, 0.035, abs(sin(band * 1.3 + 1.7)))) * smoothstep(0.62, 0.85, gardenNoise(mp.xy * 0.3 + 7.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.78, 0.63, 0.38), gold * 0.7);
+        `}`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(roughnessFactor * (0.85 + gardenNoise(vGardenWorld.xy * 3.1) * 0.3), 0.04, 1.0);`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
@@ -222,7 +201,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
         reflectedLight.indirectSpecular *= mix(1.0, gardenAo, 0.75);
       `)
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v2`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v3`
   return material
 }
 
