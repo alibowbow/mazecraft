@@ -165,7 +165,10 @@ export class FreeSurfaceRuntime {
   private announceReady() {
     if (this.announcedReady) return
     this.announcedReady = true
-    this.onReady()
+    // Reveal the scene only once its shaders are compiled.
+    const warming = this.renderer.sceneWarming?.()
+    if (warming) void warming.then(() => { if (!this.disposed) this.onReady() })
+    else this.onReady()
   }
 
   private publishCurrent() {

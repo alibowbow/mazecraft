@@ -5,6 +5,12 @@ async function ready(page: Page) {
   await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: 90_000 })
   return page.locator('canvas.water-simulation-canvas')
 }
+/** Scenes open dry and paused; pause again if a test started the water. */
+async function pause(page: Page) {
+  const button = page.getByRole('button', { name: '일시정지', exact: true })
+  if (await button.isVisible()) await button.click()
+  await expect(page.getByRole('button', { name: '재생', exact: true })).toBeVisible()
+}
 async function flow(page: Page) {
   return page.locator('canvas.water-simulation-canvas').evaluate((canvas: HTMLCanvasElement) => ({ time: Number(canvas.dataset.particleTime), count: Number(canvas.dataset.particleCount), stored: Number(canvas.dataset.particleStoredVolume) }))
 }
@@ -32,8 +38,9 @@ test('custom water retains the same gravity and inlet across 2D/3D, edits live, 
   await page.goto('/')
   const canvas = await ready(page)
   await expect(canvas).toHaveAttribute('data-water-model', 'position-based-free-surface')
+  await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
   await expect.poll(async () => (await flow(page)).count, { timeout: 30_000 }).toBeGreaterThan(5)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   const paused = await flow(page)
   await page.getByRole('tab', { name: '색상', exact: true }).click()
   await expect(page.getByLabel('2D 격자 색상', { exact: true })).toHaveCount(0)
@@ -97,13 +104,13 @@ test('custom water retains the same gravity and inlet across 2D/3D, edits live, 
   expect(errors).toEqual([])
 })
 
-test('image-to-maze preserves photo aspect and interior gaps and opens directly in flowing 2D', async ({ page }, info) => {
+test('image-to-maze preserves photo aspect and interior gaps and opens in 2D, ready to flow', async ({ page }, info) => {
   test.setTimeout(180_000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto('/')
   await ready(page)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('tab', { name: '미로', exact: true }).click()
   await page.getByLabel('미로 모양 이미지 업로드').setInputFiles({ name: 'portrait-silhouette.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="240"><rect width="160" height="240" fill="white"/><path d="M25 220V125L55 95V25H105V95L135 125V220Z" fill="black"/><circle cx="80" cy="57" r="16" fill="white"/></svg>') })
   await expect(page.getByRole('img', { name: '이미지 모양 미리보기' })).toBeVisible()
@@ -111,8 +118,9 @@ test('image-to-maze preserves photo aspect and interior gaps and opens directly 
   await page.getByRole('button', { name: '이 이미지로 미로 만들기', exact: true }).click()
   const canvas = await ready(page)
   await expect(canvas).toHaveAttribute('data-view-mode', 'free-surface')
+  await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
   await expect.poll(async () => (await flow(page)).count, { timeout: 30_000 }).toBeGreaterThan(0)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   await page.getByRole('button', { name: '미로 저장', exact: true }).click()
   await expect(page.getByRole('button', { name: '미로 저장 완료', exact: true })).toBeVisible()
   const project = await page.evaluate(async () => {
@@ -135,8 +143,9 @@ test('15.9 mobile garden has an overhead inlet and controls outside the canvas',
   await page.addInitScript(() => localStorage.setItem('mazecraft.water-studio.v1', JSON.stringify({ preset: 'garden', look: { theme: 'porcelain', light: 'daylight' }, color: '#16aeb7' })))
   await page.goto('/')
   const canvas = await ready(page)
+  await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
   await expect.poll(async () => Number(await canvas.getAttribute('data-basin-time')), { timeout: 30_000 }).toBeGreaterThan(0)
-  await page.getByRole('button', { name: '일시정지', exact: true }).click()
+  await pause(page)
   const board = (await canvas.boundingBox())!, dock = (await page.locator('.ws-control-dock').boundingBox())!
   expect(dock.y).toBeGreaterThanOrEqual(board.y + board.height - 1)
   const dimensions = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth }))

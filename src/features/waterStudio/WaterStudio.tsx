@@ -140,7 +140,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     let runtime: FreeSurfaceRuntime | null = null
     const resume = flowResume.current
     flowResume.current = undefined
-    setRenderState('loading'); setStatus(null); setPaused(resume?.paused ?? false); setInflow(resume?.inflow ?? true); setSaveState('idle')
+    setRenderState('loading'); setStatus(null); setPaused(resume?.paused ?? true); setInflow(resume?.inflow ?? true); setSaveState('idle')
     try {
       const current = latest.current
       runtime = new FreeSurfaceRuntime(mount, project, 'high', current.preferences.surface,
@@ -155,6 +155,8 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
       runtime.setAppearance({ color: current.preferences.color, profile: current.preferences.color === AQUA_WATER_APPEARANCE.color ? 'aqua' : current.preferences.color ? 'tinted' : 'clear', opacity: current.preferences.opacity })
       runtime.setInflowRate(current.preferences.flow)
       runtime.setSpeed(current.preferences.speed)
+      // A fresh scene waits, dry, until the viewer starts the water.
+      if (!resume) runtime.setPaused(true)
       runtimeRef.current = runtime
     } catch (reason) {
       runtime?.dispose()
@@ -178,7 +180,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     return () => window.removeEventListener('keydown', close)
   }, [])
 
-  const [follow, setFollow] = useState(true)
+  const [follow, setFollow] = useState(false)
   useEffect(() => { runtimeRef.current?.setFollow(follow) }, [follow, sculpture])
   const togglePlayback = () => { runtimeRef.current?.setPaused(!paused); setPaused(!paused) }
   const toggleInflow = () => { runtimeRef.current?.setInflow(!inflow); setInflow(!inflow) }
@@ -259,11 +261,12 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
             const point = runtimeRef.current?.pointAt(event.clientX, event.clientY)
             if (point) { const next = editWaterMazeWall(project, point.x, point.y); if (next) applyLiveProject(next) }
           }} />
+        {renderState === 'ready' && paused && !(status?.simulationTime) && <button className="ws-start" onClick={togglePlayback}><Play size={18} fill="currentColor" /><span>물 흘려보내기</span></button>}
         {renderState === 'loading' && <div className="ws-stage-message" role="status"><Waves size={30} /><span>수로를 준비하고 있습니다</span></div>}
         {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>화면을 시작하지 못했습니다</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
         {wallEditing && mode === 'free-surface' && <button className="ws-edit-done" onClick={() => setWallEditing(false)}>벽 편집 중 · 완료</button>}
         {mode === 'free-surface' && <label className="ws-resolution-bar"><span>해상도</span><input aria-label="미로 해상도" type="range" min={4} max={128} step={1} value={resolutionPreview ?? Math.max(project.mazeGraph.rows, project.mazeGraph.cols)} onChange={event => changeResolution(Number(event.target.value))} /><output>{resolutionPreview ? `${resolutionPreview}칸` : `${project.mazeGraph.cols} × ${project.mazeGraph.rows}`}</output></label>}
-        <div className="ws-control-dock"><div className="ws-view-controls"><div className="ws-segment" aria-label="보기 방식"><button aria-pressed={mode === 'surface-3d'} onClick={() => setMode('surface-3d')}>3D</button><button aria-pressed={mode === 'free-surface'} onClick={() => setMode('free-surface')}>2D</button></div><button className="ws-icon" aria-label="축소" onClick={() => runtimeRef.current?.zoomCamera(1 / 1.2)}><Minus size={17} /></button><button className="ws-icon" aria-label="확대" onClick={() => runtimeRef.current?.zoomCamera(1.2)}><Plus size={17} /></button><button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button>{mode === 'surface-3d' && sculpture?.startsWith('garden:') && <button className="ws-icon" aria-label="물길 따라가기" title="물길 따라가기" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button>}</div>
+        <div className="ws-control-dock"><div className="ws-view-controls"><div className="ws-segment" aria-label="보기 방식"><button aria-pressed={mode === 'surface-3d'} onClick={() => setMode('surface-3d')}>3D</button><button aria-pressed={mode === 'free-surface'} onClick={() => setMode('free-surface')}>2D</button></div><button className="ws-icon" aria-label="축소" onClick={() => runtimeRef.current?.zoomCamera(1 / 1.2)}><Minus size={17} /></button><button className="ws-icon" aria-label="확대" onClick={() => runtimeRef.current?.zoomCamera(1.2)}><Plus size={17} /></button><button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button>{mode === 'surface-3d' && sculpture?.startsWith('garden:') && <button className="ws-icon" aria-label="물 추적 모드" title="물 추적 모드" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button>}</div>
         <div className="ws-transport">
           <button className="ws-play" aria-label={paused ? '재생' : '일시정지'} disabled={renderState !== 'ready'} onClick={togglePlayback}>{paused ? <Play size={20} fill="currentColor" /> : <Pause size={20} fill="currentColor" />}</button>
           <button className="ws-icon" aria-label="물 다시 붓기" disabled={renderState !== 'ready'} onClick={restart}><RotateCcw size={19} /></button>
