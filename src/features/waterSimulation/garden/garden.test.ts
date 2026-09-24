@@ -3,6 +3,8 @@ import { GARDEN_IDS, createGardenDesign } from './designs'
 import { compileGarden, type GardenLayout } from './layout'
 import { GardenSimulation } from './simulation'
 import { tipperLowest } from './mechanics'
+import { regionContains } from './polygon'
+import { CHANNEL_BOTTOM, resample } from './geometry'
 
 const grid = { rows: 8, cols: 8, activeCellCount: 64 }
 
@@ -106,6 +108,23 @@ describe.each(GARDEN_IDS)('%s water garden', id => {
     for (const lift of layout.lifts) {
       const edge = layout.edges[lift.edge]
       expect(layout.pools[edge.b].floor, 'the noria lifts water uphill').toBeGreaterThan(layout.pools[edge.a].brim + 1)
+      // The whole wheel, frames included, stands inside its own sump.
+      const sump = layout.vessels[layout.pools[lift.pool].vessel]
+      const [dx, dy] = lift.direction, reach = lift.width / 2 + 0.52
+      for (const along of [-lift.radius, lift.radius]) for (const across of [-reach, reach]) {
+        const corner: [number, number] = [lift.center[0] + dx * along - dy * across, lift.center[1] + dy * along + dx * across]
+        expect(sump.footprint.some(region => regionContains(region, corner)), `noria ${lift.index} fits its sump`).toBe(true)
+      }
+    }
+    // Troughs and chutes pass over every basin wall they cross, never through it.
+    for (const edge of layout.edges) if (edge.path && edge.kind !== 'siphon') {
+      const start = edge.path[0]
+      for (const point of resample(edge.path, 0.1)) {
+        if (Math.hypot(point[0] - start[0], point[1] - start[1]) < 0.3) continue
+        for (const vessel of layout.vessels) if (vessel.footprint.some(region => regionContains(region, [point[0], point[1]]))) {
+          expect(point[2] - CHANNEL_BOTTOM, `${edge.kind} ${edge.index} clears ${vessel.spec.name}`).toBeGreaterThan(vessel.top)
+        }
+      }
     }
     const simulation = new GardenSimulation(layout, grid)
     let arrival = -1, primes = 0, primed = false

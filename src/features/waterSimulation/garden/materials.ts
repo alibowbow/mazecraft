@@ -447,6 +447,9 @@ export interface CurtainUniforms {
   uDrop: THREE.IUniform<number>
   uWidth: THREE.IUniform<number>
   uFlare: THREE.IUniform<number>
+  /** Sheet thickness at the lip (m) and speed leaving it (m/s). */
+  uThickness: THREE.IUniform<number>
+  uSpeed: THREE.IUniform<number>
   uStrength: THREE.IUniform<number>
   uAeration: THREE.IUniform<number>
   uTravel: THREE.IUniform<number>
@@ -461,7 +464,7 @@ export interface CurtainUniforms {
 export function createCurtainMaterial(uniforms: GardenUniforms): { material: THREE.MeshPhysicalMaterial; uniforms: CurtainUniforms } {
   const own: CurtainUniforms = {
     uStart: { value: new THREE.Vector3() }, uDirection: { value: new THREE.Vector2(0, -1) },
-    uReach: { value: 0.3 }, uDrop: { value: 0.5 }, uWidth: { value: 0.5 }, uFlare: { value: 0.15 },
+    uReach: { value: 0.3 }, uDrop: { value: 0.5 }, uWidth: { value: 0.5 }, uFlare: { value: 0.15 }, uThickness: { value: 0.02 }, uSpeed: { value: 1 },
     uStrength: { value: 0 }, uAeration: { value: 0.6 }, uTravel: { value: 0 }, uCurtainTint: { value: new THREE.Color(0.75, 0.93, 0.95) },
   }
   const material = new THREE.MeshPhysicalMaterial({
@@ -480,6 +483,8 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         uniform float uWidth;
         uniform float uFlare;
         uniform float uTravel;
+        uniform float uThickness;
+        uniform float uSpeed;
         varying vec2 vCurtainUv;
         varying float vCurtainFacing;`)
       .replace('#include <beginnormal_vertex>', `
@@ -497,7 +502,10 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
           vec3 objectTangent = curtainAcross;
         #endif`)
       .replace('#include <begin_vertex>', `
-        float thickness = min(0.07, uWidth * 0.14) * (0.6 + 0.8 * cv);
+        // Continuity (q = h·v): the sheet leaves the lip as deep as the water
+        // over it and thins as gravity accelerates it.
+        float fallSpeed = sqrt(uSpeed * uSpeed + 2.0 * 9.81 * uDrop * cv * cv);
+        float thickness = uThickness * uSpeed / fallSpeed;
         // Travelling wobble: the sheet necks and swells as it falls.
         float wobble = sin(cv * 9.0 - uTravel * 5.0 + uv.x * 3.0) * 0.012 * cv;
         vec3 transformed = uStart + curtainDir * (uReach * cv) - vec3(0.0, 0.0, uDrop * cv * cv)
@@ -530,11 +538,15 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         float lip = smoothstep(0.0, 0.04, along);
         // Aeration grows with the fall; the tail breaks into ragged fingers.
         // Clear, refracting water; only the bottom of a real drop aerates.
-        float aerated = uAeration * smoothstep(0.45, 1.0, along);
+        float aerated = uAeration * smoothstep(0.3, 1.0, along) * mix(0.75, 1.2, clamp(uDrop / 0.8, 0.0, 1.0));
+        // The free edges of a sheet fray into strands first.
+        float side = 1.0 - smoothstep(0.0, 0.22, min(vCurtainUv.x, 1.0 - vCurtainUv.x));
+        aerated += side * 0.45 * smoothstep(0.08, 0.5, along);
         float white = smoothstep(0.35, 0.85, aerated * (0.55 + streaks * 0.9));
         float tail = 1.0 - smoothstep(0.85, 1.0, along) * (1.0 - smoothstep(0.35, 0.75, streaks));
         diffuseColor.rgb = mix(uCurtainTint, vec3(1.0), white);
-        diffuseColor.a = uStrength * edge * lip * tail * mix(0.9, 0.97, white);`)
+        // Clear water is mostly seen by what it bends and reflects.
+        diffuseColor.a = uStrength * edge * lip * tail * mix(0.72, 0.97, white);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(0.03, 0.55, white);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -544,7 +556,7 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
       .replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment
         .replace('material.transmission = transmission;', 'material.transmission = transmission * (1.0 - white);'))
   }
-  material.customProgramCacheKey = () => 'garden-curtain-v3'
+  material.customProgramCacheKey = () => 'garden-curtain-v5'
   return { material, uniforms: own }
 }
 
@@ -646,6 +658,7 @@ export function createChannelWaterMaterial(uniforms: GardenUniforms, flow: THREE
         vFlow = channelFlow(aAlong);
         vAhead = channelFlow(min(1.0, aAlong + 0.35 / aLength));
         // Critical depth over the channel width, crowned in the middle.
+        // Capped just under the channel walls (falls.ts OPEN_DEPTH).
         float depth = clamp(pow(max(vFlow, 0.0) / (1.705 * aWidth), 0.6667), 0.0, 0.13);
         vec3 transformed = position;
         transformed.z += 0.004 + depth * (1.0 + 0.12 * (1.0 - aSide * aSide));

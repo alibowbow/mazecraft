@@ -476,6 +476,11 @@ export interface TailOptions {
   noriaRadius?: number
 }
 
+/** Axle height above the wheel's reach: its rims clear the sump bed and its pots dip. */
+export const NORIA_CLEARANCE = 0.1
+/** Trough bed below the top of the wheel: under the pots' path as they pour. */
+export const NORIA_TROUGH_DROP = 0.47
+
 /** Length of the cantilever a machine tail expects on the spout that feeds it. */
 export const TAIL_SPOUT_LENGTH = 0.8
 
@@ -488,16 +493,28 @@ export const TAIL_SPOUT_LENGTH = 0.8
 export function machineTail(spout: { at: Vec2; direction: Vec2 }, rimWidth: number, options: TailOptions): VesselSpec[] {
   const u = spout.direction, v: Vec2 = [-u[1] * options.side, u[0] * options.side]
   const lipEnd = along(spout.at, u, v, rimWidth / 2 + TAIL_SPOUT_LENGTH, 0)
-  const R = options.noriaRadius ?? 1.85, hub = 0.1 + R
-  const wheel = along(lipEnd, u, v, 1.35, 0)
-  const sump = roundBasin('noria-sump', along(wheel, u, v, -0.35, 0), 1.5, 0.05, 0.5, 0.4, {
+  const R = options.noriaRadius ?? 1.85, hub = NORIA_CLEARANCE + R, W = 0.5
+  // The wheel turns in the plane of the course, clear of the spout's jet;
+  // the current it sets up runs along the sump under the wheel. Pots rise on
+  // the far side and pour over the top into a trough that sits beside the
+  // wheel, under the pots' path, and leaves along the axle towards the tower.
+  const wheel = along(lipEnd, u, v, R + 0.75, 0)
+  const sumpFrom = -(R + 0.75) - 0.5, sumpTo = R + 0.45, sumpHalf = 1.05
+  const sumpCenter = along(wheel, u, v, (sumpFrom + sumpTo) / 2, 0)
+  const sumpLength = sumpTo - sumpFrom
+  const tower = along(wheel, u, v, 0, 3.9)
+  const troughZ = hub + R - NORIA_TROUGH_DROP
+  const sump: VesselSpec = {
+    name: 'noria-sump', floor: 0.05, wallHeight: 0.5, wallWidth: 0.3, rimWidth: 0.4,
+    // A long basin laid along the course (any heading).
+    outline: roundedRect(0, 0, sumpLength, sumpHalf * 2, sumpHalf * 0.95).map(([a, b]) => along(sumpCenter, u, [-u[1], u[0]], a, b)),
+    walls: [], islands: [], sills: [], spouts: [], floors: [], planters: [],
     lifts: [{
-      center: wheel, direction: v, radius: R, hub, width: 0.5,
-      path: [[...along(wheel, u, v, 0.55, 0), hub + 0.85 * R], [...along(wheel, u, v, 0.55, 3.35), hub + 0.85 * R - 0.1]] as Vec3[],
+      center: wheel, direction: u, radius: R, hub, width: W,
+      path: [[...along(wheel, u, v, 0, W / 2 + 0.06), troughZ], [...along(tower, u, v, 0, -0.45), troughZ - 0.1]] as Vec3[],
     }],
-  })
-  const tower = along(wheel, u, v, 0.55, 3.9)
-  const cupRadius = 0.75, crest = 0.1, cupFloor = hub + 0.85 * R - 1.0
+  }
+  const cupRadius = 0.75, crest = 0.1, cupFloor = troughZ - 0.1 - 0.85
   const helixRadius = 1.3
   // Start facing away from the trough, wind counter-clockwise (seen from
   // above, relative to the course) and leave heading down-course.
@@ -511,7 +528,7 @@ export function machineTail(spout: { at: Vec2; direction: Vec2 }, rimWidth: numb
   const cup = roundBasin('head-tank', tower, cupRadius, cupFloor, 0.7, 0.24, {
     chutes: [{
       at: out(cupRadius), direction: v, width: 0.6, crest,
-      path: [[...out(cupRadius + 0.12), top], [...out(helixRadius), top - 0.01], ...spiral.slice(1), [...along(tower, u, v, helixRadius + 0.9, 0), low]] as Vec3[],
+      path: [[...out(cupRadius + 0.12), top], [...out(helixRadius), top - 0.01], ...spiral.slice(1), [...along(tower, u, v, helixRadius + 1.25, 0), low]] as Vec3[],
     }],
   })
   const receiving = along(cistern, u, v, 2.5, 0)

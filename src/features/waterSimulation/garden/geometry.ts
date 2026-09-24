@@ -71,7 +71,8 @@ function beam(from: Vec2, to: Vec2, width: number, bottom: number, top: number, 
 
 /** Channel cross-section: inner half-width is added at build time. */
 export const CHANNEL_WALL = 0.14
-const CHANNEL_SIDE = 0.05, CHANNEL_BOTTOM = 0.07
+const CHANNEL_SIDE = 0.05
+export const CHANNEL_BOTTOM = 0.07
 
 /** Resample a polyline at about `step` spacing, keeping its vertices. */
 export function resample(path: readonly Vec3[], step: number): Vec3[] {
