@@ -458,3 +458,11 @@
 @media (max-width: 800px) {
   .water-studio .ws-navigation > button:first-of-type { display: none; }
 }
+
+/* Cinematic camera: film bars slide in while the water is being filmed. */
+.ws-canvas::before, .ws-canvas::after { content: ''; position: absolute; left: 0; right: 0; height: 0; background: #0d1112; z-index: 2; pointer-events: none; transition: height .8s cubic-bezier(.3, .7, .2, 1); }
+.ws-canvas::before { top: 0; }
+.ws-canvas::after { bottom: 0; }
+.is-cinematic .ws-canvas::before, .is-cinematic .ws-canvas::after { height: 7%; }
+.is-cinematic .ws-scene-heading, .is-cinematic .ws-camera-hint { opacity: 0; transition: opacity .6s; }
+@media (prefers-reduced-motion: reduce) { .ws-canvas::before, .ws-canvas::after { transition: none; } }

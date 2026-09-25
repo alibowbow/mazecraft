@@ -46,6 +46,8 @@ export function createGardenUniforms(field: GardenField) {
     /** The simulated water: RGBA = surface, depth, velocity x, y (see physics/surface.ts). */
     uSurface: { value: placeholderSurface() },
     uSurfaceBounds: { value: new THREE.Vector3(0, 0, 1) },
+    /** Owning vessel + 1 per simulation texel (0: none). */
+    uOwner: { value: new THREE.DataTexture(new Uint8Array([0]), 1, 1, THREE.RedFormat, THREE.UnsignedByteType) },
   }
 }
 
@@ -98,6 +100,22 @@ export const GARDEN_COMMON_GLSL = /* glsl */ `
     ivec2 size = textureSize(uGardenField, 0);
     ivec2 c = clamp(ivec2(gardenUv(p) * vec2(size)), ivec2(0), size - ivec2(1));
     return int(texelFetch(uGardenField, c, 0).a * 255.0 + 0.5) - 1;
+  }
+  uniform sampler2D uOwner;
+  // Beds and water are carried a little under their walls so edges never
+  // gape; this keeps them within half a texel of their own vessel's
+  // simulated texels (vessel + 1, or 0 for no clipping), so they never poke
+  // out through thin rims or into a neighbouring channel.
+  bool gardenOutside(vec2 p, float vessel) {
+    if (vessel < 0.5) return false;
+    ivec2 size = textureSize(uOwner, 0);
+    for (int k = 0; k < 9; k++) {
+      vec2 q = p + vec2(float(k % 3 - 1), float(k / 3 - 1)) * 0.5 * uSurfaceBounds.z;
+      ivec2 c = ivec2(floor((q - uSurfaceBounds.xy) / uSurfaceBounds.z));
+      if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, size))) continue;
+      if (abs(texelFetch(uOwner, c, 0).r * 255.0 - vessel) < 0.5) return false;
+    }
+    return true;
   }
   float gardenHash(vec2 p) {
     vec3 q = fract(vec3(p.xyx) * 0.1031);
@@ -208,6 +226,14 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
       .replace('#include <common>', '#include <common>\nvarying vec3 vGardenNormal;')
       .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\nvGardenNormal = normalize(mat3(modelMatrix) * objectNormal);')
     shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vGardenNormal;')
+    if (kind === 'bed') {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aVessel;\nvarying float vVessel;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvVessel = aVessel;')
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vVessel;')
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (gardenOutside(vGardenWorld.xy, vVessel)) discard;')
+    }
     if (kind === 'wall') {
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nattribute float aFloor;\nuniform float uWallScale;')
@@ -288,7 +314,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           #endif`)
     }
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v9`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v11`
   return material
 }
 
@@ -336,6 +362,9 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform vec4 uDrain;
         varying float vPoolDepth;
         varying vec2 vPoolFlow;
+        attribute float aOwn;
+        attribute float aVessel;
+        varying float vVessel;
         ${SURFACE_GLSL}
         // Real surface undulation: deep-water wave trains (ω² = g·k), one
         // aligned with the local current, plus rings spreading from falls.
@@ -356,7 +385,9 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         float wetTexels = 0.0;
         for (int k = 0; k < 4; k++) {
           vec4 s = texelFetch(uSurface, clamp(corner + ivec2(k & 1, k >> 1) - 1, ivec2(0), surfaceSize - 1), 0);
-          if (s.y > 0.0) { simulated += s; wetTexels += 1.0; }
+          // Only this vessel's own texels: a neighbouring channel's water
+          // must never lift the edge of this sheet.
+          if (((int(aOwn + 0.5) >> k) & 1) == 1 && s.y > 0.0) { simulated += s; wetTexels += 1.0; }
         }
         simulated /= max(wetTexels, 1.0);
         float poolLevel = position.z + simulated.y;
@@ -400,7 +431,8 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         // Waves ride on the water, never deeper than it is.
         vec3 transformed = vec3(position.xy, poolLevel + 0.0015 + waveHeight * smoothstep(0.0, 0.03, simulated.y));
         vPoolDepth = simulated.y;
-        vPoolFlow = waveFlow;`)
+        vPoolFlow = waveFlow;
+        vVessel = aVessel;`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D uRipplesA;
@@ -410,10 +442,11 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform int uImpactCount;
         uniform vec4 uDrain;
         varying float vPoolDepth;
-        varying vec2 vPoolFlow;`)
+        varying vec2 vPoolFlow;
+        varying float vVessel;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         // Only where the simulation has water: its edge is the real front.
-        if (vPoolDepth < 0.0025) discard;
+        if (vPoolDepth < 0.0025 || gardenOutside(vGardenWorld.xy, vVessel)) discard;
         vec4 simulatedWater = gardenSurface(vGardenWorld.xy);
         vec4 waterField = gardenField(vGardenWorld.xy);
         vec2 waterFlow = simulatedWater.zw;
@@ -482,7 +515,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         .replace('totalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );',
           'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3((0.2 + 0.25 * clamp(vPoolDepth, 0.0, 0.6)) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
   }
-  material.customProgramCacheKey = () => 'garden-water-v4'
+  material.customProgramCacheKey = () => 'garden-water-v6'
   return material
 }
 
@@ -515,7 +548,7 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
   }
   const material = new THREE.MeshPhysicalMaterial({
     color: 0xffffff, roughness: 0.04, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    envMapIntensity: 1.4, ior: 1.333, specularIntensity: 1, transmission: 1, thickness: 0.05,
+    envMapIntensity: 1.4, ior: 1.333, specularIntensity: 1,
   })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
@@ -591,18 +624,18 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         float white = smoothstep(0.35, 0.85, aerated * (0.55 + streaks * 0.9));
         float tail = 1.0 - smoothstep(0.85, 1.0, along) * (1.0 - smoothstep(0.35, 0.75, streaks));
         diffuseColor.rgb = mix(uCurtainTint, vec3(1.0), white);
-        // Clear water is mostly seen by what it bends and reflects.
-        diffuseColor.a = uStrength * edge * lip * tail * mix(0.72, 0.97, white);`)
+        // A thin falling sheet: mostly clear, seen by its glints and its
+        // white aerated streaks. (Screen-space refraction through it picked
+        // up the teal pools behind and made it look like wet cloth.)
+        diffuseColor.a = uStrength * edge * lip * tail * mix(0.4, 0.95, white);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(0.03, 0.55, white);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         // Rope-like corrugation of a falling sheet: bends refraction and glints.
         vec2 streakSlope = streak.xy * 2.0 - 1.0;
         normal = normalize(normal + vec3(streakSlope.x * 0.35 + (fine - 0.5) * 0.3, streakSlope.y * 0.1, 0.0));`)
-      .replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment
-        .replace('material.transmission = transmission;', 'material.transmission = transmission * (1.0 - white);'))
   }
-  material.customProgramCacheKey = () => 'garden-curtain-v5'
+  material.customProgramCacheKey = () => 'garden-curtain-v6'
   return { material, uniforms: own }
 }
 
@@ -637,57 +670,23 @@ export function createDropletMaterial(uniforms: GardenUniforms): THREE.MeshStand
  * contact occlusion halo from the plan field. It fades exactly into the
  * background colour so the studio has no visible horizon edge.
  */
-/**
- * Raked sand: rings that follow the sculpture's outline and each island of
- * stones or planting, then straight rows beyond, as in a raked gravel garden.
- * `sand` holds the exact distance to the nearest outline (ground.ts).
- */
-export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color>; sand: THREE.IUniform<THREE.Texture> } {
+export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color> } {
   const background = { value: new THREE.Color(0xf0e7da) }
-  const sand: THREE.IUniform<THREE.Texture> = { value: placeholderSand() }
   const material = new THREE.MeshStandardMaterial({ color: 0xd9c8b0, roughness: 0.93, metalness: 0, envMapIntensity: 0.6 })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
-    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius }, uSandDistance: sand })
+    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius } })
     shader.vertexShader = FORCE_WORLDPOS + shader.vertexShader
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <dithering_pars_fragment>', `#include <dithering_pars_fragment>
         uniform vec3 uBackgroundColor;
         uniform vec2 uGroundCenter;
-        uniform float uGroundRadius;
-        uniform sampler2D uSandDistance;
-        float sandDistance(vec2 p) { return texture2D(uSandDistance, gardenUv(p)).r; }`)
+        uniform float uGroundRadius;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec2 sandP = vGardenWorld.xy;
         float sand = gardenNoise(sandP * 0.6) * 0.5 + gardenNoise(sandP * 2.3) * 0.3 + gardenNoise(sandP * 9.0) * 0.2;
         float grain = gardenHash(floor(sandP * 220.0));
-        diffuseColor.rgb *= 0.93 + sand * 0.1 + (grain - 0.5) * 0.05;
-        // Tine spacing, reach of the rings and ridge height (m).
-        const float RAKE = 0.085;
-        const float RINGS = 1.3;
-        const float RIDGE = 0.01;
-        float sandD = sandDistance(sandP);
-        vec2 phaseGrad;
-        float rakePhase;
-        if (sandD < RINGS) {
-          rakePhase = (sandD - 0.16) / RAKE;
-          phaseGrad = vec2(sandDistance(sandP + vec2(0.03, 0.0)) - sandDistance(sandP - vec2(0.03, 0.0)),
-            sandDistance(sandP + vec2(0.0, 0.03)) - sandDistance(sandP - vec2(0.0, 0.03))) / (0.06 * RAKE);
-        } else {
-          // Straight rows with the slight drift of a hand-drawn rake.
-          rakePhase = (sandP.y + 0.035 * sin(sandP.x * 0.9)) / RAKE;
-          phaseGrad = vec2(0.0315 * cos(sandP.x * 0.9), 1.0) / RAKE;
-        }
-        // Smoothed against walls and stones, faded with distance and where
-        // the rows are finer than a pixel (no moire when zoomed out).
-        float rakeAmount = (1.0 - smoothstep(0.25, 0.55, fwidth(rakePhase)))
-          * smoothstep(0.1, 0.22, sandD)
-          * (1.0 - smoothstep(uGroundRadius * 0.9, uGroundRadius * 1.7, length(sandP - uGroundCenter)));
-        float rakeRidge = 0.5 - 0.5 * cos(6.2831853 * rakePhase);
-        vec2 rakeSlope = RIDGE * 3.14159265 * sin(6.2831853 * rakePhase) * phaseGrad * rakeAmount;
-        diffuseColor.rgb *= 1.0 + (rakeRidge - 0.5) * 0.09 * rakeAmount;`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-        normal = normalize((viewMatrix * vec4(normalize(vec3(-rakeSlope, 1.0)), 0.0)).xyz);`)
+        diffuseColor.rgb *= 0.93 + sand * 0.1 + (grain - 0.5) * 0.05;`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec4 groundField = gardenField(vGardenWorld.xy);
         float outside = groundField.b >= 0.5 ? (groundField.b - 0.5) * 2.0 * 2.0 : 0.0;
@@ -698,14 +697,8 @@ export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vec
         float groundFade = smoothstep(uGroundRadius * 1.1, uGroundRadius * 2.4, length(vGardenWorld.xy - uGroundCenter));
         gl_FragColor.rgb = mix(gl_FragColor.rgb, uBackgroundColor, groundFade);`)
   }
-  material.customProgramCacheKey = () => 'garden-sand-ground-v2'
-  return { material, background, sand }
-}
-
-function placeholderSand(): THREE.DataTexture {
-  const texture = new THREE.DataTexture(new Uint16Array([THREE.DataUtils.toHalfFloat(60)]), 1, 1, THREE.RedFormat, THREE.HalfFloatType)
-  texture.needsUpdate = true
-  return texture
+  material.customProgramCacheKey = () => 'garden-sand-ground-v3'
+  return { material, background }
 }
 
 export interface ChannelUniforms {

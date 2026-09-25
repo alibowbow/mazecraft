@@ -7,6 +7,51 @@ import { TIPPER_ARM, TIPPER_RADIUS, TIPPER_REST, TIPPER_TAIL, WHEEL_PADDLES } fr
 
 interface Part { group: THREE.Group; pivot: THREE.Object3D }
 
+/**
+ * The water held between two flights of an inclined screw, in the screw's
+ * local frame (x up the axis, centred on the pocket): the part of the round
+ * trough below one level surface. Its cross-sections are circular segments
+ * that shrink uphill, so the pocket is a wedge resting on the lower flight.
+ */
+export function screwPocketGeometry(radius: number, pitch: number, incline: number, fill: number): THREE.BufferGeometry {
+  const slices = 10, arc = 14
+  const sin = Math.sin(incline), cos = Math.cos(incline)
+  const height = (x: number, z: number) => x * sin + z * cos
+  const lowest = height(-pitch / 2, -radius), highest = height(-pitch / 2, 0)
+  const level = lowest + Math.max(0, Math.min(1, fill)) * (highest - lowest)
+  const positions: number[] = [], index: number[] = []
+  const ring = arc + 1
+  for (let k = 0; k <= slices; k++) {
+    const x = -pitch / 2 + pitch * k / slices
+    // The level line across this slice, as a local z; no water above the axis.
+    const line = Math.max(-radius, Math.min(0, (level - x * sin) / cos))
+    const half = Math.acos(Math.max(-1, Math.min(1, -line / radius)))
+    for (let m = 0; m <= arc; m++) {
+      const phi = -Math.PI / 2 - half + (2 * half) * m / arc
+      positions.push(x, Math.cos(phi) * radius, Math.sin(phi) * radius)
+    }
+  }
+  // Wetted trough surface, then the level top as a strip between the chord ends.
+  for (let k = 0; k < slices; k++) for (let m = 0; m < arc; m++) {
+    const a = k * ring + m, b = a + ring
+    index.push(a, b, a + 1, a + 1, b, b + 1)
+  }
+  for (let k = 0; k < slices; k++) {
+    const a0 = k * ring, a1 = a0 + arc, b0 = a0 + ring, b1 = b0 + arc
+    index.push(a0, a1, b0, b0, a1, b1)
+  }
+  // The two flights close the ends.
+  for (const k of [0, slices]) for (let m = 1; m < arc; m++) {
+    const base = k * ring
+    if (k) index.push(base, base + m, base + m + 1); else index.push(base, base + m + 1, base + m)
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(index)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 function merged(list: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const clean = list.map(geometry => {
     const result = geometry.index ? geometry.toNonIndexed() : geometry
@@ -68,7 +113,8 @@ export class GardenDevices {
   private readonly norias: Noria[] = []
   private readonly bucketWater = new THREE.MeshStandardMaterial({ color: 0x7fd6de, roughness: 0.08, transparent: true, opacity: 0.85 })
   private readonly geometries: THREE.BufferGeometry[] = []
-  private readonly pocketWater = new THREE.BoxGeometry(SCREW_PITCH * 0.55, 0.42, 0.22)
+  /** Screw pockets by lift and fill (in tenths), built on first use. */
+  private readonly pocketShapes = new Map<string, THREE.BufferGeometry>()
   private readonly flightMaterial = new THREE.MeshPhysicalMaterial({ color: 0xa9784c, roughness: 0.45, clearcoat: 0.4, clearcoatRoughness: 0.25, side: THREE.DoubleSide })
   private readonly potWater = new THREE.BoxGeometry(NORIA_POT.width - 0.04, NORIA_POT_DEPTH - 0.05, NORIA_POT.depth * 0.5)
   private readonly bamboo = new THREE.MeshPhysicalMaterial({ color: 0xb49a55, roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.18, sheen: 0.3, sheenColor: new THREE.Color(0xfff0c8) })
@@ -332,22 +378,31 @@ export class GardenDevices {
     const run = L * Math.cos(incline)
     post.translate(lift.center[0] + lift.direction[0] * (run + 0.1), lift.center[1] + lift.direction[1] * (run + 0.1), top / 2)
     this.mesh(post, this.ceramic, this.group, 'garden-screw-post')
-    // Water pockets: level boxes that ride up the axis between the flights.
+    // Water pockets: wedges of level water that ride up between the flights.
     const water: THREE.Object3D[] = []
     const count = Math.max(2, Math.floor(L / SCREW_PITCH))
     for (let k = 0; k < count; k++) {
       const anchor = new THREE.Object3D()
-      const fill = new THREE.Mesh(this.pocketWater, this.bucketWater)
+      const fill = new THREE.Mesh(this.pocketShape(lift, 0.5), this.bucketWater)
       fill.name = 'garden-screw-pocket-water'
       fill.visible = false
-      // Undo the incline so the pocket's surface stays level.
-      fill.rotation.y = incline
       anchor.add(fill)
       group.add(anchor)
       water.push(anchor)
     }
     this.group.add(group)
     return { group, pivot, spin: 0, angle: 0, water, screw: { count, radius: R } }
+  }
+
+  private pocketShape(lift: Lift, fill: number): THREE.BufferGeometry {
+    const tenths = Math.max(1, Math.min(10, Math.round(fill * 10)))
+    const key = `${lift.index}:${tenths}`
+    let shape = this.pocketShapes.get(key)
+    if (!shape) {
+      shape = screwPocketGeometry(lift.radius * 0.92, SCREW_PITCH * 0.96, lift.incline ?? Math.PI / 6, tenths / 10)
+      this.pocketShapes.set(key, shape)
+    }
+    return shape
   }
 
   /** A rain chain of copper cups hanging from a spout's lip to the pool below. */
@@ -399,10 +454,10 @@ export class GardenDevices {
         noria.water.forEach((anchor, k) => {
           const fill = state.noriaPots[i * NORIA_BUCKETS + k] ?? 0
           const s = (((k + angle / (Math.PI * 2)) % count) + count) % count * SCREW_PITCH + SCREW_PITCH * 0.5
-          anchor.position.set(s, 0, -lift.radius * 0.45)
+          anchor.position.set(s, 0, 0)
           const mesh = anchor.children[0] as THREE.Mesh
           mesh.visible = fill > 0.02
-          mesh.scale.set(1, 1, Math.max(0.05, fill))
+          if (mesh.visible) mesh.geometry = this.pocketShape(lift, fill)
         })
         return
       }
@@ -422,7 +477,7 @@ export class GardenDevices {
 
   dispose(): void {
     for (const geometry of this.geometries) geometry.dispose()
-    this.potWater.dispose(); this.pocketWater.dispose(); this.flightMaterial.dispose()
+    this.potWater.dispose(); for (const shape of this.pocketShapes.values()) shape.dispose(); this.flightMaterial.dispose()
     this.bamboo.dispose(); this.teak.dispose(); this.bucketWater.dispose()
     this.group.clear()
   }

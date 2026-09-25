@@ -5,7 +5,8 @@ import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'
 import { BasinSimulation, type BasinSnapshot } from './basinSimulation'
-import { GardenSimulation } from '../garden/simulation'
+import { GardenSimulation, type GardenSnapshot } from '../garden/simulation'
+import { GardenSound } from '../garden/sound'
 import { gardenLayout } from '../garden/layout'
 import { gardenIdOf, type WaterSculpture } from '../garden'
 import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers, FluidResume } from './types'
@@ -28,6 +29,8 @@ export class FreeSurfaceRuntime {
   private readonly layout
   private readonly renderer: FreeSurfaceRenderer
   private readonly basin: BasinSimulation | GardenSimulation
+  /** Water gardens sound as they run (off until the viewer turns it on). */
+  private readonly sound: GardenSound | null = null
   private basinSnapshot: BasinSnapshot
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private worker: Worker | null = null
@@ -74,6 +77,7 @@ export class FreeSurfaceRuntime {
     this.basin = garden
       ? new GardenSimulation(gardenLayout(garden), this.layout)
       : new BasinSimulation(project, this.layout)
+    if (garden) { this.sound = new GardenSound(gardenLayout(garden)); this.sound.setActive(!this.paused) }
     this.basinSnapshot = this.basin.snapshot()
     this.renderer = new FreeSurfaceRenderer(mount, this.layout, quality, sculpture)
     if (this.sculpture !== 'extruded-flow') this.renderer.setBasinSnapshot(this.basinSnapshot)
@@ -230,7 +234,8 @@ export class FreeSurfaceRuntime {
     // Inactive modes keep their state and resume without hidden-time catch-up.
     if (this.basinMode) {
       if (this.paused || document.hidden) return
-      this.debt = Math.min(0.5, this.debt + delta * this.speed)
+      // Fast playback may run up to ~1 s of physics per frame before it lags.
+      this.debt = Math.min(Math.max(0.5, this.speed * 0.12), this.debt + delta * this.speed)
       let seconds = Math.floor(this.debt * 120 + 1e-7) / 120
       this.debt -= seconds
       if (seconds <= 0) return
@@ -241,6 +246,7 @@ export class FreeSurfaceRuntime {
       }
       this.basinSnapshot = this.basin.snapshot()
       if (this.sculpture !== 'extruded-flow') this.renderer.setBasinSnapshot(this.basinSnapshot)
+      if (this.sound && 'garden' in this.basinSnapshot) this.sound.update((this.basinSnapshot as GardenSnapshot).garden)
       if (now - this.lastPublish >= 100) this.publish(this.basinSnapshot.diagnostics)
       return
     }
@@ -288,17 +294,20 @@ export class FreeSurfaceRuntime {
   }
 
   private visibilityChanged = () => {
+    this.sound?.setActive(!this.paused && !document.hidden)
     this.lastAdvance = null; this.debt = 0; this.displayRequested = false; this.refineAfterCatchUp = false
     this.releasePending()
   }
   setFollow(value: boolean) { this.renderer.setFollow(value) }
   setSpeed(value: number) {
-    this.speed = Math.max(0.1, Math.min(4, value))
+    this.speed = Math.max(0.1, Math.min(16, value))
     this.debt = 0
     this.lastAdvance = performance.now()
   }
   setPaused(value: boolean) {
     this.paused = value
+    this.renderer.setCinematic?.(this.cinematic && !value)
+    this.sound?.setActive(!value && !document.hidden)
     this.displayRequested = false
     this.refineAfterCatchUp = false
     this.debt = 0
@@ -313,6 +322,17 @@ export class FreeSurfaceRuntime {
     this.lastAdvance = performance.now()
     this.renderer.setInflow(value)
     this.publishCurrent()
+  }
+  private cinematic = false
+  /** Cinematic camera: films the water while it runs; the studio view while paused. */
+  setCinematic(value: boolean) {
+    this.cinematic = value
+    this.renderer.setCinematic?.(value && !this.paused)
+  }
+  /** Garden sound: call from a user gesture the first time (autoplay rules). */
+  setSound(enabled: boolean, volume?: number) {
+    if (volume !== undefined) this.sound?.setVolume(volume)
+    this.sound?.setEnabled(enabled)
   }
   setInflowRate(value: number) {
     if (!Number.isFinite(value)) return
@@ -404,5 +424,6 @@ export class FreeSurfaceRuntime {
     this.recycledBuffers.length = 0
     this.fallbackBuffers = undefined
     this.renderer.dispose()
+    this.sound?.dispose()
   }
 }
