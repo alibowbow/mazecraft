@@ -4,6 +4,7 @@ import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
 import { GardenPresentation3D } from '../garden/presentation'
+import { GardenPost, initialPostTier, pinnedPostTier, PostGovernor, type PostTier } from '../garden/post'
 import type { GardenSnapshot } from '../garden/simulation'
 import { gardenIdOf, type WaterSculpture } from '../garden'
 import { SurfaceTrackball } from './camera3d'
@@ -318,6 +319,10 @@ export class FreeSurfaceRenderer {
   private readonly flatWalls = new THREE.Group()
   private readonly funnel: THREE.Group
   private presentation3d: FreeSurfacePresentation3D | GardenPresentation3D | null = null
+  /** Water gardens render through an HDR post pipeline, stepped down on slow devices. */
+  private post: GardenPost | null = null
+  private postTier: PostTier | null = null
+  private readonly postGovernor = new PostGovernor()
   private basinSnapshot: BasinSnapshot | null = null
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private readonly trackball = new SurfaceTrackball()
@@ -822,7 +827,9 @@ export class FreeSurfaceRenderer {
       this.presentation3d.setInflow(this.canvas.dataset.inflow !== 'disabled')
       if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setFollow(this.followWater)
       if (this.presentation3d instanceof GardenPresentation3D) {
-        const warming: Promise<void> = this.presentation3d.warmUp().catch(() => undefined).then(() => {
+        this.ensurePost()
+        this.presentation3d.setPostOutput(this.post !== null)
+        const warming: Promise<void> = this.presentation3d.warmUp(this.post?.target ?? null).catch(() => undefined).then(() => {
           if (this.warming === warming) this.warming = null
           this.draw()
         })
@@ -1009,9 +1016,18 @@ export class FreeSurfaceRenderer {
     if (this.viewMode === 'surface-3d' && this.presentation3d && this.warming) return
     if (this.viewMode === 'surface-3d' && this.presentation3d) {
       this.presentation3d.updateWater(this.sculpture === 'extruded-flow' ? this.waterMaterial.uniforms.uTime.value : this.basinSnapshot?.diagnostics.time ?? 0, 0.5 + this.waterMaterial.uniforms.uStyle.value)
+      const presentation = this.presentation3d
+      if (presentation instanceof GardenPresentation3D && this.post) {
+        this.renderer.shadowMap.enabled = true
+        this.post.render(presentation.scene, presentation.camera, presentation.exposure)
+        this.renderer.shadowMap.enabled = false
+        this.drawCalls = this.renderer.info.render.calls
+        this.triangles = this.renderer.info.render.triangles
+        if (pinnedPostTier() === null && this.postGovernor.frame(performance.now())) this.stepDownPost(presentation)
+        return
+      }
       this.renderer.setRenderTarget(null)
       this.renderer.shadowMap.enabled = true
-      const presentation = this.presentation3d
       // Neutral tone mapping keeps glaze and water hues true (ACES shifted them).
       this.renderer.toneMapping = THREE.NeutralToneMapping
       this.renderer.toneMappingExposure = presentation instanceof GardenPresentation3D ? presentation.exposure : 1.0
@@ -1025,6 +1041,24 @@ export class FreeSurfaceRenderer {
     }
     this.drawCalls = this.renderer.info.render.calls
     this.triangles = this.renderer.info.render.triangles
+  }
+
+  /** Create the garden post pipeline at this device's tier (once). */
+  private ensurePost(): void {
+    if (this.postTier === null) this.postTier = initialPostTier(this.renderer)
+    if (!this.post && this.postTier > 0) this.post = new GardenPost(this.renderer, this.postTier as Exclude<PostTier, 0>)
+    this.canvas.dataset.postTier = String(this.postTier)
+  }
+
+  /** Frames keep running long: drop to the next cheaper tier. */
+  private stepDownPost(presentation: GardenPresentation3D): void {
+    if (!this.post || !this.postTier) return
+    this.post.dispose()
+    this.post = null
+    this.postTier = (this.postTier - 1) as PostTier
+    this.ensurePost()
+    // Without post the scene is tone mapped straight to the screen.
+    if (!this.post) presentation.setPostOutput(false)
   }
 
   /** A right- or middle-button mouse drag pans instead of orbiting. */
@@ -1164,6 +1198,7 @@ export class FreeSurfaceRenderer {
     this.filterTarget.dispose()
     this.surfaceTarget.dispose()
     this.presentation3d?.dispose()
+    this.post?.dispose()
     const accessoryGeometries = new Set<THREE.BufferGeometry>()
     const accessoryMaterials = new Set<THREE.Material>()
     this.funnel.traverse(object => {

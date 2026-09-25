@@ -8,6 +8,8 @@ import type { GardenKey } from './index'
 import { gardenLayout, type GardenLayout } from './layout'
 import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
+import { sceneColorFor } from './post'
+import { sandDistanceTexture, type SandIsland } from './ground'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
 import { GardenPlants } from './plants'
@@ -57,6 +59,7 @@ export class GardenPresentation3D {
   private readonly waterMaterial: THREE.MeshPhysicalMaterial
   private readonly groundMaterial: THREE.MeshStandardMaterial
   private readonly groundBackground: THREE.IUniform<THREE.Color>
+  private readonly sand: THREE.IUniform<THREE.Texture>
   private readonly soilMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4632, roughness: 1 })
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
@@ -89,6 +92,7 @@ export class GardenPresentation3D {
   /** When each pool / channel first took water, to follow the newest arrival. */
   private readonly started: Float64Array
   private disposed = false
+  private postOutput = false
   private readonly surfaceData: Uint16Array
   private readonly surfaceTexture: THREE.DataTexture
 
@@ -123,6 +127,7 @@ export class GardenPresentation3D {
     const ground = createGroundMaterial(this.uniforms, new THREE.Vector2(this.center.x, this.center.y), radius + 1.5)
     this.groundMaterial = ground.material
     this.groundBackground = ground.background
+    this.sand = ground.sand
     const wallDepth = createWallDepthMaterial(this.uniforms)
     this.materials.push(this.wallMaterial, this.bedMaterial, this.trimMaterial, this.waterMaterial, this.groundMaterial, this.soilMaterial, wallDepth)
 
@@ -190,6 +195,7 @@ export class GardenPresentation3D {
       const b = field.data[(cy * field.width + cx) * 4 + 2] / 255
       return b >= 0.5 ? (b - 0.5) * 4 : 0
     }
+    const islands: SandIsland[] = []
     layout.design.plants.forEach((plant, i) => {
       // Keep planting clear of every basin, spout and receiving trough.
       let [x, y] = plant.at
@@ -198,7 +204,11 @@ export class GardenPresentation3D {
         x += dx / length * 0.15; y += dy / length * 0.15
       }
       this.plants.add(plant.kind, x, y, plant.z ?? 0, plant.scale, 17 + i * 31)
+      if (!plant.z) islands.push([x, y, (plant.kind === 'stones' ? 0.62 : 0.32) * plant.scale])
     })
+    // The rake goes around the sculpture and every island on the sand.
+    this.sand.value.dispose()
+    this.sand.value = sandDistanceTexture(plan, islands)
     for (const vessel of layout.vessels) vessel.spec.planters.forEach((at, i) => this.plants.add('rosemary', at[0], at[1], vessel.top - 0.04, 0.55, 5 + i * 13))
     this.plants.build()
     this.content.add(this.plants.group)
@@ -222,15 +232,18 @@ export class GardenPresentation3D {
    * the first frame and the first falls never stall the page. Hidden parts
    * (falls, spray, bucket water) are shown just long enough to be compiled.
    */
-  async warmUp(): Promise<void> {
+  async warmUp(target: THREE.WebGLRenderTarget | null = null): Promise<void> {
     const renderer = this.renderer
     const hidden: THREE.Object3D[] = []
     this.scene.traverse(object => { if (!object.visible) { hidden.push(object); object.visible = true } })
-    const shadows = renderer.shadowMap.enabled, toneMapping = renderer.toneMapping
+    const shadows = renderer.shadowMap.enabled, toneMapping = renderer.toneMapping, previous = renderer.getRenderTarget()
     renderer.shadowMap.enabled = true
     renderer.toneMapping = this.toneMapping
+    // Programs depend on where they draw (HDR target or screen).
+    renderer.setRenderTarget(target)
     let pending: Promise<unknown>
     try { pending = renderer.compileAsync(this.scene, this.camera) } finally {
+      renderer.setRenderTarget(previous)
       renderer.shadowMap.enabled = shadows
       renderer.toneMapping = toneMapping
       for (const object of hidden) object.visible = false
@@ -264,8 +277,7 @@ export class GardenPresentation3D {
     this.uniforms.uSunDirection.value.copy(direction)
     this.exposure = mood.exposure
     this.groundMaterial.color.set(mood.ground)
-    this.groundBackground.value.set(mood.background).convertLinearToSRGB()
-    this.scene.background = new THREE.Color(mood.background)
+    this.applyBackdrop()
     this.scene.environmentIntensity = mood.sky
     const key = this.look.light
     if (key !== this.lightKey) {
@@ -278,6 +290,29 @@ export class GardenPresentation3D {
     this.shadows.update(this.sun)
     this.sun.shadow.needsUpdate = true
     this.renderer.shadowMap.needsUpdate = true
+  }
+
+  /**
+   * The scene is either tone mapped straight to the screen or rendered in
+   * HDR for the post pipeline (post.ts). Either way the backdrop, and the
+   * ground where it fades into it, must come out as the mood's page colour.
+   */
+  setPostOutput(enabled: boolean): void {
+    if (this.postOutput === enabled) return
+    this.postOutput = enabled
+    this.applyBackdrop()
+  }
+
+  private applyBackdrop(): void {
+    const display = new THREE.Color(LIGHTING[this.look.light].background)
+    if (this.postOutput) {
+      const scene = sceneColorFor(display, this.exposure)
+      this.groundBackground.value.copy(scene)
+      this.scene.background = scene
+    } else {
+      this.groundBackground.value.copy(display).convertLinearToSRGB()
+      this.scene.background = display
+    }
   }
 
   private fitShadow(): void {
@@ -472,7 +507,8 @@ export class GardenPresentation3D {
     this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
-    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB]) uniform.value.dispose()
+    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.sand]) uniform.value.dispose()
+    this.surfaceTexture.dispose()
     this.environment?.dispose()
     this.sun.shadow.dispose()
     this.scene.clear()

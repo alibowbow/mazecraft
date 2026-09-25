@@ -12,6 +12,8 @@ test('crafts a water course from devices and runs it with the physics engine', a
   await page.getByRole('button', { name: '물길 크래프트' }).click()
   await expect(page.getByTestId('craft-studio')).toBeVisible()
   await expect(page.getByTestId('craft-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: waterStartupTimeout })
+  // The garden renders through the post pipeline at a tier this device can carry.
+  await expect(page.locator(canvasSelector)).toHaveAttribute('data-post-tier', /^[0-3]$/)
   const panel = page.getByRole('complementary', { name: '물길 크래프트' })
   if (!(await panel.isVisible())) await page.getByRole('button', { name: '장치 목록 열기' }).click()
 

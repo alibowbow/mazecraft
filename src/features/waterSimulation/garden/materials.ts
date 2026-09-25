@@ -637,23 +637,57 @@ export function createDropletMaterial(uniforms: GardenUniforms): THREE.MeshStand
  * contact occlusion halo from the plan field. It fades exactly into the
  * background colour so the studio has no visible horizon edge.
  */
-export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color> } {
+/**
+ * Raked sand: rings that follow the sculpture's outline and each island of
+ * stones or planting, then straight rows beyond, as in a raked gravel garden.
+ * `sand` holds the exact distance to the nearest outline (ground.ts).
+ */
+export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color>; sand: THREE.IUniform<THREE.Texture> } {
   const background = { value: new THREE.Color(0xf0e7da) }
+  const sand: THREE.IUniform<THREE.Texture> = { value: placeholderSand() }
   const material = new THREE.MeshStandardMaterial({ color: 0xd9c8b0, roughness: 0.93, metalness: 0, envMapIntensity: 0.6 })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
-    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius } })
+    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius }, uSandDistance: sand })
     shader.vertexShader = FORCE_WORLDPOS + shader.vertexShader
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <dithering_pars_fragment>', `#include <dithering_pars_fragment>
         uniform vec3 uBackgroundColor;
         uniform vec2 uGroundCenter;
-        uniform float uGroundRadius;`)
+        uniform float uGroundRadius;
+        uniform sampler2D uSandDistance;
+        float sandDistance(vec2 p) { return texture2D(uSandDistance, gardenUv(p)).r; }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec2 sandP = vGardenWorld.xy;
         float sand = gardenNoise(sandP * 0.6) * 0.5 + gardenNoise(sandP * 2.3) * 0.3 + gardenNoise(sandP * 9.0) * 0.2;
         float grain = gardenHash(floor(sandP * 220.0));
-        diffuseColor.rgb *= 0.93 + sand * 0.1 + (grain - 0.5) * 0.05;`)
+        diffuseColor.rgb *= 0.93 + sand * 0.1 + (grain - 0.5) * 0.05;
+        // Tine spacing, reach of the rings and ridge height (m).
+        const float RAKE = 0.085;
+        const float RINGS = 1.3;
+        const float RIDGE = 0.01;
+        float sandD = sandDistance(sandP);
+        vec2 phaseGrad;
+        float rakePhase;
+        if (sandD < RINGS) {
+          rakePhase = (sandD - 0.16) / RAKE;
+          phaseGrad = vec2(sandDistance(sandP + vec2(0.03, 0.0)) - sandDistance(sandP - vec2(0.03, 0.0)),
+            sandDistance(sandP + vec2(0.0, 0.03)) - sandDistance(sandP - vec2(0.0, 0.03))) / (0.06 * RAKE);
+        } else {
+          // Straight rows with the slight drift of a hand-drawn rake.
+          rakePhase = (sandP.y + 0.035 * sin(sandP.x * 0.9)) / RAKE;
+          phaseGrad = vec2(0.0315 * cos(sandP.x * 0.9), 1.0) / RAKE;
+        }
+        // Smoothed against walls and stones, faded with distance and where
+        // the rows are finer than a pixel (no moire when zoomed out).
+        float rakeAmount = (1.0 - smoothstep(0.25, 0.55, fwidth(rakePhase)))
+          * smoothstep(0.1, 0.22, sandD)
+          * (1.0 - smoothstep(uGroundRadius * 0.9, uGroundRadius * 1.7, length(sandP - uGroundCenter)));
+        float rakeRidge = 0.5 - 0.5 * cos(6.2831853 * rakePhase);
+        vec2 rakeSlope = RIDGE * 3.14159265 * sin(6.2831853 * rakePhase) * phaseGrad * rakeAmount;
+        diffuseColor.rgb *= 1.0 + (rakeRidge - 0.5) * 0.09 * rakeAmount;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        normal = normalize((viewMatrix * vec4(normalize(vec3(-rakeSlope, 1.0)), 0.0)).xyz);`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec4 groundField = gardenField(vGardenWorld.xy);
         float outside = groundField.b >= 0.5 ? (groundField.b - 0.5) * 2.0 * 2.0 : 0.0;
@@ -664,8 +698,14 @@ export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vec
         float groundFade = smoothstep(uGroundRadius * 1.1, uGroundRadius * 2.4, length(vGardenWorld.xy - uGroundCenter));
         gl_FragColor.rgb = mix(gl_FragColor.rgb, uBackgroundColor, groundFade);`)
   }
-  material.customProgramCacheKey = () => 'garden-sand-ground-v1'
-  return { material, background }
+  material.customProgramCacheKey = () => 'garden-sand-ground-v2'
+  return { material, background, sand }
+}
+
+function placeholderSand(): THREE.DataTexture {
+  const texture = new THREE.DataTexture(new Uint16Array([THREE.DataUtils.toHalfFloat(60)]), 1, 1, THREE.RedFormat, THREE.HalfFloatType)
+  texture.needsUpdate = true
+  return texture
 }
 
 export interface ChannelUniforms {
