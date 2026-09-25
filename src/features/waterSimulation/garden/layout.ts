@@ -1,3 +1,4 @@
+import type { GardenKey } from './index'
 import { createGardenDesign, SOURCE_THROW, type ChuteSpec, type GardenDesign, type GardenId, type LiftSpec, type SiphonSpec, type Vec3, type VesselSpec } from './designs'
 import {
   boundsOf, difference, offset, polygon, regionArea, regionContains, regions, simplifyRing, soften, strokes, union,
@@ -121,7 +122,7 @@ export interface Wheel {
 }
 
 export interface GardenLayout {
-  id: GardenId
+  id: string
   design: GardenDesign
   vessels: CompiledVessel[]
   pools: Pool[]
@@ -417,11 +418,31 @@ export function compileGarden(design: GardenDesign): GardenLayout {
   }
 }
 
-const cache = new Map<GardenId, GardenLayout>()
+const cache = new Map<string, GardenLayout>()
+const crafted = new Map<string, GardenDesign>()
+/** Crafted gardens kept compiled at once: the current one and a few before it. */
+const CRAFTED_KEPT = 4
+
+/**
+ * Make a crafted garden available under `key` (it must start with "craft-").
+ * Older crafted gardens are forgotten; presets stay cached for the page.
+ */
+export function registerGardenDesign(key: `craft-${string}`, design: GardenDesign): void {
+  if (crafted.has(key)) return
+  crafted.set(key, { ...design, id: key })
+  while (crafted.size > CRAFTED_KEPT) {
+    const oldest = crafted.keys().next().value!
+    crafted.delete(oldest); cache.delete(oldest)
+  }
+}
 
 /** Compiled once per page; the design is static and fully deterministic. */
-export function gardenLayout(id: GardenId): GardenLayout {
+export function gardenLayout(id: GardenKey): GardenLayout {
   let layout = cache.get(id)
-  if (!layout) { layout = compileGarden(createGardenDesign(id)); cache.set(id, layout) }
+  if (!layout) {
+    const design = id.startsWith('craft-') ? crafted.get(id) : createGardenDesign(id as GardenId)
+    if (!design) throw new Error(`Unknown water garden: ${id}`)
+    layout = compileGarden(design); cache.set(id, layout)
+  }
   return layout
 }

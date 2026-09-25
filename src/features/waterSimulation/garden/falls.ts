@@ -169,7 +169,7 @@ export class GardenFalls {
         const velocity = THREE.MathUtils.clamp(flow / (edge.width * Math.max(0.01, h)), 0.2, 1.8)
         const fallTime = Math.sqrt(2 * Math.max(0, drop) / G)
         const reach = 0.1 + velocity * Math.sqrt(2 * Math.max(0, crestZ0(edge.crest, h, lowerLevel) - lowerLevel) / G)
-        const strength = THREE.MathUtils.smoothstep(flow, 0, 0.01) * THREE.MathUtils.smoothstep(drop, 0.005, 0.03)
+        const strength = THREE.MathUtils.smoothstep(flow, 0, 0.006) * THREE.MathUtils.smoothstep(drop, 0.005, 0.03)
         // The nappe leaves from the crest itself (dry weir top), so it never
         // intersects the rippling pool surfaces on either side.
         const crestZ = Math.max(edge.crest + h * 0.85, lowerLevel) + 0.006
@@ -184,7 +184,7 @@ export class GardenFalls {
     for (const tipper of layout.tippers) {
       const i = tipper.index, pour = state.tipperPours[i], angle = state.tipperAngles[i]
       const [x, y, z] = tipperPoint(tipper, -TIPPER_ARM, angle, -TIPPER_RADIUS * 0.6)
-      const strength = THREE.MathUtils.smoothstep(pour, 0, 0.05)
+      const strength = THREE.MathUtils.smoothstep(pour, 0, 0.008)
       const back: [number, number] = [-tipper.direction[0], -tipper.direction[1]]
       const lower = level(tipper.pool)
       const drop = Math.max(0, z - lower)
@@ -227,7 +227,7 @@ export class GardenFalls {
     const drain = layout.edges.find(edge => edge.kind === 'drain')
     if (drain) {
       const rate = Math.max(0, state.discharge[drain.index])
-      this.uniforms.uDrain.value.set(drain.points[0][0], drain.points[0][1], level(drain.a), THREE.MathUtils.smoothstep(rate, 0, 0.05))
+      this.uniforms.uDrain.value.set(drain.points[0][0], drain.points[0][1], level(drain.a), THREE.MathUtils.smoothstep(rate, 0, 0.03))
     }
     const impacts = this.uniforms.uImpacts.value, heights = this.uniforms.uImpactZ.value
     const count = Math.min(MAX_IMPACTS, this.targets.length)

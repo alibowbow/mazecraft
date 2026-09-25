@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import { LIFT_SPEED, type GardenLayout, type Lift, type Tipper, type Wheel } from './layout'
+import { type GardenLayout, type Lift, type Tipper, type Wheel } from './layout'
 import type { GardenState } from './simulation'
-import { criticalDepth } from './geometry'
+import { NORIA_POT, NORIA_POTS } from './physics/world'
 import { TIPPER_ARM, TIPPER_RADIUS, TIPPER_REST, TIPPER_TAIL, WHEEL_PADDLES } from './mechanics'
 
 interface Part { group: THREE.Group; pivot: THREE.Object3D }
@@ -33,28 +33,15 @@ function strut(a: THREE.Vector3, b: THREE.Vector3, size: number): THREE.BufferGe
   return geometry
 }
 
-const NORIA_BUCKETS = 18
+const NORIA_BUCKETS = NORIA_POTS
 
 interface Noria extends Part { spin: number; angle: number; water: THREE.Object3D[] }
 
-/** Pot centre radius and depth along the axle. */
-const NORIA_POT_RADIUS = (radius: number) => radius - 0.12
-const NORIA_POT_DEPTH = 0.3
+/** Pot centre radius and depth along the axle (the physics' pot). */
+const NORIA_POT_RADIUS = (radius: number) => radius - NORIA_POT.inset
+const NORIA_POT_DEPTH = NORIA_POT.reach
 /** Axle offset of the A-frames from each face of the wheel, clear of the pots. */
 const NORIA_FRAME = 0.45
-
-/**
- * How full a pot is at `phase` (0 at the bottom, rising through π/2): it
- * leaves the sump full, spills as it turns over the top and runs back empty.
- */
-export function noriaPotFill(phase: number): number {
-  if (phase < 0.35 || phase > Math.PI + NORIA_SPILL) return 0
-  if (phase < Math.PI - NORIA_SPILL) return 1
-  return THREE.MathUtils.smoothstep(Math.PI + NORIA_SPILL - phase, 0, 2 * NORIA_SPILL)
-}
-
-/** Pots spill only within this angle of the top, right over the trough. */
-const NORIA_SPILL = 0.13
 
 /** Where a noria's pots pour: over the trough, beside the top of the wheel. */
 export function noriaPour(lift: Lift): { x: number; y: number; z: number } {
@@ -62,7 +49,7 @@ export function noriaPour(lift: Lift): { x: number; y: number; z: number } {
   const ax = -Math.sin(heading), ay = Math.cos(heading), start = lift.path[0]
   const side = Math.sign((start[0] - lift.center[0]) * ax + (start[1] - lift.center[1]) * ay) || 1
   const across = side * (lift.width / 2 + 0.03 + NORIA_POT_DEPTH / 2)
-  return { x: lift.center[0] + ax * across, y: lift.center[1] + ay * across, z: lift.hub + NORIA_POT_RADIUS(lift.radius) - 0.11 }
+  return { x: lift.center[0] + ax * across, y: lift.center[1] + ay * across, z: lift.hub + NORIA_POT_RADIUS(lift.radius) - NORIA_POT.depth / 2 }
 }
 
 /**
@@ -77,7 +64,7 @@ export class GardenDevices {
   private readonly norias: Noria[] = []
   private readonly bucketWater = new THREE.MeshStandardMaterial({ color: 0x7fd6de, roughness: 0.08, transparent: true, opacity: 0.85 })
   private readonly geometries: THREE.BufferGeometry[] = []
-  private readonly potWater = new THREE.BoxGeometry(0.2, NORIA_POT_DEPTH - 0.05, 0.12)
+  private readonly potWater = new THREE.BoxGeometry(NORIA_POT.width - 0.04, NORIA_POT_DEPTH - 0.05, NORIA_POT.depth * 0.5)
   private readonly bamboo = new THREE.MeshPhysicalMaterial({ color: 0xb49a55, roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.18, sheen: 0.3, sheenColor: new THREE.Color(0xfff0c8) })
   private readonly teak = new THREE.MeshPhysicalMaterial({ color: 0x7e5334, roughness: 0.5, clearcoat: 0.45, clearcoatRoughness: 0.25 })
   private previousTime: number | null = null
@@ -247,9 +234,10 @@ export class GardenDevices {
     for (let k = 0; k < NORIA_BUCKETS; k++) {
       const a = k / NORIA_BUCKETS * Math.PI * 2
       // A pot: bottom outward, two walls and two ends, open towards the axle.
+      const pw = NORIA_POT.width, pd = NORIA_POT.depth
       for (const [dx, y, dz, sx, sy, sz] of [
-        [0, mid, -0.11, 0.26, depth, 0.025], [-0.12, mid, 0, 0.025, depth, 0.22], [0.12, mid, 0, 0.025, depth, 0.22],
-        [0, side * inner, 0, 0.26, 0.025, 0.22], [0, side * (inner + depth), 0, 0.26, 0.025, 0.22],
+        [0, mid, -pd / 2, pw + 0.02, depth, 0.025], [-pw / 2, mid, 0, 0.025, depth, pd], [pw / 2, mid, 0, 0.025, depth, pd],
+        [0, side * inner, 0, pw + 0.02, 0.025, pd], [0, side * (inner + depth), 0, pw + 0.02, 0.025, pd],
       ] as const) {
         const plank = new THREE.BoxGeometry(sx, sy, sz)
         plank.translate(dx, y, dz)
@@ -293,40 +281,24 @@ export class GardenDevices {
       if (Math.abs(pivot.rotation.y - angle) > 1e-4) this.moved = true
       pivot.rotation.y = angle
     })
-    this.layout.wheels.forEach((wheel, i) => {
-      const part = this.wheels[i], edge = this.layout.edges[wheel.edge]
-      const q = Math.abs(state.discharge[wheel.edge] ?? 0)
-      const h = Math.max(0.01, criticalDepth(q, edge.width))
-      const velocity = Math.min(2.2, q / (edge.width * h))
-      // Overshot wheels are pushed down their front by the jet; undershot
-      // paddles are dragged along by the flow beneath the axle.
-      const target = (wheel.overshot ? 1 : -1) * velocity * 0.55 / wheel.radius * THREE.MathUtils.smoothstep(q, 0, 0.01)
-      part.spin += (target - part.spin) * Math.min(1, dt * 1.2)
-      part.angle += part.spin * dt
-      if (Math.abs(part.spin) > 1e-3) this.moved = true
-      part.pivot.rotation.y = part.angle
+    // Wheels and norias turn as the physics turns them.
+    this.layout.wheels.forEach((_, i) => {
+      const part = this.wheels[i], angle = state.wheelAngles[i] ?? 0
+      if (Math.abs(part.pivot.rotation.y - angle) > 1e-4) this.moved = true
+      part.pivot.rotation.y = angle
     })
-    this.layout.lifts.forEach((lift, i) => {
-      const noria = this.norias[i]
-      const load = state.liftLoads[i] ?? 0
-      const running = load > 1e-4 || (state.discharge[lift.edge] ?? 0) > 1e-4
-      // Buckets rise on the +x side: the wheel turns backwards about its axle.
-      const target = running ? -LIFT_SPEED / lift.radius : 0
-      noria.spin += (target - noria.spin) * Math.min(1, dt * 0.8)
-      noria.angle += noria.spin * dt
-      noria.pivot.rotation.y = noria.angle
-      if (Math.abs(noria.spin) > 1e-3) this.moved = true
-      const full = load > 1e-3
+    this.layout.lifts.forEach((_, i) => {
+      const noria = this.norias[i], angle = state.noriaAngles[i] ?? 0
+      if (Math.abs(noria.pivot.rotation.y - angle) > 1e-4) this.moved = true
+      noria.pivot.rotation.y = angle
       noria.water.forEach((anchor, k) => {
-        // Angle of the pot from the bottom of its round, in its travel direction.
-        const phase = ((k / NORIA_BUCKETS * Math.PI * 2 - noria.angle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)
-        const fill = full ? noriaPotFill(phase) : 0
+        const fill = state.noriaPots[i * NORIA_BUCKETS + k] ?? 0
         const mesh = anchor.children[0] as THREE.Mesh
         mesh.visible = fill > 0.02
-        anchor.rotation.y = -noria.angle
-        // Level water settling to the bottom of the pot as it empties.
+        // Level water in the swinging pot, settling as it empties.
+        anchor.rotation.y = -angle
         mesh.scale.set(1, 1, fill)
-        mesh.position.z = -0.06 * (1 - fill)
+        mesh.position.z = -NORIA_POT.depth * 0.25 * (1 - fill)
       })
     })
   }

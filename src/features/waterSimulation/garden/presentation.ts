@@ -4,7 +4,7 @@ import { StudioShadows } from '../freeSurface/studioLighting'
 import type { BasinSnapshot } from '../freeSurface/basinSimulation'
 import type { WaterAppearance } from '../freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, normalizeWaterLook, WATER_LIGHTS, type WaterLook, type WaterTheme } from '../freeSurface/lookdev'
-import type { GardenId } from './designs'
+import type { GardenKey } from './index'
 import { gardenLayout, type GardenLayout } from './layout'
 import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
@@ -89,7 +89,7 @@ export class GardenPresentation3D {
   private readonly started: Float64Array
   private disposed = false
 
-  constructor(id: GardenId, private readonly renderer: THREE.WebGLRenderer) {
+  constructor(id: GardenKey, private readonly renderer: THREE.WebGLRenderer) {
     const layout = this.layout = gardenLayout(id)
     this.scene.name = `water-garden-${id}`
     this.uniforms = createGardenUniforms(gardenField(layout))

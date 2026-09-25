@@ -117,7 +117,8 @@ export interface SourceSpec {
 export type PlantKind = 'olive' | 'rosemary' | 'fern' | 'stones'
 
 export interface GardenDesign {
-  id: GardenId
+  /** A preset id, or the key a crafted garden is registered under. */
+  id: string
   vessels: VesselSpec[]
   source: SourceSpec
   plants: { kind: PlantKind; at: Vec2; scale: number; z?: number }[]
