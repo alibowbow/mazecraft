@@ -34,7 +34,7 @@ export async function importWaterProject(page: Page, project: MazeProject, quali
       __resetParticleWaterProbe: () => void
     }).__resetParticleWaterProbe())
   }
-  await page.locator(mobile ? '.mobile-tabs button' : '.studio-stage-rail button').filter({ hasText: '테스트' }).click()
+  await page.locator(mobile ? '.mobile-tabs button' : '.studio-stage-rail button').filter({ hasText: '완성' }).click()
   await page.getByLabel('효과 품질').selectOption(quality)
   if (mobile) await page.getByRole('button', { name: '설정 닫기' }).click()
 }

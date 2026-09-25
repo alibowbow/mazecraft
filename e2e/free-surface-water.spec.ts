@@ -24,7 +24,7 @@ async function importProject(page: Page, project: MazeProject, mobile = false) {
   })
   await enterProjectEditor(page)
   const tabs = mobile ? '.mobile-tabs button' : '.studio-stage-rail button'
-  await page.locator(tabs).filter({ hasText: '테스트' }).click()
+  await page.locator(tabs).filter({ hasText: '완성' }).click()
   await page.getByLabel('효과 품질').selectOption('low')
   if (mobile) await page.getByRole('button', { name: '설정 닫기' }).click()
 }

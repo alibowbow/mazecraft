@@ -117,16 +117,20 @@ interface StudioScreenProps {
   onToast: (message: string, error?: boolean) => void
 }
 
+/**
+ * Three steps: shape the outline, make the maze (walls, difficulty, colours),
+ * then finish it (check, play, game rules, share). The former game,
+ * decoration and share panels live inside these steps.
+ */
 const steps: Array<{ id: StudioStep; title: string; hint: string; icon: typeof Grid2X2 }> = [
-  { id: 1, title: '형태', hint: '윤곽과 입력 소스', icon: Grid2X2 },
-  { id: 2, title: '미로', hint: '난이도와 벽 편집', icon: Layers3 },
-  { id: 3, title: '게임', hint: '규칙과 시크릿', icon: Gamepad2 },
-  { id: 4, title: '꾸미기', hint: '색상과 배경', icon: Paintbrush },
-  { id: 5, title: '테스트', hint: '검증과 플레이', icon: ShieldCheck },
-  { id: 6, title: '공유', hint: '링크와 파일', icon: Share2 },
+  { id: 1, title: '모양', hint: '윤곽과 입력 소스', icon: Grid2X2 },
+  { id: 2, title: '미로', hint: '난이도·벽 편집·색상', icon: Layers3 },
+  { id: 5, title: '완성', hint: '검증·플레이·공유', icon: ShieldCheck },
 ]
+/** Panels that were steps of their own, and the step that now holds them. */
+const mergedStep: Record<StudioStep, StudioStep> = { 1: 1, 2: 2, 3: 5, 4: 2, 5: 5, 6: 5 }
 
-const mobileSteps: StudioStep[] = [1, 2, 3, 4, 5, 6]
+const mobileSteps: StudioStep[] = [1, 2, 5]
 const compactLayoutQuery = '(max-width: 1180px)'
 
 const shapeIcons: Record<BuiltInShape, typeof Square> = {
@@ -505,7 +509,8 @@ export function StudioScreen({
     updateImageSettings({ crop: { ...project.shape.settings.crop, ...patch } })
   }
 
-  const selectStep = (next: StudioStep, openSheet = false, trigger?: HTMLElement) => {
+  const selectStep = (requested: StudioStep, openSheet = false, trigger?: HTMLElement) => {
+    const next = mergedStep[requested]
     if (next !== 2 && !(next === 1 && source === 'drawing')) {
       finishWallEdit(true)
       setEditorEnabled(false)
@@ -897,7 +902,7 @@ export function StudioScreen({
           }
       : {}
 
-  const inspectorContent = (() => {
+  const panelFor = (step: StudioStep) => {
     if (step === 1) {
       return (
         <>
@@ -1214,10 +1219,6 @@ export function StudioScreen({
             <label className="field"><span>공개 방식</span><select value={project.secretReveal.mode} onChange={(event) => update('secretReveal', { ...project.secretReveal, mode: event.target.value as MazeProject['secretReveal']['mode'] })}><option value="visited-cells">이동한 칸 공개</option><option value="solution-path">정답 경로 공개</option><option value="checkpoints">체크포인트 공개</option><option value="on-complete">완주 후 전체 공개</option></select></label>
             <label className="field"><span>공개 애니메이션</span><select value={project.secretReveal.animation} onChange={(event) => update('secretReveal', { ...project.secretReveal, animation: event.target.value as MazeProject['secretReveal']['animation'] })}><option value="fade">페이드</option><option value="puzzle">조각 맞추기</option><option value="unmask">마스크 걷히기</option><option value="zoom">확대되며 공개</option><option value="none">끄기</option></select></label>
           </div>
-          <div className="inspector-section settings-stack">
-            <button className="button" onClick={() => onPlay(false)}><Play size={17} />플레이 테스트</button>
-            <button className="button secondary" onClick={() => onPlay(true)}><FlagIcon size={17} />고스트 기록 저장</button>
-          </div>
         </>
       )
     }
@@ -1280,7 +1281,23 @@ export function StudioScreen({
         </div>
       </>
     )
-  })()
+  }
+
+  const stepIndex = Math.max(0, steps.findIndex(item => item.id === step))
+  // Each step shows its own panel plus those of the former steps it absorbed.
+  const inspectorContent = step === 2 ? <>
+    {panelFor(2)}
+    <p className="inspector-group-title">색상과 배경</p>
+    {panelFor(4)}
+  </> : step === 5 ? <>
+    {panelFor(5)}
+    <details className="inspector-disclosure">
+      <summary>게임 규칙과 시크릿</summary>
+      {panelFor(3)}
+    </details>
+    <p className="inspector-group-title">공유와 내보내기</p>
+    {panelFor(6)}
+  </> : panelFor(step)
 
   const defaultMobileEditTools: EditorTool[] = ['open-wall', 'close-wall', 'pan']
   const mobileEditTools: EditorTool[] = defaultMobileEditTools.includes(tool)
@@ -1331,15 +1348,15 @@ export function StudioScreen({
 
       <div className="studio-layout">
         <nav className="studio-stage-rail no-print" aria-label="제작 단계">
-          <div className="stage-rail-heading"><span>BUILD</span><small>01—06</small></div>
-          {steps.map(({ id, title, icon: Icon }) => (
+          <div className="stage-rail-heading"><span>BUILD</span><small>01—03</small></div>
+          {steps.map(({ id, title, icon: Icon }, index) => (
             <button
               key={id}
               className={step === id ? 'active' : ''}
               aria-current={step === id ? 'step' : undefined}
-              aria-label={`${id}단계 ${title}`}
+              aria-label={`${index + 1}단계 ${title}`}
               data-ready={id < step || (id >= 5 && validation.valid)}
-              data-step-number={String(id).padStart(2, '0')}
+              data-step-number={String(index + 1).padStart(2, '0')}
               onClick={() => selectStep(id)}
             >
               <span><Icon size={17} /></span>
@@ -1351,7 +1368,7 @@ export function StudioScreen({
           <div className="canvas-toolbar no-print">
             <div className="toolbar-group editing-controls">
               <button className="step-context" onClick={(event) => selectStep(step, true, event.currentTarget)} title="현재 단계 설정 열기">
-                <span>{String(step).padStart(2, '0')}</span>
+                <span>{String(stepIndex + 1).padStart(2, '0')}</span>
                 <strong>{steps.find((item) => item.id === step)?.title}</strong>
               </button>
               <button
@@ -1389,7 +1406,6 @@ export function StudioScreen({
               >
                 <Lightbulb size={17} /><span>정답 경로</span>
               </button>
-              <button className="toolbar-button validation-tool" aria-label="검증" onClick={(event) => selectStep(5, true, event.currentTarget)}><ShieldCheck size={17} /><span>검증</span></button>
               <span className="toolbar-separator" />
               <button
                 className={`toolbar-button panel-trigger ${inspectorPanelOpen ? 'active' : ''}`}
@@ -1493,16 +1509,20 @@ export function StudioScreen({
               {project.attribution.creatorDisplayName && <small>{project.attribution.creatorDisplayName}</small>}
             </div>
           )}
-          <footer className={`inspector-footer${step === 6 ? ' has-share-action' : ''}`}>
+          <footer className={`inspector-footer${step === 5 ? ' has-share-action' : ''}`}>
             <button
               className="button secondary"
-              disabled={step === 1}
-              onClick={() => selectStep(Math.max(1, step - 1) as StudioStep, compactLayout)}
+              disabled={stepIndex === 0}
+              onClick={() => selectStep(steps[Math.max(0, stepIndex - 1)].id, compactLayout)}
             >
               이전
             </button>
-            <span><strong>{step}</strong> / {steps.length}</span>
-            {step === 6 && (
+            <span><strong>{stepIndex + 1}</strong> / {steps.length}</span>
+            {step !== 5 && (
+              // Phones and tablets switch steps with the tab bar; keep their sheet footer short.
+              !compactLayout && <button className="button" onClick={() => selectStep(steps[stepIndex + 1].id, compactLayout)}>다음</button>
+            )}
+            {step === 5 && (
               <button
                 className="button"
                 onClick={() => {

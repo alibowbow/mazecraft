@@ -80,7 +80,8 @@ test('custom water retains the same gravity and inlet across 2D/3D, edits live, 
   await expect(page.getByLabel('현재 가로 칸 수', { exact: true })).toHaveValue('16')
   await ready(page)
   expect(await flow(page)).toEqual(paused)
-  await expect(canvas).toHaveAttribute('data-particle-capacity', budget!)
+  // A denser maze keeps the water it holds and may pour more to fill its channels.
+  expect(Number(await canvas.getAttribute('data-particle-capacity'))).toBeGreaterThanOrEqual(Number(budget))
   await expect(canvas).toHaveAttribute('data-particle-radius', sampling!)
   await expect(canvas).toHaveAttribute('data-surface-resolution', surfaceResolution!)
   const finer = await savedProject(page)

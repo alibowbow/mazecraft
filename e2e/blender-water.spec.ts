@@ -19,7 +19,7 @@ async function openHighQualityWater(page: Page) {
     })
   }
   await enterProjectEditor(page)
-  await page.locator('.studio-stage-rail button').filter({ hasText: '테스트' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '완성' }).click()
   await page.getByLabel('효과 품질').selectOption('high')
   await page.getByRole('button', { name: '물 시뮬레이션 열기' }).click()
   await page.getByRole('button', { name: '3D 수면', exact: true }).click()

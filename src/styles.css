@@ -5277,3 +5277,11 @@ h1, h2, h3 { font-weight: 500; letter-spacing: -0.045em; }
 }
 .studio-header .brand strong { font-size: 14px; letter-spacing: 0.14em; }
 .studio-header .brand > span:last-child { justify-items: start; }
+
+/* Maze studio: panels merged into three steps. */
+.inspector-group-title { margin: 18px 18px 4px; padding-top: 14px; border-top: 1px solid var(--line, #e3e5dc); font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted, #6b7773); }
+.inspector-disclosure { margin: 10px 14px 0; border: 1px solid var(--line, #e3e5dc); border-radius: 12px; overflow: hidden; }
+.inspector-disclosure > summary { cursor: pointer; padding: 12px 14px; font-size: 13px; font-weight: 650; list-style: none; display: flex; align-items: center; justify-content: space-between; }
+.inspector-disclosure > summary::after { content: '＋'; font-weight: 400; color: var(--muted, #6b7773); }
+.inspector-disclosure[open] > summary::after { content: '－'; }
+.inspector-disclosure > summary::-webkit-details-marker { display: none; }

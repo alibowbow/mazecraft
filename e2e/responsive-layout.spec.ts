@@ -61,7 +61,7 @@ for (const viewport of responsiveViewports) {
       false,
     )
 
-    await page.locator('.mobile-tabs button').filter({ hasText: '형태' }).click()
+    await page.locator('.mobile-tabs button').filter({ hasText: '모양' }).click()
     await expect(page.locator('.inspector')).toHaveClass(/open/)
     await expect
       .poll(async () => {

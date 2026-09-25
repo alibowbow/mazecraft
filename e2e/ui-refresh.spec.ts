@@ -45,8 +45,8 @@ test('데스크톱 제작기에서 중복 탐색 없이 단계 흐름과 넓은 
   expect(initial).not.toBeNull()
   expect(initial!.width).toBeGreaterThanOrEqual(880)
   await expect(page.locator('.left-rail')).toHaveCount(0)
-  await expect(page.locator('.studio-stage-rail button')).toHaveCount(6)
-  await expect(page.locator('.studio-stage-rail button.active')).toContainText('형태')
+  await expect(page.locator('.studio-stage-rail button')).toHaveCount(3)
+  await expect(page.locator('.studio-stage-rail button.active')).toContainText('모양')
   await capture(page, testInfo, 'studio-desktop.png')
 
   await page.locator('.inspector-collapse').click()
@@ -60,7 +60,7 @@ test('데스크톱 제작기에서 중복 탐색 없이 단계 흐름과 넓은 
   await expect(page.locator('.studio-root')).toHaveAttribute('data-focus-mode', 'false')
 })
 
-test('모바일 제작기에서 여섯 단계를 빠짐없이 바텀 시트로 연다', async ({ page }, testInfo) => {
+test('모바일 제작기에서 세 단계를 빠짐없이 바텀 시트로 연다', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await visitProjectLibrary(page)
   await capture(page, testInfo, 'home-mobile.png', true)
@@ -75,15 +75,15 @@ test('모바일 제작기에서 여섯 단계를 빠짐없이 바텀 시트로 �
   const tabs = page.locator('.mobile-tabs button')
   const inspector = page.locator('.inspector')
   const panelButton = page.locator('.canvas-toolbar .panel-trigger').last()
-  await expect(tabs).toHaveCount(6)
-  await expect(tabs).toHaveText(['형태', '미로', '게임', '꾸미기', '테스트', '공유'])
+  await expect(tabs).toHaveCount(3)
+  await expect(tabs).toHaveText(['모양', '미로', '완성'])
   await expect(inspector).toHaveAttribute('inert', '')
   await expect(panelButton).toHaveAttribute('aria-expanded', 'false')
   await expect(panelButton).toHaveAccessibleName('설정 패널 펼치기')
   await expect(page.locator('.studio-header .focus-button')).toBeVisible()
   await capture(page, testInfo, 'studio-mobile.png')
 
-  const testTab = tabs.filter({ hasText: '테스트' })
+  const testTab = tabs.filter({ hasText: '완성' })
   await testTab.click()
   await expect(inspector).toHaveClass(/open/)
   await expect(inspector).not.toHaveAttribute('inert', '')
@@ -118,7 +118,7 @@ test('소형 태블릿 홈에서 간결한 히어로와 템플릿 선반을 제�
   }
 })
 
-test('태블릿과 compact 경계에서 여섯 단계가 한 줄 안에 유지된다', async ({ page }) => {
+test('태블릿과 compact 경계에서 세 단계가 한 줄 안에 유지된다', async ({ page }) => {
   await page.setViewportSize({ width: 801, height: 900 })
   await createBasic(page)
 
@@ -129,7 +129,7 @@ test('태블릿과 compact 경계에서 여섯 단계가 한 줄 안에 유지�
     const barBox = await bar.boundingBox()
     expect(barBox).not.toBeNull()
     const buttons = page.locator('.mobile-tabs button')
-    await expect(buttons).toHaveCount(6)
+    await expect(buttons).toHaveCount(3)
 
     for (const button of await buttons.all()) {
       const box = await button.boundingBox()

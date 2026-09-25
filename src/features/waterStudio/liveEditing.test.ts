@@ -26,12 +26,14 @@ describe('live water topology', () => {
     expect(resizeWaterMaze(finer, original.grid.rows, original.grid.cols, original)).toBe(original)
     expect(resizeWaterMaze(finer, 24, 24, original)).toBe(finer)
   })
-  it('retains liquid sampling and particle budget when maze density increases', () => {
+  it('retains liquid sampling and grows the particle budget to fill a denser maze', () => {
     const original = createGeneratedWaterMaze({ ...DEFAULT_WATER_MAZE, rows: 8, cols: 8 })
     const before = buildFluidLayout(original)
-    const after = buildFluidLayout(resizeWaterMaze(original, 32, 32), before.capacity)
+    const after = buildFluidLayout(resizeWaterMaze(original, 32, 32))
     expect(after.walls.length).toBeGreaterThan(before.walls.length * 4)
-    expect(after.capacity).toBe(before.capacity)
+    // Enough particles to cover every open cell of the larger maze.
+    expect(after.capacity).toBeGreaterThan(before.capacity)
+    expect(after.capacity * after.particleArea).toBeGreaterThanOrEqual(Math.min(after.activeCellCount * 0.9, 18_000 * after.particleArea))
     expect(after.radius).toBe(before.radius)
     expect(after.particleArea).toBe(before.particleArea)
   })

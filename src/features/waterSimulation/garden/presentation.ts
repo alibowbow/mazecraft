@@ -10,6 +10,8 @@ import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
 import { sceneColorFor } from './post'
 import { CinematicDirector } from './cinematic'
+import { GardenFloaters } from './floaters3d'
+import type { Listener } from './sound'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
 import { GardenPlants } from './plants'
@@ -69,6 +71,7 @@ export class GardenPresentation3D {
   private readonly materials: THREE.Material[] = []
   private readonly falls: GardenFalls
   private readonly plants: GardenPlants
+  private readonly floaters = new GardenFloaters()
   private readonly devices: GardenDevices
   private readonly channels: GardenChannels
   private shadowFrame = 0
@@ -226,6 +229,7 @@ export class GardenPresentation3D {
     for (const vessel of layout.vessels) vessel.spec.planters.forEach((at, i) => this.plants.add('rosemary', at[0], at[1], vessel.top - 0.04, 0.55, 5 + i * 13))
     this.plants.build()
     this.content.add(this.plants.group)
+    this.content.add(this.floaters.group)
     this.scene.add(this.content)
 
     this.sun.castShadow = true
@@ -392,9 +396,10 @@ export class GardenPresentation3D {
     this.trackWater(state)
     this.falls.update(state, this.inflow)
     this.devices.update(state)
+    const floating = this.floaters.update(state.floaters)
     this.channels.update(state)
     // Moving machinery casts moving shadows: refresh them at a gentle rate.
-    if (this.devices.moved && ++this.shadowFrame % 3 === 0) {
+    if ((this.devices.moved || floating) && ++this.shadowFrame % 3 === 0) {
       this.sun.shadow.needsUpdate = true
       this.renderer.shadowMap.needsUpdate = true
     }
@@ -405,6 +410,12 @@ export class GardenPresentation3D {
     if (!this.state) this.uniforms.uGardenTime.value = time
   }
 
+  /** Where the viewer hears the garden from: the middle of the view and its framed height. */
+  listener(): Listener {
+    return { x: this.target.x, y: this.target.y, z: this.target.z, span: this.cinematic ? this.filmSpan : this.viewSize.y }
+  }
+  private filmSpan = 6
+
   /** Film the running water in shots (perspective); off returns to the studio view. */
   setCinematic(enabled: boolean): void {
     if (enabled === this.cinematic) return
@@ -414,12 +425,14 @@ export class GardenPresentation3D {
   }
 
   private filmWater(state: GardenSnapshot['garden']): void {
-    const shot = this.director.frame(performance.now() / 1000, this.waterHead(state))
+    const head = this.waterHead(state)
+    const shot = this.director.frame(performance.now() / 1000, head ?? this.newestWater(state), head !== null)
     const aspect = this.view ? Math.max(1, this.view.width) / Math.max(1, this.view.height) : 1.5
     const film = this.film
     film.aspect = aspect
     // Keep the framed height, and on narrow screens the framed width too.
     const height = Math.max(shot.height, shot.height * 1.3 / aspect)
+    this.filmSpan = height
     const distance = height / 2 / Math.tan(THREE.MathUtils.degToRad(film.fov / 2))
     film.position.copy(shot.target).addScaledVector(shot.direction, distance)
     film.up.set(0, 0, 1)
@@ -476,6 +489,25 @@ export class GardenPresentation3D {
       head = new THREE.Vector3(point[0], point[1], point[2])
     })
     return head
+  }
+
+  /**
+   * Once the water runs steadily: where the newest stretch hands it on (the
+   * spout of the last pool reached, or the end of the last channel).
+   */
+  private newestWater(state: GardenSnapshot['garden']): THREE.Vector3 | null {
+    let newest = -1, slot = -1
+    this.started.forEach((time, i) => { if (time >= newest && time >= 0) { newest = time; slot = i } })
+    if (slot < 0) return null
+    const pools = this.layout.pools.length
+    if (slot >= pools) {
+      const path = this.channelPaths[slot - pools]
+      const end = path[path.length - 1]
+      return new THREE.Vector3(end[0], end[1], end[2])
+    }
+    const out = this.layout.edges.find(edge => edge.a === slot && edge.kind !== 'lift')
+    const [x, y] = out?.points[0] ?? [this.center.x, this.center.y]
+    return new THREE.Vector3(x, y, state.levels[slot])
   }
 
   private trackWater(state: GardenSnapshot['garden']): void {
@@ -544,7 +576,7 @@ export class GardenPresentation3D {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
+    this.falls.dispose(); this.plants.dispose(); this.floaters.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uOwner]) uniform.value.dispose()

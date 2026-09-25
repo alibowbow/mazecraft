@@ -2,11 +2,12 @@ import * as THREE from 'three'
 
 /**
  * A camera operator for the water: while it runs, the garden is filmed in
- * shots of a few seconds, each with its own subject, angle and move — a
- * slow orbit, a push-in, a crane up — and the camera glides from one to the
- * next. New water always takes the lead: when it reaches a basin or pours
- * off a device, the next shot goes to it; between arrivals the camera tours
- * the devices and pulls back for a wide shot now and then.
+ * shots of several seconds. The water leads: the camera holds on where it
+ * is running now and glides after it (smoothly, with a dead zone, so the
+ * wetting front's small jumps never shake the frame). When the course runs
+ * steadily it looks at the device nearest the water, and pulls back for a
+ * wide shot now and then. Moves are slow: a gentle push-in or crane on the
+ * water, a slow orbit only on wide and device shots.
  */
 export interface ShotFrame {
   target: THREE.Vector3
@@ -30,7 +31,6 @@ interface Shot {
   length: number
 }
 
-const TAU = Math.PI * 2
 const smootherstep = (x: number) => { const t = Math.min(1, Math.max(0, x)); return t * t * t * (t * (t * 6 - 15) + 10) }
 
 export class CinematicDirector {
@@ -38,36 +38,41 @@ export class CinematicDirector {
   private previous: ShotFrame | null = null
   private blendStart = 0
   private count = 0
-  private tour = 0
-  private lastHead: THREE.Vector3 | null = null
-  private readonly water = new THREE.Vector3()
+  /** The water the camera follows: smoothed in time, with a dead zone. */
+  private focus: THREE.Vector3 | null = null
+  private goal: THREE.Vector3 | null = null
+  private lastTime = 0
 
-  /**
-   * @param centre garden centre, @param extent its size, @param baseAzimuth
-   * the default view's azimuth, @param sights devices worth a close look.
-   */
   constructor(private readonly centre: THREE.Vector3, private readonly extent: THREE.Vector3,
     private readonly baseAzimuth: number, private readonly sights: THREE.Vector3[]) {}
 
-  reset(): void { this.shot = null; this.previous = null; this.lastHead = null; this.count = 0 }
+  reset(): void { this.shot = null; this.previous = null; this.focus = null; this.goal = null; this.count = 0 }
 
-  /** Frame for time `now` (s), given the head of the newest water (or null). */
-  frame(now: number, head: THREE.Vector3 | null): ShotFrame {
-    if (head) {
-      const arrived = !this.lastHead || head.distanceTo(this.lastHead) > 2.5
-      this.lastHead = this.lastHead ? this.lastHead.lerp(head, 0.15) : head.clone()
-      if (arrived && this.shot && this.shot.subject !== 'water' && now - this.shot.start > 1.5) this.cut(now, head)
+  /**
+   * Frame for time `now` (s). `water` is where the water is running now (the
+   * advancing front, or the newest stretch once it is steady); `advancing`
+   * says whether it is still spreading.
+   */
+  frame(now: number, water: THREE.Vector3 | null, advancing: boolean): ShotFrame {
+    const dt = this.lastTime ? Math.min(0.25, Math.max(0, now - this.lastTime)) : 0
+    this.lastTime = now
+    let jumped = false
+    if (water) {
+      if (!this.goal || water.distanceTo(this.goal) > 3.5) jumped = Boolean(this.goal)
+      // Dead zone: small steps of the front do not move the goal at all.
+      if (!this.goal) this.goal = water.clone()
+      else if (water.distanceTo(this.goal) > 0.6) this.goal.lerp(water, 0.5)
+      if (!this.focus) this.focus = this.goal.clone()
+      // Critically damped glide (about 1.5 s to settle).
+      this.focus.lerp(this.goal, 1 - Math.exp(-dt / 0.7))
     }
-    if (!this.shot || now - this.shot.start > this.shot.length) this.cut(now, head)
+    const age = this.shot ? now - this.shot.start : Infinity
+    if (!this.shot || age > this.shot.length || (jumped && age > 3 && this.shot.subject !== 'water')) this.cut(now, advancing)
     const shot = this.shot!
-    if (shot.subject === 'water' && head) {
-      // Track the water softly: the subject leads, the camera follows.
-      this.water.lerp(head, 0.06)
-      shot.target.copy(this.water)
-    }
+    if (shot.subject === 'water' && this.focus) shot.target.copy(this.focus)
     const current = this.shotFrame(shot, now)
     if (!this.previous) return current
-    const blend = smootherstep((now - this.blendStart) / 2.4)
+    const blend = smootherstep((now - this.blendStart) / 3)
     if (blend >= 1) { this.previous = null; return current }
     return {
       target: this.previous.target.clone().lerp(current.target, blend),
@@ -77,8 +82,7 @@ export class CinematicDirector {
   }
 
   private shotFrame(shot: Shot, now: number): ShotFrame {
-    const t = Math.min(1, (now - shot.start) / shot.length)
-    const eased = smootherstep(t)
+    const eased = smootherstep((now - shot.start) / shot.length)
     const azimuth = shot.azimuth + shot.orbit * (now - shot.start)
     const elevation = shot.elevation + shot.crane * eased
     return {
@@ -88,29 +92,33 @@ export class CinematicDirector {
     }
   }
 
-  private cut(now: number, head: THREE.Vector3 | null): void {
+  private cut(now: number, advancing: boolean): void {
     if (this.shot) this.previous = this.shotFrame(this.shot, now)
     this.blendStart = now
     const k = this.count++
-    // Every fourth shot pulls back wide; otherwise the water, or a device.
-    const wide = k % 4 === 3 || (!head && !this.sights.length)
     const size = Math.max(this.extent.x, this.extent.y)
-    const side = k % 2 ? 1 : -1
-    let subject: Shot['subject'], target: THREE.Vector3
-    if (wide) { subject = 'wide'; target = this.centre.clone() }
-    else if (head) { subject = 'water'; target = head.clone(); this.water.copy(head) }
-    else { subject = 'device'; target = this.sights[this.tour++ % this.sights.length].clone() }
     const variety = (k * 0.618034) % 1
-    this.shot = {
-      subject, target, start: now,
-      azimuth: this.baseAzimuth + side * (0.35 + variety * 0.9),
-      elevation: wide ? 0.62 : 0.28 + variety * 0.3,
-      height: wide ? Math.max(8, size * 0.85) : 3.2 + variety * 2.2,
-      orbit: side * (wide ? 0.035 : 0.06) * (k % 3 === 1 ? 0.3 : 1),
-      push: wide ? 0.08 : k % 3 === 1 ? 0.28 : 0.12,
-      crane: k % 3 === 2 ? 0.18 : 0,
-      length: wide ? 9 : 7 + variety * 2,
+    // While the water advances the camera stays on it, with a wide shot
+    // every fourth cut; once it runs steadily it also visits the device
+    // nearest the water.
+    const kind: Shot['subject'] = k % 4 === 3 || !this.focus ? 'wide' : !advancing && k % 2 === 1 && this.sights.length ? 'device' : 'water'
+    const side = k % 2 ? 1 : -1
+    let target = this.centre.clone()
+    if (kind === 'water') target = this.focus!.clone()
+    if (kind === 'device') {
+      const from = this.focus!
+      target = this.sights.reduce((best, sight) => sight.distanceTo(from) < best.distanceTo(from) ? sight : best).clone()
     }
-    if (this.shot.azimuth > TAU) this.shot.azimuth -= TAU
+    this.shot = {
+      subject: kind, target, start: now,
+      // Stay on the same side of the garden as the default view, turned a little.
+      azimuth: this.baseAzimuth + side * (0.25 + variety * 0.4),
+      elevation: kind === 'wide' ? 0.62 : 0.42 + variety * 0.18,
+      height: kind === 'wide' ? Math.max(8, size * 0.85) : kind === 'device' ? 4.2 + variety * 1.2 : 5.5 + variety * 2,
+      orbit: kind === 'water' ? 0 : side * 0.02,
+      push: kind === 'wide' ? 0.06 : 0.1,
+      crane: kind === 'water' && k % 3 === 2 ? 0.08 : 0,
+      length: kind === 'wide' ? 8 : 9 + variety * 3,
+    }
   }
 }

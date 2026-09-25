@@ -37,6 +37,10 @@ test('crafts a water course from devices and runs it with the physics engine', a
     const canvas = document.querySelector<HTMLCanvasElement>(selector)
     return (JSON.parse(canvas?.dataset.spillRates ?? '[]') as number[]).filter(rate => rate > 0).length
   }, canvasSelector), { timeout: e2eTimeout(120_000) }).toBeGreaterThan(0)
+  // A rubber duck rides the water: Rapier loads (WebAssembly under the CSP) without errors.
+  await page.getByRole('button', { name: '물에 띄우기' }).click()
+  await page.getByRole('menuitem', { name: /고무오리/ }).click()
+  await page.waitForTimeout(3000)
   expect(errors).toEqual([])
 })
 
@@ -61,4 +65,29 @@ test('explains why a course cannot be built', async ({ page }) => {
   await expect(fixes.first()).toBeVisible()
   await fixes.first().click()
   await expect(panel.getByTestId('craft-verdict')).toContainText('물이 끝까지 흐르는 물길')
+})
+
+test('clears the first challenge stage when the physics meets its goals', async ({ page }) => {
+  test.setTimeout(e2eTimeout(240_000))
+  await page.goto('/')
+  await page.evaluate(() => { localStorage.clear(); localStorage.setItem('mazecraft.cinematic.v1', 'off') })
+  await page.getByRole('button', { name: '물길 크래프트' }).click()
+  await expect(page.getByTestId('craft-studio')).toBeVisible()
+  const panel = page.getByRole('complementary', { name: '물길 크래프트' })
+  if (!(await panel.isVisible())) await page.getByRole('button', { name: '장치 목록 열기' }).click()
+  await panel.getByRole('button', { name: /챌린지/ }).click()
+  await expect(panel.getByRole('list', { name: '목표' })).toContainText('종착 연못까지')
+  // Later stages stay locked until the one before is cleared.
+  await expect(panel.getByRole('button', { name: /2\. .*잠김/ })).toBeDisabled()
+  const before = await page.getByTestId('craft-canvas').getAttribute('data-garden')
+  await panel.getByRole('button', { name: '연꽃 연못 추가' }).click()
+  // Adding the device rebuilds the garden: wait for the new one before pouring.
+  await expect(page.getByTestId('craft-canvas')).not.toHaveAttribute('data-garden', before ?? '', { timeout: 10_000 })
+  await expect(page.getByTestId('craft-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: waterStartupTimeout })
+  if (await page.getByRole('button', { name: '장치 목록 닫기' }).isVisible()) await page.getByRole('button', { name: '장치 목록 닫기' }).click()
+  await page.getByRole('combobox', { name: '재생 속도' }).selectOption('4')
+  await page.getByRole('button', { name: '물 흘려보내기', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '스테이지 클리어' })).toBeVisible({ timeout: e2eTimeout(150_000) })
+  await page.getByRole('button', { name: '다음 스테이지' }).click()
+  await expect(panel.getByRole('list', { name: '목표' })).toContainText('시시오도시')
 })

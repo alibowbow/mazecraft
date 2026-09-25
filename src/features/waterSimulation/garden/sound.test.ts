@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { compileCraft, craftTemplates } from './craft'
 import { compileGarden } from './layout'
 import { GardenSimulation } from './simulation'
-import { GardenSoundAnalyzer } from './sound'
+import { GardenSoundAnalyzer, hearing } from './sound'
 
 const grid = { rows: 8, cols: 8, activeCellCount: 64 }
 
@@ -20,7 +20,7 @@ describe('garden sound', () => {
       simulation.advance(1 / 20, 1)
       const state = simulation.snapshot().garden
       const frame = analyzer.frame(state)
-      knocks += frame.knocks; drips += frame.drips / 20
+      knocks += frame.knocks.length; drips += frame.drips / 20
       loudest = Math.max(loudest, frame.stream, frame.splash)
       const angle = state.tipperAngles[0]
       if (angle < 0 && !tipped) tips++
@@ -32,4 +32,12 @@ describe('garden sound', () => {
     expect(Math.abs(knocks - tips)).toBeLessThanOrEqual(1)
     expect(drips).toBeGreaterThan(5)
   }, 120_000)
+
+  it('fades with distance from the view, and quietens a wide view', () => {
+    const near = { x: 0, y: 0, z: 1, span: 5 }
+    expect(hearing(near, 0, 0, 1)).toBeCloseTo(1, 5)
+    expect(hearing(near, 8, 0, 1)).toBeLessThan(0.1)
+    const wide = { ...near, span: 24 }
+    expect(hearing(wide, 0, 0, 1)).toBeLessThan(0.3)
+  })
 })

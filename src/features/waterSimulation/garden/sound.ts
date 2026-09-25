@@ -18,10 +18,30 @@ export interface SoundFrame {
   hum: number
   /** Drips per second from rain chains. */
   drips: number
-  /** Discrete events since the previous frame. */
-  knocks: number
-  ticks: number
-  surges: number
+  /** Discrete events since the previous frame, each with how loud it reaches the listener (0–1). */
+  knocks: number[]
+  ticks: number[]
+  surges: number[]
+}
+
+/**
+ * Where the viewer listens from: the point the view is centred on and the
+ * height of the framed view (m). Sounds fade with their distance from the
+ * middle of the view, and the whole garden quietens as the view pulls back.
+ */
+export interface Listener { x: number; y: number; z: number; span: number }
+
+/** Loudness of a source at (x, y, z) for this listener. */
+export function hearing(listener: Listener | null, x: number, y: number, z: number): number {
+  if (!listener) return 0.6
+  const reach = Math.max(1, listener.span * 0.45)
+  const d = Math.hypot(x - listener.x, y - listener.y, (z - listener.z) * 0.6)
+  return presence(listener) / (1 + (d / reach) ** 2)
+}
+
+/** How close the whole view is: a wide view of the garden is quieter. */
+export function presence(listener: Listener | null): number {
+  return listener ? Math.min(1, Math.max(0.22, 6 / listener.span)) : 0.6
 }
 
 const RHO_G = 1000 * 9.81
@@ -41,7 +61,7 @@ export class GardenSoundAnalyzer {
     this.primed = layout.siphons.map(() => false)
   }
 
-  frame(state: GardenState): SoundFrame {
+  frame(state: GardenState, listener: Listener | null = null): SoundFrame {
     const { layout } = this
     let flow = state.sourceRate, power = 0, chainFlow = 0
     for (const edge of layout.edges) {
@@ -51,34 +71,40 @@ export class GardenSoundAnalyzer {
       // Water leaves over the crest and falls to the surface below; a
       // drowned sill only runs.
       const below = edge.b >= 0 ? Math.max(state.levels[edge.b] ?? 0, layout.pools[edge.b].floor) : edge.crest - 0.4
-      power += RHO_G * q * Math.max(0, edge.crest - below)
+      const [x, y] = edge.points[0] ?? [0, 0]
+      power += RHO_G * q * Math.max(0, edge.crest - below) * hearing(listener, x, y, edge.crest)
     }
-    let knocks = 0, ticks = 0, surges = 0
+    const knocks: number[] = [], ticks: number[] = [], surges: number[] = []
     state.tipperAngles.forEach((angle, i) => {
       // Tipped past level, then swung back onto its stop: the knock.
+      const tipper = layout.tippers[i]
       if (angle < 0) this.tipped[i] = true
-      else if (this.tipped[i] && angle > TIPPER_REST - 0.04) { this.tipped[i] = false; knocks++ }
+      else if (this.tipped[i] && angle > TIPPER_REST - 0.04) { this.tipped[i] = false; knocks.push(hearing(listener, tipper.pivot[0], tipper.pivot[1], tipper.pivotZ)) }
     })
-    const count = (turns: number[], angles: Float32Array, buckets: number) => angles.forEach((angle, i) => {
+    // A wooden knock each time a bucket passes the bottom (every other paddle).
+    const count = (turns: number[], angles: Float32Array, buckets: number, at: (i: number) => [number, number, number]) => angles.forEach((angle, i) => {
       const position = Math.floor(angle / (Math.PI * 2 / buckets))
-      if (Number.isFinite(turns[i]) && position !== turns[i]) ticks += Math.min(3, Math.abs(position - turns[i]))
+      if (Number.isFinite(turns[i]) && position !== turns[i]) ticks.push(hearing(listener, ...at(i)))
       turns[i] = position
     })
-    count(this.wheelTurns, state.wheelAngles, 12)
-    count(this.noriaTurns, state.noriaAngles, 8)
+    count(this.wheelTurns, state.wheelAngles, 6, i => [layout.wheels[i].center[0], layout.wheels[i].center[1], layout.wheels[i].z])
+    count(this.noriaTurns, state.noriaAngles, 8, i => [layout.lifts[i].center[0], layout.lifts[i].center[1], layout.lifts[i].hub])
     let running = 0
     state.siphonPrimed.forEach((primed, i) => {
-      if (primed > 0.5 && !this.primed[i]) surges++
+      const siphon = layout.siphons[i]
+      const near = hearing(listener, siphon.at[0], siphon.at[1], siphon.base + siphon.trigger)
+      if (primed > 0.5 && !this.primed[i]) surges.push(near)
       this.primed[i] = primed > 0.5
-      running += primed
+      running += primed * near
     })
     const lifted = Array.from(state.liftLoads).reduce((sum, q) => sum + q, 0)
+    const near = presence(listener)
     return {
-      stream: soft(flow / 0.06),
+      stream: soft(flow / 0.06) * (0.35 + 0.65 * near),
       splash: soft(power / 250),
       gurgle: Math.min(1, running),
-      hum: layout.lifts.length ? 0.4 + 0.6 * soft(lifted / 0.03) : 0,
-      drips: Math.min(40, chainFlow * 900),
+      hum: layout.lifts.length ? (0.4 + 0.6 * soft(lifted / 0.03)) * near : 0,
+      drips: Math.min(40, chainFlow * 900) * near,
       knocks, ticks, surges,
     }
   }
@@ -108,6 +134,7 @@ export class GardenSound {
   private active = false
   private volume = 0.7
   private dripDebt = 0
+  private lastTick = 0
   private lastFrame = 0
 
   constructor(layout: GardenLayout) {
@@ -182,8 +209,8 @@ export class GardenSound {
     this.master.gain.setTargetAtTime(this.enabled ? this.volume : 0, this.context.currentTime, 0.15)
   }
 
-  update(state: GardenState): void {
-    const frame = this.analyzer.frame(state)
+  update(state: GardenState, listener: Listener | null = null): void {
+    const frame = this.analyzer.frame(state, listener)
     const context = this.context
     if (!context || !this.layers || !this.enabled || !this.active || context.state !== 'running') return
     const now = context.currentTime
@@ -195,17 +222,23 @@ export class GardenSound {
     // A siphon gurgles in pulses, like air chasing the water.
     set(this.layers.gurgle, frame.gurgle * (0.25 + 0.2 * Math.sin(now * 17) * Math.sin(now * 5.3)))
     set(this.layers.hum, 0.05 * frame.hum)
-    for (let k = 0; k < Math.min(frame.knocks, 2); k++) this.knock(now + k * 0.05)
-    for (let k = 0; k < Math.min(frame.ticks, 3); k++) this.tick(now + k * 0.03)
-    if (frame.surges) this.surge(now)
+    frame.knocks.slice(0, 2).forEach((level, k) => { if (level > 0.02) this.knock(now + k * 0.05, level) })
+    // Wheels: at most a few knocks a second, so a fast wheel rumbles instead of rattling.
+    for (const level of frame.ticks) {
+      if (level < 0.03 || now - this.lastTick < 0.16) continue
+      this.lastTick = now
+      this.tick(now + Math.random() * 0.03, level)
+    }
+    const surge = Math.max(0, ...frame.surges)
+    if (surge > 0.02) this.surge(now, surge)
     this.dripDebt += frame.drips * dt
     while (this.dripDebt >= 1) { this.dripDebt--; this.drip(now + Math.random() * dt) }
   }
 
   /** Bamboo striking stone: a sharp click and two hollow resonances. */
-  private knock(at: number): void {
+  private knock(at: number, level: number): void {
     const context = this.context!, out = context.createGain()
-    out.gain.setValueAtTime(0.9, at)
+    out.gain.setValueAtTime(0.9 * level, at)
     out.gain.exponentialRampToValueAtTime(0.001, at + 0.45)
     out.connect(this.master!)
     for (const [frequency, level, decay] of [[820, 0.8, 0.28], [1960, 0.35, 0.12], [3900, 0.15, 0.05]] as const) {
@@ -220,15 +253,28 @@ export class GardenSound {
     this.burst(at, 0.02, 2500, 0.6, out)
   }
 
-  /** A wooden wheel bucket passing its axle. */
-  private tick(at: number): void {
-    const context = this.context!, gain = context.createGain(), tone = context.createOscillator()
-    tone.type = 'triangle'
-    tone.frequency.value = 300 + Math.random() * 60
-    gain.gain.setValueAtTime(0.06, at)
-    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.07)
-    tone.connect(gain).connect(this.master!)
-    tone.start(at); tone.stop(at + 0.08)
+  /**
+   * A heavy wet wooden wheel: a low, damped thud of timber on its axle, with
+   * a little splash as the bucket leaves the water.
+   */
+  private tick(at: number, level: number): void {
+    const context = this.context!, out = context.createGain()
+    out.gain.setValueAtTime(0.22 * level, at)
+    out.gain.exponentialRampToValueAtTime(0.001, at + 0.3)
+    const soften = context.createBiquadFilter()
+    soften.type = 'lowpass'; soften.frequency.value = 700
+    out.connect(soften).connect(this.master!)
+    const body = context.createOscillator(), gain = context.createGain()
+    body.type = 'sine'
+    const pitch = 78 + Math.random() * 18
+    body.frequency.setValueAtTime(pitch * 1.5, at)
+    body.frequency.exponentialRampToValueAtTime(pitch, at + 0.05)
+    gain.gain.setValueAtTime(0.9, at)
+    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.22)
+    body.connect(gain).connect(out)
+    body.start(at); body.stop(at + 0.25)
+    this.burst(at, 0.05, 240, 1.4, out)
+    this.burst(at + 0.04, 0.12, 900, 0.8, out, 0.25)
   }
 
   /** One drop leaving a copper cup. */
@@ -244,20 +290,23 @@ export class GardenSound {
   }
 
   /** The siphon catching: a rush of water and air. */
-  private surge(at: number): void {
+  private surge(at: number, level: number): void {
     const gain = this.context!.createGain()
     gain.gain.setValueAtTime(0, at)
-    gain.gain.linearRampToValueAtTime(0.5, at + 0.15)
+    gain.gain.linearRampToValueAtTime(0.5 * level, at + 0.15)
     gain.gain.exponentialRampToValueAtTime(0.001, at + 1.6)
     gain.connect(this.master!)
     this.burst(at, 1.6, 420, 1.5, gain)
   }
 
-  private burst(at: number, length: number, frequency: number, q: number, out: AudioNode): void {
+  private burst(at: number, length: number, frequency: number, q: number, out: AudioNode, level = 1): void {
     const context = this.context!, source = context.createBufferSource(), filter = context.createBiquadFilter()
     source.buffer = this.white
     filter.type = 'bandpass'; filter.frequency.value = frequency; filter.Q.value = q
-    source.connect(filter).connect(out)
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(level, at)
+    gain.gain.exponentialRampToValueAtTime(0.001, at + length + 0.04)
+    source.connect(filter).connect(gain).connect(out)
     source.start(at, Math.random() * 2, length + 0.05)
   }
 
