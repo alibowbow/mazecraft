@@ -145,9 +145,15 @@ function checkExit(ctx: BuildContext): void {
   if (ctx.module.exit === 'tipper' && !ctx.nextTakesTipper) throw new CraftError('시시오도시는 넓은 수조(미로·계단·연못·양수 수조) 앞에만 놓을 수 있어요. 다음 장치를 바꾸거나 출구 장치를 바꿔 주세요.')
 }
 
+/** A Korean noun with its object particle (을 after a final consonant, else 를). */
+function objectOf(word: string): string {
+  const code = word.charCodeAt(word.length - 1) - 0xac00
+  return `${word}${code >= 0 && code < 11172 && code % 28 ? '을' : '를'}`
+}
+
 function floorFor(ctx: BuildContext, wallHeight: number, levelAboveFloor: number, what: string): number {
   const floor = Math.min(ctx.cursor.maxTop - wallHeight, ctx.cursor.maxLevel - levelAboveFloor)
-  if (floor < 0.06) throw new CraftError(`${what}을(를) 놓을 높이가 부족해요 (${Math.max(0, floor + wallHeight).toFixed(1)} m 남음). 앞에 양수 장치(노리아·스크류)를 넣거나 수원을 높여 주세요.`)
+  if (floor < 0.06) throw new CraftError(`${objectOf(what)} 놓을 높이가 부족해요 (${Math.max(0, floor + wallHeight).toFixed(1)} m 남음). 앞에 양수 장치(노리아·스크류)를 넣거나 수원을 높여 주세요.`)
   return floor
 }
 
@@ -458,13 +464,13 @@ export function compileCraft(course: CraftCourse): CraftResult {
   }
   // The course ends in a receiving basin and its drain.
   if (cursor.maxTop < 0.6 || cursor.maxLevel < 0.25) {
-    issues.push({ module: course.modules.length - 1, message: '마지막 연못을 놓을 높이가 부족해요. 마지막 장치의 출구를 바꾸거나 양수 장치를 넣어 주세요.' })
+    issues.push({ module: course.modules.length - 1, message: '종착 연못을 놓을 높이가 부족해요. 수원을 높이거나, 장치를 줄이거나, 양수 장치(노리아·스크류)를 넣어 주세요.' })
     return { design: null, issues, stages }
   }
   const drainCentre = along(cursor.landing, DIRS[cursor.heading], [0, 0], 0.3, 0)
   const drainBox = boxOf(circle(drainCentre[0], drainCentre[1], 1.15))
   if (boxes.slice(0, -1).some((earlier, k) => earlier.some(a => overlaps(a, drainBox, k === boxes.length - 1 ? 0.7 : 0.05)))) {
-    issues.push({ module: course.modules.length - 1, message: '마지막 연못이 앞의 장치와 겹쳐요. 마지막 장치의 방향을 바꿔 보세요.' })
+    issues.push({ module: course.modules.length - 1, message: '종착 연못이 앞의 장치와 겹쳐요. 마지막 장치의 방향을 바꿔 보세요.' })
     return { design: null, issues, stages }
   }
   vessels.push(roundBasin('receiving-basin', drainCentre, 0.95, 0.04, 0.56, 0.4, { drain: { crest: 0.12, width: 2.0, at: drainCentre } }))

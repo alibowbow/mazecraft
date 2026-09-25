@@ -19,7 +19,7 @@ import {
   Type,
   Waves,
   PencilRuler,
-} from 'lucide-react'
+ Blocks } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { BottomSheet } from '../../components/BottomSheet'
 import { BrandMark } from '../../components/BrandMark'
@@ -89,6 +89,8 @@ interface HomeScreenProps {
   onEdit: (project: MazeProject) => void
   /** Enter the water garden with its collection pieces. */
   onWater: () => void
+  /** Open the water craft studio. */
+  onCraft?: () => void
   onDuplicate: (project: MazeProject) => void
   onDelete: (project: MazeProject) => void
   onExport: (project: MazeProject) => void
@@ -104,6 +106,7 @@ export function HomeScreen({
   onOpen,
   onEdit,
   onWater,
+  onCraft,
   onDuplicate,
   onDelete,
   onExport,
@@ -175,6 +178,7 @@ export function HomeScreen({
         <nav className="app-nav" aria-label="주 메뉴">
           <a href="#templates">미로 제작</a>
           <button type="button" onClick={onWater}>물의 정원</button>
+          {onCraft && <button type="button" onClick={onCraft}>크래프트</button>}
           <a href="#projects">내 미로</a>
         </nav>
         <div className="home-header-actions">
@@ -213,10 +217,10 @@ export function HomeScreen({
             <div className="hub-door-copy">
               <span className="hub-door-kicker"><Waves size={15} /> 02 · WATER GARDEN</span>
               <h2>물의 정원</h2>
-              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 차례로 움직이는 정원을 감상합니다.</p>
+              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 물리 법칙대로 움직입니다. 크래프트에서 장치를 이어 나만의 물길도 지어 보세요.</p>
               <div className="hub-door-actions">
                 <button className="button water-primary" onClick={onWater}>물의 정원 열기 <ArrowRight size={17} /></button>
-                {latestProject && <button className="button secondary" onClick={() => onOpen(latestProject)}>최근 미로에 물 흘리기</button>}
+                {onCraft && <button className="button secondary" onClick={onCraft}><Blocks size={16} /> 물길 크래프트</button>}
               </div>
             </div>
           </article>

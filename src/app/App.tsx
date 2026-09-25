@@ -49,9 +49,10 @@ import {
   type MachineSnapshot,
 } from './stateMachine'
 
-type Route = 'loading' | 'water' | 'home' | 'studio' | 'play'
+type Route = 'loading' | 'water' | 'craft' | 'home' | 'studio' | 'play'
 
 const WaterStudio = lazy(() => import('../features/waterStudio/WaterStudio'))
+const CraftStudio = lazy(() => import('../features/craft/CraftStudio'))
 
 const StudioScreen = lazy(() =>
   import('../features/creator/StudioScreen').then((module) => ({
@@ -514,7 +515,13 @@ export function App() {
             onEdit={(next) => { void editWaterProject(next) }}
             onSave={async (next) => { await service.save(next, false); rememberWaterSelection(next.id); await refreshProjects(); toast('미로를 저장했습니다.') }}
             onShare={(next) => { setProject(next); setShareMode('water'); setShareOpen(true) }}
+            onCraft={() => setRoute('craft')}
           />
+        </Suspense>
+      )}
+      {route === 'craft' && (
+        <Suspense fallback={<RouteFallback label="크래프트 작업실을 여는 중…" />}>
+          <CraftStudio onHome={() => { void refreshProjects(); setRoute('home') }} onWater={() => setRoute('water')} />
         </Suspense>
       )}
       {route === 'home' && (
@@ -524,6 +531,7 @@ export function App() {
           onOpen={openWaterProject}
           onEdit={openProject}
           onWater={openWater}
+          onCraft={() => setRoute('craft')}
           onDuplicate={(source) => void duplicate(source)}
           onDelete={(source) => void remove(source)}
           onExport={(source) => setExportProject(source)}
