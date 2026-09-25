@@ -135,10 +135,11 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     return () => { if (resolutionTimer.current) clearTimeout(resolutionTimer.current) }
   }, [project])
   // Unedited collection pieces at their own resolution are authored water
-  // gardens; any edit or resize shows the editable grid as a raised basin.
+  // gardens; any other maze stands upright in 3D, so the water falls through
+  // it from top to bottom exactly as the 2D simulation runs.
   const sculpture = useMemo<WaterSculpture | undefined>(() => preferences.source === 'flow' && !preferences.size
     && JSON.stringify(project.mazeGraph) === JSON.stringify(generatedProject.mazeGraph)
-    ? `garden:${preferences.preset}` : customProject || preferences.source === 'generated' ? 'extruded-flow' : undefined,
+    ? `garden:${preferences.preset}` : 'extruded-flow',
   [preferences.source, preferences.preset, preferences.size, project.mazeGraph, generatedProject.mazeGraph, customProject])
   const onProjectChangeRef = useRef(onProjectChange)
   onProjectChangeRef.current = onProjectChange

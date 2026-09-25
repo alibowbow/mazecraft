@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { FluidLayout, FluidSnapshot, FluidDiagnostics } from './types'
 import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
-import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
+import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING, UPRIGHT_VIEW } from './presentation3d'
 import { GardenPresentation3D } from '../garden/presentation'
 import type { Listener } from '../garden/sound'
 import { GardenPost, initialPostTier, pinnedPostTier, PostGovernor, type PostTier } from '../garden/post'
@@ -901,7 +901,7 @@ export class FreeSurfaceRenderer {
     this.panX = 0
     this.panY = 0
     this.trackball.reset()
-    if (this.sculpture === 'extruded-flow') this.trackball.orientation.setFromEuler(new THREE.Euler(0.22, -0.12, 0))
+    if (this.sculpture === 'extruded-flow') this.trackball.orientation.copy(UPRIGHT_VIEW)
     this.updateCamera()
     this.draw()
   }
@@ -932,7 +932,7 @@ export class FreeSurfaceRenderer {
       this.waterMaterial.uniforms.uOpticalLod.value = Math.max(0, Math.log2(0.28 * this.surfaceTarget.height / this.viewHeight))
       this.presentation3d?.updateView(this.width, this.height, this.zoom, this.panX, this.panY, this.trackball.orientation)
       if (this.presentation3d) {
-        this.waterMaterial.uniforms.uViewDirection.value.copy(this.presentation3d.viewDirection)
+        this.waterMaterial.uniforms.uViewDirection.value.copy(this.presentation3d instanceof FreeSurfacePresentation3D ? this.presentation3d.boardViewDirection : this.presentation3d.viewDirection)
         this.canvas.dataset.cameraOrientation = this.trackball.orientation.toArray().join(',')
         this.canvas.dataset.cameraView = this.presentation3d.viewSize.toArray().join(',')
         this.canvas.dataset.cameraTarget = this.presentation3d.target.toArray().join(',')
