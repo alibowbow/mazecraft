@@ -52,7 +52,7 @@ async function enterMazeStep(page: Page) {
 async function completeFixture(page: Page, project: MazeProject) {
   const beginButton = page.getByRole('button', { name: /혼자 플레이/ })
   if (!page.url().includes('#/play')) {
-    const workflowTest = page.locator('.studio-stage-rail button').filter({ hasText: '테스트' })
+    const workflowTest = page.locator('.studio-stage-rail button').filter({ hasText: '완성' })
     await workflowTest.click()
     await page.getByRole('button', { name: '직접 플레이 테스트' }).click()
   }
@@ -106,7 +106,7 @@ test('5. 자동 저장 후 새로고침해 프로젝트를 복구한다', async 
 
 test('6. 프로젝트 파일을 내보내고 다시 불러온다', async ({ page }) => {
   await importFixture(page)
-  await page.locator('.studio-stage-rail button').filter({ hasText: '공유' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '완성' }).click()
   await page.getByRole('button', { name: /파일로 내보내기/ }).click()
   await page.getByRole('button', { name: '프로젝트' }).click()
   const download = page.waitForEvent('download')
@@ -170,7 +170,7 @@ test('9. 벽 편집 뒤 실행 취소와 다시 실행을 제공한다', async (
 
 test('10. PNG와 SVG 파일을 실제 다운로드한다', async ({ page }) => {
   await importFixture(page)
-  await page.locator('.studio-stage-rail button').filter({ hasText: '공유' }).click()
+  await page.locator('.studio-stage-rail button').filter({ hasText: '완성' }).click()
   await page.getByRole('button', { name: /파일로 내보내기/ }).click()
   const pngDownload = page.waitForEvent('download')
   await page.getByRole('button', { name: /파일 저장/ }).click()
@@ -204,8 +204,8 @@ test('11. 모바일에서 가로 스크롤 없이 캔버스와 탭을 조작한�
   await page.locator('.mobile-sheet-scrim').click({ position: { x: 5, y: 5 } })
   await expect(page.locator('.inspector')).not.toHaveClass(/open/)
 
-  await page.locator('.mobile-tabs button').filter({ hasText: '게임' }).click()
-  await page.getByRole('button', { name: '플레이 테스트', exact: true }).click()
+  await page.locator('.mobile-tabs button').filter({ hasText: '완성' }).click()
+  await page.getByRole('button', { name: '직접 플레이 테스트', exact: true }).click()
   await page.getByRole('button', { name: /혼자 플레이/ }).click()
   expect(
     await page.locator('.player-hud').evaluate((hud) => {
@@ -311,7 +311,7 @@ test('15. 3D 수조의 물이 출구로 배출되고 실제 물량을 보존한�
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   await importFixture(page, createFixture({ grid: { rows: 4, cols: 1, minimumCellPixels: 8 } }))
-  await page.locator('.mobile-tabs button').filter({ hasText: '테스트' }).click()
+  await page.locator('.mobile-tabs button').filter({ hasText: '완성' }).click()
   await page.getByLabel('효과 품질').selectOption('low')
   await page.getByRole('button', { name: '물 시뮬레이션', exact: true }).click()
   await page.getByRole('button', { name: '3D 수면', exact: true }).click()
