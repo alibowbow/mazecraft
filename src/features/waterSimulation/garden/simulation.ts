@@ -4,6 +4,7 @@ import type { Edge, GardenLayout } from './layout'
 import { gardenField, FAR, type GardenField } from './flowField'
 import { PhysicsWorld, SOURCE_FLOW, TICK, NORIA_POTS } from './physics/world'
 import { DRY } from './physics/shallowWater'
+import { ScrewLift } from './physics/machines'
 import { NO_WATER, surfacePlan, type SurfaceGrid } from './physics/surface'
 
 /** Rectangular weir coefficient, Q = C·w·h^1.5 (SI), for reference and rendering. */
@@ -219,10 +220,16 @@ export class GardenSimulation {
       // Overshot wheels turn forward, undershot ones backward about their axle.
       this.wheelAngles[i] = bucket ? bucket.angle : -(paddle?.angle ?? 0)
     })
-    world.norias.forEach((noria, i) => {
-      this.noriaAngles[i] = -noria.angle
+    world.norias.forEach((lifter, i) => {
       this.liftLoads[i] = world.liftRates[i]
-      for (let k = 0; k < NORIA_POTS; k++) this.noriaPots[i * NORIA_POTS + k] = noria.pots[k] / noria.capacity
+      if (lifter instanceof ScrewLift) {
+        // Screws turn forwards; each slot is a pocket along the flights.
+        this.noriaAngles[i] = lifter.angle
+        for (let k = 0; k < NORIA_POTS; k++) this.noriaPots[i * NORIA_POTS + k] = k < lifter.count ? lifter.fill(k) : 0
+      } else {
+        this.noriaAngles[i] = -lifter.angle
+        for (let k = 0; k < NORIA_POTS; k++) this.noriaPots[i * NORIA_POTS + k] = lifter.pots[k] / lifter.capacity
+      }
     })
     world.siphons.forEach((pipe, i) => { this.siphonPrimed[i] = pipe.primed ? 1 : 0 })
     stored = world.stored()

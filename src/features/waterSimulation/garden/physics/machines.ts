@@ -226,3 +226,78 @@ export class SiphonPipe {
 
   reset(): void { this.primed = false; this.flow = 0 }
 }
+
+/**
+ * An Archimedes screw in an inclined trough, turned by a gear motor. The
+ * flights trap one pocket of water per pitch; each turn carries every pocket
+ * one pitch up the axis. The lowest pocket fills as deep as its mouth sits
+ * in the sump; the top pocket empties over the upper end. The load is the
+ * weight the flights push up the axis: τ = Σ m·g·sin α · p / 2π.
+ */
+export class ScrewLift {
+  angle = 0
+  speed = 0
+  readonly pockets: Float64Array
+  readonly count: number
+  readonly capacity: number
+  readonly motor: Motor
+  private readonly inertia: number
+  scooped = 0
+  poured = 0
+
+  constructor(readonly length: number, readonly radius: number, readonly pitch: number, readonly incline: number, revolutionsPerSecond: number) {
+    this.count = Math.max(2, Math.floor(length / pitch))
+    this.pockets = new Float64Array(this.count)
+    // At a 30° incline a pocket holds about a third of the flight volume.
+    this.capacity = 0.34 * Math.PI * (radius * radius - (radius * 0.2) ** 2) * pitch
+    const load = RHO * this.capacity * G * Math.sin(incline) * pitch / TAU * this.count
+    this.motor = { stall: 2.2 * load + 20, free: 1.8 * revolutionsPerSecond * TAU }
+    this.inertia = 60 * radius * radius * length
+  }
+
+  /** Axial position of pocket k along the screw (0 at the bottom). */
+  position(k: number): number {
+    return (((k + this.angle / TAU) % this.count) + this.count) % this.count * this.pitch
+  }
+
+  /** Volume the bottom pocket wants from the sump this step. */
+  demand(dt: number, bottom: number, level: number): number {
+    const k = this.bottomPocket()
+    const submerged = Math.max(0, Math.min(1, (level - (bottom - this.radius)) / (2 * this.radius)))
+    const target = this.capacity * submerged
+    return target > this.pockets[k] ? (target - this.pockets[k]) * (1 - Math.exp(-6 * dt)) : 0
+  }
+
+  private bottomPocket(): number {
+    let best = 0, low = Infinity
+    for (let k = 0; k < this.count; k++) { const s = this.position(k); if (s < low) { low = s; best = k } }
+    return best
+  }
+
+  step(dt: number, scooped: number): void {
+    this.scooped = scooped; this.poured = 0
+    this.pockets[this.bottomPocket()] += scooped
+    let torque = 0, water = 0
+    for (let k = 0; k < this.count; k++) {
+      const mass = RHO * this.pockets[k]
+      torque -= mass * G * Math.sin(this.incline) * this.pitch / TAU
+      water += mass
+    }
+    torque += this.motor.stall * Math.max(0, 1 - this.speed / this.motor.free) - 0.5 * this.inertia * this.speed
+    this.speed = Math.max(0, this.speed + torque / (this.inertia + water * this.radius ** 2) * dt)
+    const before = this.angle
+    this.angle += this.speed * dt
+    // A pocket that passes the top empties over the end.
+    for (let k = 0; k < this.count; k++) {
+      const s0 = (((k + before / TAU) % this.count) + this.count) % this.count, s1 = (((k + this.angle / TAU) % this.count) + this.count) % this.count
+      if (s1 < s0) { this.poured += this.pockets[k]; this.pockets[k] = 0 }
+    }
+  }
+
+  /** Fill of the pocket at slot k, 0–1, for the renderer. */
+  fill(k: number): number { return this.pockets[k] / this.capacity }
+
+  held(): number { let sum = 0; for (const v of this.pockets) sum += v; return sum }
+
+  reset(): void { this.angle = 0; this.speed = 0; this.pockets.fill(0); this.scooped = 0; this.poured = 0 }
+}

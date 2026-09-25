@@ -24,6 +24,8 @@ export const TROUGH_DEPTH = 0.17
 export const CHUTE_SPEED = 1.5
 /** Rim speed of a noria's buckets (m/s). */
 export const LIFT_SPEED = 0.85
+/** Axial speed of the water pockets in an Archimedes screw (m/s). */
+export const SCREW_AXIAL_SPEED = 0.55
 /** A noria's buckets only fill once the sump stands this deep. */
 export const LIFT_SILL = 0.06
 
@@ -71,6 +73,8 @@ export interface Edge {
   lipStart?: Vec2
   lipEnd?: Vec2
   landing?: Vec2
+  /** The spout's water runs down a hanging rain chain. */
+  chain?: boolean
   /** Index into `tippers` when this spout pours into a tipping tube. */
   tipper?: number
   /** Chutes, noria troughs and siphon pipes: centreline (world). */
@@ -279,13 +283,15 @@ export function compileGarden(design: GardenDesign): GardenLayout {
     const lipEnd = add(spout.at, direction, spec.rimWidth / 2 + spout.length)
     const crest = spec.floor + spout.crest
     const frame = spout.device === 'tipper' ? tipperFrame(lipEnd, direction, crest) : null
-    const landing = frame ? tipperLanding(frame) : add(lipEnd, direction, 0.2)
+    // A rain chain hangs from the lip: its water arrives right under it.
+    const landing = frame ? tipperLanding(frame) : add(lipEnd, direction, spout.device === 'chain' ? 0.06 : 0.2)
     const target = findPool(landing, crest, vessel)
     if (!source) throw new Error(`${design.id}/${spec.name}: spout has no pool behind it`)
     if (!target) throw new Error(`${design.id}/${spec.name}: spout at ${spout.at.map(v => v.toFixed(2))} lands outside every lower pool (${landing.map(v => v.toFixed(2))})`)
     const edge: Edge = {
       index: edges.length, kind: 'spout', a: source.index, b: target.index, crest, width: spout.width,
       points: [spout.at], normal: direction, lipStart: add(spout.at, direction, -spec.rimWidth / 2), lipEnd, landing,
+      ...(spout.device === 'chain' ? { chain: true } : {}),
     }
     edges.push(edge)
     if (frame) {
@@ -320,7 +326,7 @@ export function compileGarden(design: GardenDesign): GardenLayout {
     const target = findPool(landing, end[2])
     if (!source) throw new Error(`${design.id}/${spec.name}: noria stands outside its sump`)
     if (!target) throw new Error(`${design.id}/${spec.name}: noria trough lands outside every basin (${landing.map(v => v.toFixed(2))})`)
-    const rise = Math.PI * lift.radius / LIFT_SPEED
+    const rise = lift.kind === 'screw' ? (lift.length ?? 4) / SCREW_AXIAL_SPEED : Math.PI * lift.radius / LIFT_SPEED
     const edge: Edge = {
       index: edges.length, kind: 'lift', a: source.index, b: target.index, crest: source.floor + LIFT_SILL, width: lift.width * 4,
       points: [lift.center], normal: normalize(lift.direction), landing, path: lift.path.slice(),
@@ -408,13 +414,16 @@ export function compileGarden(design: GardenDesign): GardenLayout {
     ...vessels.flatMap(vessel => vessel.footprint.map(region => region.outer)),
     [sourceSpec.tower],
     ...edges.filter(edge => edge.path).map(edge => edge.path!.map(([x, y]) => [x, y] as Vec2)),
-    ...lifts.map(lift => [add(lift.center, normalize(lift.direction), lift.radius), add(lift.center, normalize(lift.direction), -lift.radius)]),
+    ...lifts.map(lift => lift.kind === 'screw'
+      ? [lift.center, add(lift.center, normalize(lift.direction), (lift.length ?? 4) * Math.cos(lift.incline ?? 0.5))]
+      : [add(lift.center, normalize(lift.direction), lift.radius), add(lift.center, normalize(lift.direction), -lift.radius)]),
   ])
   return {
     id: design.id, design, vessels, pools, edges, tippers, wheels, lifts, siphons,
     source: { pool: sourcePool.index, tower: sourceSpec.tower, lip: sourceSpec.lip, landing, lipZ: sourceSpec.lipZ, width: sourceSpec.width, direction, round: !!sourceSpec.round },
     bounds, height: Math.max(sourceSpec.lipZ + 0.3, ...vessels.map(vessel => vessel.top),
-      ...edges.flatMap(edge => edge.path?.map(point => point[2] + 0.2) ?? []), ...lifts.map(lift => lift.hub + lift.radius + 0.2)),
+      ...edges.flatMap(edge => edge.path?.map(point => point[2] + 0.2) ?? []),
+      ...lifts.map(lift => lift.kind === 'screw' ? lift.hub + (lift.length ?? 4) * Math.sin(lift.incline ?? 0.5) + lift.radius + 0.3 : lift.hub + lift.radius + 0.2)),
   }
 }
 

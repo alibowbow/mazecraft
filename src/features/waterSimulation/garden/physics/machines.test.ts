@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BucketWheel, NoriaWheel, PaddleWheel, SiphonPipe } from './machines'
+import { BucketWheel, NoriaWheel, PaddleWheel, ScrewLift, SiphonPipe } from './machines'
 
 const dt = 1 / 120
 
@@ -59,5 +59,21 @@ describe('water machinery', () => {
     }
     expect(cycles).toBeGreaterThanOrEqual(3)
     expect(peak).toBeGreaterThan(0.03)
+  })
+})
+
+describe('Archimedes screw', () => {
+  it('carries pockets up one pitch a turn and delivers what it scooped', () => {
+    const screw = new ScrewLift(4.5, 0.3, 0.6, Math.PI / 6, 0.9)
+    let scooped = 0, poured = 0
+    for (let n = 0; n < 120 * 30; n++) {
+      const want = screw.demand(1 / 120, 0.2, 0.35)
+      screw.step(1 / 120, want)
+      scooped += screw.scooped; poured += screw.poured
+    }
+    expect(screw.speed / (Math.PI * 2)).toBeGreaterThan(0.4)
+    expect(screw.speed / (Math.PI * 2)).toBeLessThan(2)
+    expect(Math.abs(scooped - poured - screw.held())).toBeLessThan(1e-12)
+    expect(poured / 30).toBeGreaterThan(0.02)
   })
 })

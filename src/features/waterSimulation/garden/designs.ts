@@ -17,8 +17,8 @@ export interface SillSpec {
   wheel?: boolean
 }
 
-/** Machinery a spout pours into: a tipping tube or a paddle wheel. */
-export type SpoutDevice = 'tipper' | 'wheel'
+/** Machinery a spout pours into: a tipping tube, a paddle wheel, or a rain chain it runs down. */
+export type SpoutDevice = 'tipper' | 'wheel' | 'chain'
 
 export interface SpoutSpec {
   /** Point on the rim centreline. */
@@ -56,13 +56,20 @@ export interface ChuteSpec {
  * that runs to a higher basin.
  */
 export interface LiftSpec {
+  /** A noria (bucket wheel) or an inclined Archimedes screw. */
+  kind?: 'noria' | 'screw'
+  /** Noria: wheel centre. Screw: plan position of its lower end, in the sump. */
   center: Vec2
-  /** Unit direction of the wheel's plane (the buckets rise on this side). */
+  /** Noria: the wheel's plane (buckets rise on this side). Screw: uphill along its axis. */
   direction: Vec2
+  /** Noria: wheel radius. Screw: flight radius. */
   radius: number
-  /** Axle height. */
+  /** Noria: axle height. Screw: axis height at its lower end. */
   hub: number
   width: number
+  /** Screw only: axis length and incline (rad). */
+  length?: number
+  incline?: number
   path: Vec3[]
 }
 
@@ -405,13 +412,13 @@ export function lattice(options: LatticeOptions): Lattice {
 }
 
 /** The ceramic rim follows the lattice boundary with softened corners. */
-function latticeRim(maze: Lattice, radius: number): Ring {
+export function latticeRim(maze: Lattice, radius: number): Ring {
   const { x0, y0, x1, y1 } = maze.bounds
   return roundedRect((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, radius)
 }
 
 /** Choose sills on a route at the given fractions, avoiding room/island corners. */
-function routeSills(maze: Lattice, route: Cell[], fractions: number[], avoid: (cell: Cell) => boolean): { points: Vec2[]; downstream: Cell }[] {
+export function routeSills(maze: Lattice, route: Cell[], fractions: number[], avoid: (cell: Cell) => boolean): { points: Vec2[]; downstream: Cell }[] {
   const result: { points: Vec2[]; downstream: Cell }[] = []
   let lastIndex = 1
   for (const fraction of fractions) {
@@ -451,17 +458,17 @@ function drainBasin(spout: { at: Vec2; direction: Vec2 }, rimWidth: number, leng
 }
 
 /** A round basin with no inner walls. */
-function roundBasin(name: string, center: Vec2, radius: number, floor: number, wallHeight: number, rimWidth: number, extra: Partial<VesselSpec> = {}): VesselSpec {
+export function roundBasin(name: string, center: Vec2, radius: number, floor: number, wallHeight: number, rimWidth: number, extra: Partial<VesselSpec> = {}): VesselSpec {
   return {
     name, floor, wallHeight, wallWidth: 0.3, rimWidth, outline: circle(center[0], center[1], radius, Math.max(48, Math.ceil(radius * 60))),
     walls: [], islands: [], sills: [], spouts: [], floors: [], planters: [], ...extra,
   }
 }
 
-const along = (origin: Vec2, u: Vec2, v: Vec2, a: number, b: number): Vec2 => [origin[0] + u[0] * a + v[0] * b, origin[1] + u[1] * a + v[1] * b]
+export const along = (origin: Vec2, u: Vec2, v: Vec2, a: number, b: number): Vec2 => [origin[0] + u[0] * a + v[0] * b, origin[1] + u[1] * a + v[1] * b]
 
 /** Descending helical channel around `center`, sweeping `sweep` radians from angle `a0`. */
-function helix(center: Vec2, radius: number, a0: number, sweep: number, z0: number, z1: number): Vec3[] {
+export function helix(center: Vec2, radius: number, a0: number, sweep: number, z0: number, z1: number): Vec3[] {
   const count = Math.max(8, Math.ceil(Math.abs(sweep) * radius / 0.14))
   return Array.from({ length: count + 1 }, (_, k) => {
     const t = k / count, a = a0 + sweep * t
@@ -552,12 +559,12 @@ function inRoom(rooms: LatticeOptions['rooms'] = [], solids: Cell[] = []) {
 // ---------------------------------------------------------------------------
 // The five collection pieces
 
-const WALL = 0.34
-const RIM = 0.5
+export const WALL = 0.34
+export const RIM = 0.5
 /** Horizontal travel of the source pour, lip to landing (m). */
 export const SOURCE_THROW = 0.3
 
-function source(landing: Vec2, towerOffset: Vec2, lipZ: number, width = 0.44): SourceSpec {
+export function source(landing: Vec2, towerOffset: Vec2, lipZ: number, width = 0.44): SourceSpec {
   const length = Math.hypot(towerOffset[0], towerOffset[1])
   // The pour leaves the lip with some forward speed: set the lip back
   // towards the tower so the water lands in the middle of the entry cell.
@@ -571,7 +578,7 @@ function towards(from: Vec2, to: Vec2, distance: number): Vec2 {
 }
 
 /** Origin that centres `cell` of a lattice on a given landing point. */
-function originFor(landing: Vec2, cell: Cell, pitch: number): Vec2 {
+export function originFor(landing: Vec2, cell: Cell, pitch: number): Vec2 {
   return [landing[0] - (cell.i + 0.5) * pitch, landing[1] - (cell.j + 0.5) * pitch]
 }
 
@@ -813,7 +820,7 @@ function waterGarden(): GardenDesign {
 }
 
 /** Companion planting: low shrubs and pebbles beside each authored accent. */
-function withCompanions(build: () => GardenDesign): () => GardenDesign {
+export function withCompanions(build: () => GardenDesign): () => GardenDesign {
   return () => {
     const design = build()
     const extra: GardenDesign['plants'] = []

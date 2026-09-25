@@ -5,7 +5,7 @@ import {
   SPOUT_WHEEL_DROP, TIPPER_ARM, TIPPER_NODE, TIPPER_RADIUS, TIPPER_REST, TIPPER_TAIL, TIPPER_TIPPED, WHEEL_PADDLES, tipperPoint,
 } from '../mechanics'
 import { OpenChannel } from './channel'
-import { BucketWheel, NoriaWheel, PaddleWheel, SiphonPipe } from './machines'
+import { BucketWheel, NoriaWheel, PaddleWheel, ScrewLift, SiphonPipe } from './machines'
 import { DRY, G, OVERFALL, ShallowWaterGrid } from './shallowWater'
 import { TipperBody } from './tipper'
 
@@ -28,6 +28,9 @@ export const NORIA_POTS = 18
 export const NORIA_SPILL = 0.13
 /** Rim speed a noria's motor settles at under a full load (m/s). */
 export const NORIA_RIM_SPEED = 1.1
+/** Archimedes screws: flight pitch (m) and turning speed under load (rev/s). */
+export const SCREW_PITCH = 0.6
+export const SCREW_TURNS = 0.95
 
 export interface Domain {
   vessel: number
@@ -83,7 +86,8 @@ export class PhysicsWorld {
   readonly paddleWheels: (PaddleWheel | null)[] = []
   private readonly paddleCells: { domain: number; cells: Int32Array }[] = []
   private readonly wheelFed: Uint8Array
-  readonly norias: NoriaWheel[] = []
+  /** Per lift: a noria wheel or an Archimedes screw. */
+  readonly norias: (NoriaWheel | ScrewLift)[] = []
   readonly noriaIntakes: { domain: number; cells: Int32Array; trough: number; pourCell: number }[] = []
   readonly siphons: SiphonPipe[] = []
   readonly siphonIntakes: { domain: number; cells: Int32Array; pool: Int32Array }[] = []
@@ -131,10 +135,17 @@ export class PhysicsWorld {
       this.paddleCells.push({ domain, cells: domain >= 0 ? this.cellsNear(domain, wheel.center, 0.3) : new Int32Array(0) })
     }
     for (const lift of layout.lifts) {
+      const domain = this.domainOfPool(lift.pool)
+      if (lift.kind === 'screw') {
+        this.norias.push(new ScrewLift(lift.length ?? 4, lift.radius, SCREW_PITCH, lift.incline ?? Math.PI / 6, SCREW_TURNS))
+        const sump = layout.pools[lift.pool]
+        this.drains.push({ edge: -1, domain, cells: this.domains[domain].pools.get(lift.pool)!, crest: sump.brim - 0.14, perimeter: 0.6 })
+        this.noriaIntakes.push({ domain, cells: this.cellsNear(domain, lift.center, 0.5), trough: this.channelOf[lift.edge], pourCell: 0 })
+        continue
+      }
       const potRadius = lift.radius - NORIA_POT.inset
       const capacity = NORIA_POT.width * NORIA_POT.reach * NORIA_POT.depth
       this.norias.push(new NoriaWheel(lift.radius, potRadius, NORIA_POT.depth, capacity, NORIA_POTS, NORIA_SPILL, NORIA_RIM_SPEED))
-      const domain = this.domainOfPool(lift.pool)
       const grid = this.domains[domain].grid
       // The pots dip on the trough side of the wheel, under its axle.
       const [dx, dy] = lift.direction, ax = -dy, ay = dx
@@ -166,6 +177,10 @@ export class PhysicsWorld {
   /** Where a noria's pots pour: over the trough, beside the top of the wheel. */
   noriaPour(index: number): [number, number, number] {
     const lift = this.layout.lifts[index]
+    if (lift.kind === 'screw') {
+      const run = (lift.length ?? 4) * Math.cos(lift.incline ?? 0.5)
+      return [lift.center[0] + lift.direction[0] * run, lift.center[1] + lift.direction[1] * run, lift.hub + (lift.length ?? 4) * Math.sin(lift.incline ?? 0.5)]
+    }
     const [dx, dy] = lift.direction, ax = -dy, ay = dx, start = lift.path[0]
     const side = Math.sign((start[0] - lift.center[0]) * ax + (start[1] - lift.center[1]) * ay) || 1
     const across = side * (lift.width / 2 + 0.03 + NORIA_POT.reach / 2)
@@ -336,7 +351,7 @@ export class PhysicsWorld {
   }
 
   /** Launch water from (x, y, z) with horizontal velocity (vx, vy): it lands where gravity takes it. */
-  private launch(x: number, y: number, z: number, vx: number, vy: number, volume: number): void {
+  private launch(x: number, y: number, z: number, vx: number, vy: number, volume: number, slow = 1): void {
     if (volume <= 0) return
     let target = this.surfaceBelow(x, y, z)
     let time = target ? Math.sqrt(2 * Math.max(0, z - target.surface) / G) : 0
@@ -349,7 +364,7 @@ export class PhysicsWorld {
     const lx = x + vx * time, ly = y + vy * time
     const landing = this.surfaceBelow(lx, ly, z)
     if (!landing) { this.escaped += volume; return }
-    this.packets.push({ arrive: this.time + time, domain: landing.domain, x: lx, y: ly, vx, vy, volume })
+    this.packets.push({ arrive: this.time + time * slow, domain: landing.domain, x: lx, y: ly, vx, vy, volume })
   }
 
   private jetTarget(edge: Edge): JetTarget {
@@ -481,10 +496,15 @@ export class PhysicsWorld {
       const level = grid.surface(intake.cells)
       const wet = Number.isFinite(level)
       if (!wet && noria.speed === 0 && noria.held() === 0) return
-      const scoop = this.scoop
-      const wanted = wet ? noria.demand(dt, lift.hub, level, scoop) : 0
-      const taken = wanted > 0 ? grid.withdraw(intake.cells, wanted) : 0
-      noria.step(dt, scoop, wanted > 0 ? taken / wanted : 0)
+      if (noria instanceof ScrewLift) {
+        const wanted = wet ? noria.demand(dt, lift.hub, level) : 0
+        noria.step(dt, wanted > 0 ? grid.withdraw(intake.cells, wanted) : 0)
+      } else {
+        const scoop = this.scoop
+        const wanted = wet ? noria.demand(dt, lift.hub, level, scoop) : 0
+        const taken = wanted > 0 ? grid.withdraw(intake.cells, wanted) : 0
+        noria.step(dt, scoop, wanted > 0 ? taken / wanted : 0)
+      }
       this.channels[intake.trough].add(intake.pourCell, noria.poured)
       this.rawFlow[lift.edge] += noria.poured / dt
       this.liftRates[i] += (noria.poured / dt - this.liftRates[i]) * Math.min(1, dt / 0.4)
@@ -554,6 +574,11 @@ export class PhysicsWorld {
     const target = this.jetTarget(edge)
     const [x, y] = lip.at, z = lip.z + Math.pow(volume / dt / (OVERFALL * lip.width), 2 / 3) * 0.7
     const vx = lip.dir[0] * speed, vy = lip.dir[1] * speed
+    if (edge.chain) {
+      // Down the rain chain: cup to cup, slowed to a trickle's pace.
+      this.launch(x, y, z, 0, 0, volume, 2.2)
+      return
+    }
     if (target.kind === 'tipper') {
       const tube = this.tippers[target.index], tipper = this.layout.tippers[target.index]
       // Does the falling sheet meet the tube's mouth?

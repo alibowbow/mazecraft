@@ -145,6 +145,14 @@ export class GardenFalls {
         const strength = THREE.MathUtils.smoothstep(flow, 0, 0.012)
         this.sheet(index++, new THREE.Vector3(at[0], at[1], upstream - 0.004), edge.normal, Math.hypot(end[0] - at[0], end[1] - at[1]),
           Math.max(0, upstream - (edge.crest + h)), edge.width * 0.98, 0, strength, 0.1, 0.8, dt, h)
+        if (edge.chain) {
+          // Down a rain chain: a thin, aerated trickle from cup to cup.
+          const [lx, ly] = [end[0] + edge.normal[0] * 0.05, end[1] + edge.normal[1] * 0.05]
+          const drop = Math.max(0, edge.crest - level(edge.b))
+          this.sheet(index++, new THREE.Vector3(lx, ly, edge.crest - 0.02), edge.normal, 0.001, drop, 0.07, 0, strength, 0.85, 0.5, dt, 0.02)
+          if (strength > 0.01) this.targets.push({ x: lx, y: ly, z: level(edge.b), radius: 0.12, strength: strength * 0.4 })
+          continue
+        }
         // A jet over a tipper lands in its raised mouth; once the tube has
         // swung down it falls straight through to the pool.
         let landing = level(edge.b)
