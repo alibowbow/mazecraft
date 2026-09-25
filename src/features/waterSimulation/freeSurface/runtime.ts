@@ -7,6 +7,7 @@ import { FreeSurfaceSolver } from './solver'
 import { BasinSimulation, type BasinSnapshot } from './basinSimulation'
 import { GardenSimulation, type GardenSnapshot } from '../garden/simulation'
 import { GardenSound } from '../garden/sound'
+import { GardenProgressTracker, type GardenProgress } from '../garden/progress'
 import { gardenLayout } from '../garden/layout'
 import { gardenIdOf, type WaterSculpture } from '../garden'
 import type { FluidDiagnostics, FluidSnapshot, FluidSnapshotBuffers, FluidResume } from './types'
@@ -17,6 +18,8 @@ export interface FreeSurfaceStatus extends WaterPlaybackStatus {
   particleCount: number
   escapedVolume: number
   saturated: boolean
+  /** Water gardens: what the water has achieved in this run (for challenges). */
+  garden?: GardenProgress
 }
 
 const EMPTY_PARTICLE_DIAGNOSTICS: FluidDiagnostics = {
@@ -31,6 +34,7 @@ export class FreeSurfaceRuntime {
   private readonly basin: BasinSimulation | GardenSimulation
   /** Water gardens sound as they run (off until the viewer turns it on). */
   private readonly sound: GardenSound | null = null
+  private readonly progress: GardenProgressTracker | null = null
   private basinSnapshot: BasinSnapshot
   private viewMode: 'free-surface' | 'surface-3d' = 'free-surface'
   private worker: Worker | null = null
@@ -79,7 +83,7 @@ export class FreeSurfaceRuntime {
     this.basin = garden
       ? new GardenSimulation(gardenLayout(garden), this.layout)
       : new BasinSimulation(project, this.layout)
-    if (garden) { this.sound = new GardenSound(gardenLayout(garden)); this.sound.setActive(!this.paused) }
+    if (garden) { this.sound = new GardenSound(gardenLayout(garden)); this.sound.setActive(!this.paused); this.progress = new GardenProgressTracker(gardenLayout(garden)) }
     this.basinSnapshot = this.basin.snapshot()
     this.renderer = new FreeSurfaceRenderer(mount, this.layout, quality, sculpture)
     if (this.sculpture !== 'extruded-flow') this.renderer.setBasinSnapshot(this.basinSnapshot)
@@ -213,6 +217,7 @@ export class FreeSurfaceRuntime {
       relativeMassError: availableVolume ? d.massError / availableVolume : 0,
       maxVelocity: d.maxVelocity, outletDischarge: d.outletRate,
       particleCount: basinMode ? 0 : d.count, escapedVolume: d.escaped, saturated: d.saturated,
+      garden: this.progress ? { ...this.progress.current } : undefined,
     })
     this.onMetrics({
       atlasWidth: this.renderer.canvas.width, atlasHeight: this.renderer.canvas.height,
@@ -248,6 +253,7 @@ export class FreeSurfaceRuntime {
       }
       this.basinSnapshot = this.basin.snapshot()
       if (this.sculpture !== 'extruded-flow') this.renderer.setBasinSnapshot(this.basinSnapshot)
+      if (this.progress && 'garden' in this.basinSnapshot) this.progress.update((this.basinSnapshot as GardenSnapshot).garden)
       if (this.sound && 'garden' in this.basinSnapshot) this.sound.update((this.basinSnapshot as GardenSnapshot).garden, this.renderer.gardenListener?.() ?? null)
       if (now - this.lastPublish >= 100) this.publish(this.basinSnapshot.diagnostics)
       return
@@ -380,6 +386,7 @@ export class FreeSurfaceRuntime {
   resetCamera() { this.renderer.resetCamera() }
   zoomCamera(factor: number) { this.renderer.zoomCamera(factor) }
   restart() {
+    this.progress?.reset()
     this.generation++
     this.paused = true
     this.inflowEnabled = true
