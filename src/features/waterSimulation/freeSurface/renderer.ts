@@ -4,6 +4,7 @@ import type { BasinSnapshot } from './basinSimulation'
 import { buildSolidMask, WATER_WALL_VISIBILITY } from './surfaceField'
 import { FreeSurfacePresentation3D, SURFACE_FIELD_PADDING } from './presentation3d'
 import { GardenPresentation3D } from '../garden/presentation'
+import type { Listener } from '../garden/sound'
 import { GardenPost, initialPostTier, pinnedPostTier, PostGovernor, type PostTier } from '../garden/post'
 import type { GardenSnapshot } from '../garden/simulation'
 import { gardenIdOf, type WaterSculpture } from '../garden'
@@ -725,6 +726,11 @@ export class FreeSurfaceRenderer {
 
 
   private cinematic = false
+
+  /** Listening point for the garden sound (null outside a 3D water garden). */
+  gardenListener(): Listener | null {
+    return this.viewMode === 'surface-3d' && this.presentation3d instanceof GardenPresentation3D ? this.presentation3d.listener() : null
+  }
 
   /** Water gardens: film the running water in cinematic shots. */
   setCinematic(enabled: boolean): void {

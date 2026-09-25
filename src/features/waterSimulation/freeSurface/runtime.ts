@@ -71,8 +71,10 @@ export class FreeSurfaceRuntime {
     private readonly sculpture?: WaterSculpture,
     private readonly resume?: FluidResume,
   ) {
-    this.layout = buildFluidLayout(project, resume?.capacity)
-    if (resume) { this.layout.capacity = Math.max(this.layout.capacity, resume.snapshot.count); this.paused = resume.paused; this.inflowEnabled = resume.inflow; this.inflow = resume.inflow ? 1 : 0 }
+    // The particle budget follows the maze being filled: carrying a smaller
+    // maze's budget into a larger one ran the water out half way.
+    this.layout = buildFluidLayout(project)
+    if (resume) { this.layout.capacity = Math.max(this.layout.capacity, resume.capacity, resume.snapshot.count); this.paused = resume.paused; this.inflowEnabled = resume.inflow; this.inflow = resume.inflow ? 1 : 0 }
     const garden = gardenIdOf(sculpture)
     this.basin = garden
       ? new GardenSimulation(gardenLayout(garden), this.layout)
@@ -246,7 +248,7 @@ export class FreeSurfaceRuntime {
       }
       this.basinSnapshot = this.basin.snapshot()
       if (this.sculpture !== 'extruded-flow') this.renderer.setBasinSnapshot(this.basinSnapshot)
-      if (this.sound && 'garden' in this.basinSnapshot) this.sound.update((this.basinSnapshot as GardenSnapshot).garden)
+      if (this.sound && 'garden' in this.basinSnapshot) this.sound.update((this.basinSnapshot as GardenSnapshot).garden, this.renderer.gardenListener?.() ?? null)
       if (now - this.lastPublish >= 100) this.publish(this.basinSnapshot.diagnostics)
       return
     }
