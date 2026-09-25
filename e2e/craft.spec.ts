@@ -79,7 +79,10 @@ test('clears the first challenge stage when the physics meets its goals', async 
   await expect(panel.getByRole('list', { name: '목표' })).toContainText('종착 연못까지')
   // Later stages stay locked until the one before is cleared.
   await expect(panel.getByRole('button', { name: /2\. .*잠김/ })).toBeDisabled()
+  const before = await page.getByTestId('craft-canvas').getAttribute('data-garden')
   await panel.getByRole('button', { name: '연꽃 연못 추가' }).click()
+  // Adding the device rebuilds the garden: wait for the new one before pouring.
+  await expect(page.getByTestId('craft-canvas')).not.toHaveAttribute('data-garden', before ?? '', { timeout: 10_000 })
   await expect(page.getByTestId('craft-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: waterStartupTimeout })
   if (await page.getByRole('button', { name: '장치 목록 닫기' }).isVisible()) await page.getByRole('button', { name: '장치 목록 닫기' }).click()
   await page.getByRole('combobox', { name: '재생 속도' }).selectOption('4')
