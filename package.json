@@ -13,6 +13,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
     "clipper-lib": "^6.4.2",
     "fflate": "^0.8.2",
     "lucide-react": "^0.468.0",

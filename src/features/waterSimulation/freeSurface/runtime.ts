@@ -7,6 +7,7 @@ import { FreeSurfaceSolver } from './solver'
 import { BasinSimulation, type BasinSnapshot } from './basinSimulation'
 import { GardenSimulation, type GardenSnapshot } from '../garden/simulation'
 import { GardenSound } from '../garden/sound'
+import { loadRapier, type FloaterKind } from '../garden/physics/floaters'
 import { GardenProgressTracker, type GardenProgress } from '../garden/progress'
 import { gardenLayout } from '../garden/layout'
 import { gardenIdOf, type WaterSculpture } from '../garden'
@@ -337,6 +338,20 @@ export class FreeSurfaceRuntime {
     this.cinematic = value
     this.renderer.setCinematic?.(value && !this.paused)
   }
+  /**
+   * Drop a floating body (Rapier) into the garden; the physics engine loads
+   * on first use. Resolves false outside a water garden.
+   */
+  async dropFloater(kind: FloaterKind): Promise<boolean> {
+    if (!(this.basin instanceof GardenSimulation)) return false
+    const rapier = await loadRapier()
+    if (this.disposed) return false
+    this.basin.enableFloaters(rapier)
+    this.basin.dropFloater(kind)
+    this.basinSnapshot = this.basin.snapshot()
+    if (this.sculpture !== 'extruded-flow') this.renderer.setBasinSnapshot(this.basinSnapshot)
+    return true
+  }
   /** Garden sound: call from a user gesture the first time (autoplay rules). */
   setSound(enabled: boolean, volume?: number) {
     if (volume !== undefined) this.sound?.setVolume(volume)
@@ -434,5 +449,6 @@ export class FreeSurfaceRuntime {
     this.fallbackBuffers = undefined
     this.renderer.dispose()
     this.sound?.dispose()
+    if (this.basin instanceof GardenSimulation) this.basin.dispose()
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react'
-import { ChevronDown, Clapperboard, Volume2, VolumeX } from 'lucide-react'
+import { ChevronDown, Clapperboard, Sailboat, Volume2, VolumeX } from 'lucide-react'
 
 const SOUND_KEY = 'mazecraft.sound.v1'
 
@@ -59,4 +59,18 @@ export function CinematicToggle({ cinematic, onToggle }: { cinematic: boolean; o
   return <button className="ws-icon" aria-label="시네마틱 카메라" title={cinematic ? '시네마틱 카메라 끄기' : '시네마틱 카메라: 물이 흐르는 동안 영화처럼 촬영'} aria-pressed={cinematic} onClick={onToggle}>
     <Clapperboard size={17} />
   </button>
+}
+
+const FLOATERS = [['duck', '고무오리', '🦆'], ['ball', '비치볼', '🏐'], ['leaf', '나뭇잎배', '🍃'], ['block', '나무토막', '🪵']] as const
+export type FloaterChoice = typeof FLOATERS[number][0]
+
+/** Drop something into the water: a Rapier rigid body that rides the flow. */
+export function FloaterMenu({ onDrop }: { onDrop(kind: FloaterChoice): void }) {
+  const [open, setOpen] = useState(false)
+  return <div className="ws-floaters">
+    <button className="ws-icon" aria-label="물에 띄우기" title="물에 띄우기" aria-expanded={open} onClick={() => setOpen(!open)}><Sailboat size={17} /></button>
+    {open && <div className="ws-floater-menu" role="menu" aria-label="띄울 물체">
+      {FLOATERS.map(([kind, name, icon]) => <button key={kind} role="menuitem" onClick={() => { onDrop(kind); setOpen(false) }}><span aria-hidden>{icon}</span>{name}</button>)}
+    </div>}
+  </div>
 }

@@ -8,7 +8,7 @@ import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/f
 import { AQUA_WATER_APPEARANCE } from '../waterSimulation/freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, STUDIO_BACKGROUND } from '../waterSimulation/freeSurface/lookdev'
 import { createWaterStudioProject } from '../waterStudio/presets'
-import { CinematicToggle, SoundToggle, SpeedSelect, useCinematicPreference, useGardenSoundPreference } from '../waterStudio/studioControls'
+import { CinematicToggle, FloaterMenu, SoundToggle, SpeedSelect, useCinematicPreference, useGardenSoundPreference } from '../waterStudio/studioControls'
 import {
   compileCraft, CRAFT_EXITS, CRAFT_MODULES, craftModule, craftTemplates, hasSpout,
   type CraftCourse, type CraftExit, type CraftKind, type CraftModule, type CraftSize, type CraftTurn,
@@ -249,6 +249,7 @@ export default function CraftStudio({ onHome, onWater }: Props) {
             <button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button>
             <button className="ws-icon" aria-label="물 추적 모드" title="물 추적 모드" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button>
             <CinematicToggle cinematic={cinematic} onToggle={() => setCinematic(!cinematic)} />
+            <FloaterMenu onDrop={kind => { runtimeRef.current?.setSound(sound); void runtimeRef.current?.dropFloater(kind) }} />
             <button className="ws-icon" aria-label="배치도" title="배치도" aria-pressed={planOpen || Boolean(issue)} onClick={() => setPlanOpen(!planOpen)}><Map size={17} /></button>
           </div>
           <div className="ws-transport">

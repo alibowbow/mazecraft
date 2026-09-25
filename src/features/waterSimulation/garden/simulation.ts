@@ -2,6 +2,8 @@ import type { BasinSnapshot } from '../freeSurface/basinSimulation'
 import type { FluidLayout } from '../freeSurface/types'
 import type { Edge, GardenLayout } from './layout'
 import { gardenField, FAR, type GardenField } from './flowField'
+import { FloaterWorld, type FloaterKind, type Rapier } from './physics/floaters'
+import { buildGardenSolids } from './geometry'
 import { PhysicsWorld, SOURCE_FLOW, TICK, NORIA_POTS } from './physics/world'
 import { DRY } from './physics/shallowWater'
 import { ScrewLift } from './physics/machines'
@@ -55,9 +57,15 @@ export interface GardenState {
   readonly bed: Float32Array
   /** Texel grid: world x0, y0, texel size, width, height. */
   readonly surfaceGrid: SurfaceGrid
+  /** Floating bodies (Rapier): x, y, z, qx, qy, qz, qw, kind per body. */
+  readonly floaters: Float32Array
 }
 
 export { NO_WATER, type SurfaceGrid } from './physics/surface'
+
+/** Floating bodies step at 60 Hz, every other hydraulic tick. */
+const FLOATER_TICK = 1 / 60
+const NO_FLOATERS = new Float32Array(0)
 
 export interface GardenSnapshot extends BasinSnapshot {
   readonly garden: GardenState
@@ -97,6 +105,11 @@ export class GardenSimulation {
   private readonly texelDomain: Int16Array
   private readonly texelCell: Int32Array
   private accumulator = 0
+  /** Rigid bodies riding the water (Rapier), once enabled. */
+  private floaterWorld: FloaterWorld | null = null
+  private floaterClock = 0
+  private readonly deviceTipper: Float32Array
+  private readonly deviceWheel: Float32Array
 
   constructor(readonly layout: GardenLayout, private readonly grid: Pick<FluidLayout, 'rows' | 'cols' | 'activeCellCount'>, cell?: number) {
     this.world = new PhysicsWorld(layout, cell)
@@ -115,6 +128,8 @@ export class GardenSimulation {
     this.liftLoads = new Float32Array(layout.lifts.length)
     this.siphonPrimed = new Float32Array(layout.siphons.length)
     this.wheelAngles = new Float32Array(layout.wheels.length)
+    this.deviceTipper = new Float32Array(layout.tippers.length)
+    this.deviceWheel = new Float32Array(layout.wheels.length)
     this.noriaAngles = new Float32Array(layout.lifts.length)
     this.noriaPots = new Float32Array(layout.lifts.length * NORIA_POTS)
     const cells = grid.rows * grid.cols
@@ -172,12 +187,53 @@ export class GardenSimulation {
     while (this.accumulator + 1e-10 >= TICK) {
       this.world.step(TICK, requested)
       this.accumulator = Math.max(0, this.accumulator - TICK)
+      if (this.floaterWorld && (this.floaterClock += TICK) >= FLOATER_TICK - 1e-9) {
+        this.floaterClock -= FLOATER_TICK
+        this.stepFloaters(this.floaterWorld)
+      }
     }
+  }
+
+  /** Let rigid bodies ride this garden's water (Rapier must be loaded). */
+  enableFloaters(rapier: Rapier): void {
+    if (this.floaterWorld) return
+    const solids = buildGardenSolids(this.layout)
+    this.floaterWorld = new FloaterWorld(rapier, this.layout, [solids.walls, solids.beds, solids.trim])
+    for (const geometry of Object.values(solids)) geometry?.dispose()
+  }
+
+  get floatersEnabled(): boolean { return this.floaterWorld !== null }
+
+  /** Drop a floating body into the first pool, just under the source. */
+  dropFloater(kind: FloaterKind): void {
+    const world = this.floaterWorld
+    if (!world) return
+    const { source } = this.layout
+    const level = this.world.poolLevel(source.pool)
+    const pool = this.layout.pools[source.pool]
+    const z = Math.max(Number.isFinite(level) ? level : pool.floor, pool.floor) + 0.35
+    const jitter = () => (Math.random() - 0.5) * 0.3
+    world.drop(kind, source.landing[0] + jitter(), source.landing[1] + jitter(), z)
+  }
+
+  private stepFloaters(world: FloaterWorld): void {
+    this.world.tippers.forEach((tube, i) => { this.deviceTipper[i] = tube.angle })
+    this.layout.wheels.forEach((_, i) => {
+      const bucket = this.world.bucketWheels[i], paddle = this.world.paddleWheels[i]
+      this.deviceWheel[i] = bucket ? bucket.angle : -(paddle?.angle ?? 0)
+    })
+    world.step(FLOATER_TICK, this.world, this.deviceTipper, this.deviceWheel)
   }
 
   reset(): void {
     this.world.reset()
     this.accumulator = 0
+    this.floaterWorld?.clear()
+  }
+
+  dispose(): void {
+    this.floaterWorld?.dispose()
+    this.floaterWorld = null
   }
 
   snapshot(): GardenSnapshot {
@@ -246,6 +302,7 @@ export class GardenSimulation {
         channelFlow: this.channelFlow, liftLoads: this.liftLoads, siphonPrimed: this.siphonPrimed,
         wheelAngles: this.wheelAngles, noriaAngles: this.noriaAngles, noriaPots: this.noriaPots,
         surface: this.surface, bed: this.bed, surfaceGrid: this.surfaceGrid,
+        floaters: this.floaterWorld ? this.floaterWorld.snapshot() : NO_FLOATERS,
       },
       diagnostics: {
         time: world.time, count: 0, injected: world.injected, discharged: world.drained, escaped: world.escaped, stored,

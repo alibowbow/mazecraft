@@ -10,6 +10,7 @@ import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
 import { sceneColorFor } from './post'
 import { CinematicDirector } from './cinematic'
+import { GardenFloaters } from './floaters3d'
 import type { Listener } from './sound'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
@@ -70,6 +71,7 @@ export class GardenPresentation3D {
   private readonly materials: THREE.Material[] = []
   private readonly falls: GardenFalls
   private readonly plants: GardenPlants
+  private readonly floaters = new GardenFloaters()
   private readonly devices: GardenDevices
   private readonly channels: GardenChannels
   private shadowFrame = 0
@@ -227,6 +229,7 @@ export class GardenPresentation3D {
     for (const vessel of layout.vessels) vessel.spec.planters.forEach((at, i) => this.plants.add('rosemary', at[0], at[1], vessel.top - 0.04, 0.55, 5 + i * 13))
     this.plants.build()
     this.content.add(this.plants.group)
+    this.content.add(this.floaters.group)
     this.scene.add(this.content)
 
     this.sun.castShadow = true
@@ -393,9 +396,10 @@ export class GardenPresentation3D {
     this.trackWater(state)
     this.falls.update(state, this.inflow)
     this.devices.update(state)
+    const floating = this.floaters.update(state.floaters)
     this.channels.update(state)
     // Moving machinery casts moving shadows: refresh them at a gentle rate.
-    if (this.devices.moved && ++this.shadowFrame % 3 === 0) {
+    if ((this.devices.moved || floating) && ++this.shadowFrame % 3 === 0) {
       this.sun.shadow.needsUpdate = true
       this.renderer.shadowMap.needsUpdate = true
     }
@@ -572,7 +576,7 @@ export class GardenPresentation3D {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
+    this.falls.dispose(); this.plants.dispose(); this.floaters.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
     for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uOwner]) uniform.value.dispose()
