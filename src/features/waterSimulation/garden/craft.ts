@@ -36,7 +36,18 @@ export interface CraftCourse {
   modules: CraftModule[]
 }
 
-export interface CraftIssue { module: number; message: string }
+/** What stopped a course: too little height, a collision, a misplaced shishi-odoshi. */
+export type CraftProblem = 'empty' | 'height' | 'clash' | 'tipper' | 'finish-height' | 'finish-clash'
+
+export interface CraftIssue { module: number; message: string; problem: CraftProblem }
+
+/** Plan of a course as far as it was built, for drawing it and its problem. */
+export interface CraftPlan {
+  /** Per placed part: module index (-1 source tower, modules.length the receiving pond), boxes and top. */
+  parts: { module: number; boxes: Box[]; top: number }[]
+  /** Where the failing module was to go: its landing point, heading, and the height left there. */
+  failure?: { module: number; problem: CraftProblem; at: Vec2; heading: number; room: number; boxes?: Box[]; clashWith?: number }
+}
 
 export interface CraftStage {
   module: number
@@ -49,6 +60,7 @@ export interface CraftResult {
   design: GardenDesign | null
   issues: CraftIssue[]
   stages: CraftStage[]
+  plan: CraftPlan
 }
 
 export interface CraftModuleInfo {
@@ -88,9 +100,12 @@ const turnHeading = (heading: number, turn: CraftTurn) => turn === 'left' ? (hea
 const angleOf = (v: Vec2) => Math.atan2(v[1], v[0])
 
 interface Cursor { landing: Vec2; heading: number; maxTop: number; maxLevel: number }
-interface Box { minX: number; minY: number; maxX: number; maxY: number }
+/** A plan-view rectangle (m). */
+export interface Box { minX: number; minY: number; maxX: number; maxY: number }
 
-class CraftError extends Error {}
+class CraftError extends Error {
+  constructor(message: string, readonly kind: CraftProblem = 'height') { super(message) }
+}
 
 /** Room a spout leaves below it, by device (see the garden tests' clearances). */
 function afterSpout(crest: number, exit: CraftExit): { maxTop: number; maxLevel: number } {
@@ -142,11 +157,11 @@ interface Built {
 const name = (ctx: BuildContext, part: string) => `m${ctx.index}-${part}`
 
 function checkExit(ctx: BuildContext): void {
-  if (ctx.module.exit === 'tipper' && !ctx.nextTakesTipper) throw new CraftError('시시오도시는 넓은 수조(미로·계단·연못·양수 수조) 앞에만 놓을 수 있어요. 다음 장치를 바꾸거나 출구 장치를 바꿔 주세요.')
+  if (ctx.module.exit === 'tipper' && !ctx.nextTakesTipper) throw new CraftError('시시오도시는 넓은 수조(미로·계단·연못·양수 수조) 앞에만 놓을 수 있어요. 다음 장치를 바꾸거나 출구 장치를 바꿔 주세요.', 'tipper')
 }
 
 /** A Korean noun with its object particle (을 after a final consonant, else 를). */
-function objectOf(word: string): string {
+export function objectOf(word: string): string {
   const code = word.charCodeAt(word.length - 1) - 0xac00
   return `${word}${code >= 0 && code < 11172 && code % 28 ? '을' : '를'}`
 }
@@ -425,12 +440,18 @@ const PLANT_ORDER: PlantKind[] = ['olive', 'rosemary', 'fern', 'stones', 'olive'
 /** Compile a crafted course into a garden design, or explain what stops it. */
 export function compileCraft(course: CraftCourse): CraftResult {
   const issues: CraftIssue[] = [], stages: CraftStage[] = []
-  if (!course.modules.length) return { design: null, issues: [{ module: -1, message: '장치를 하나 이상 넣어 주세요.' }], stages }
   const lipZ = Math.max(2, Math.min(7, course.source))
+  const plan: CraftPlan = { parts: [{ module: -1, boxes: [boxOf([[0, 1.85]], 0.5)], top: lipZ }] }
+  if (!course.modules.length) return { design: null, issues: [{ module: -1, message: '장치를 하나 이상 넣어 주세요.', problem: 'empty' }], stages, plan }
   let cursor: Cursor = { landing: [0, 0], heading: 0, maxTop: lipZ - 0.3, maxLevel: lipZ - 0.45 }
   const vessels: VesselSpec[] = []
-  const boxes: Box[][] = [[boxOf([[0, 1.85]], 0.5)]]
+  const boxes: Box[][] = [plan.parts[0].boxes]
   const handoffs: Box[][] = []
+  const fail = (module: number, problem: CraftProblem, message: string, extra: Partial<NonNullable<CraftPlan['failure']>> = {}): CraftResult => {
+    issues.push({ module, message, problem })
+    plan.failure = { module, problem, at: cursor.landing, heading: cursor.heading, room: Math.max(0, cursor.maxTop), ...extra }
+    return { design: null, issues, stages, plan }
+  }
   for (let index = 0; index < course.modules.length; index++) {
     const module = course.modules[index], next = course.modules[index + 1]
     const ctx: BuildContext = {
@@ -440,8 +461,8 @@ export function compileCraft(course: CraftCourse): CraftResult {
     try {
       built = BUILDERS[module.kind](ctx)
     } catch (error) {
-      issues.push({ module: index, message: error instanceof CraftError ? error.message : '이 장치를 놓을 수 없어요.' })
-      return { design: null, issues, stages }
+      if (error instanceof CraftError) return fail(index, error.kind, error.message)
+      return fail(index, 'height', '이 장치를 놓을 수 없어요.')
     }
     // Nothing may run into what the water has already passed. The module
     // just before may overlap a little (a spout tucks over its basin), and
@@ -453,26 +474,28 @@ export function compileCraft(course: CraftCourse): CraftResult {
       return theirs.some(a => mine.some(b => overlaps(a, b, previous ? 0.7 : 0.05)))
     })
     if (clash >= 0) {
-      issues.push({ module: index, message: clash === 0 ? '수원 탑과 겹쳐요. 방향을 바꿔 보세요.' : `${clash}번째 장치와 겹쳐요. 방향(좌·우)을 바꿔 보세요.` })
-      return { design: null, issues, stages }
+      return fail(index, 'clash', clash === 0 ? '수원 탑과 겹쳐요. 방향을 바꿔 보세요.' : `${clash}번째 장치와 겹쳐요. 방향(좌·우)을 바꿔 보세요.`,
+        { boxes: mine, clashWith: clash - 1 })
     }
     boxes.push(built.boxes)
     handoffs[boxes.length - 1] = built.handoff ?? []
+    plan.parts.push({ module: index, boxes: mine, top: built.top })
     vessels.push(...built.vessels)
     stages.push({ module: index, top: built.top, handoff: built.next.maxTop })
     cursor = built.next
   }
   // The course ends in a receiving basin and its drain.
+  const finish = course.modules.length
   if (cursor.maxTop < 0.6 || cursor.maxLevel < 0.25) {
-    issues.push({ module: course.modules.length - 1, message: '종착 연못을 놓을 높이가 부족해요. 수원을 높이거나, 장치를 줄이거나, 양수 장치(노리아·스크류)를 넣어 주세요.' })
-    return { design: null, issues, stages }
+    return fail(finish, 'finish-height', '종착 연못을 놓을 높이가 부족해요. 수원을 높이거나, 장치를 줄이거나, 양수 장치(노리아·스크류)를 넣어 주세요.')
   }
   const drainCentre = along(cursor.landing, DIRS[cursor.heading], [0, 0], 0.3, 0)
   const drainBox = boxOf(circle(drainCentre[0], drainCentre[1], 1.15))
-  if (boxes.slice(0, -1).some((earlier, k) => earlier.some(a => overlaps(a, drainBox, k === boxes.length - 1 ? 0.7 : 0.05)))) {
-    issues.push({ module: course.modules.length - 1, message: '종착 연못이 앞의 장치와 겹쳐요. 마지막 장치의 방향을 바꿔 보세요.' })
-    return { design: null, issues, stages }
+  const drainClash = boxes.slice(0, -1).findIndex(earlier => earlier.some(a => overlaps(a, drainBox, 0.05)))
+  if (drainClash >= 0) {
+    return fail(finish, 'finish-clash', '종착 연못이 앞의 장치와 겹쳐요. 마지막 장치의 방향을 바꿔 보세요.', { boxes: [drainBox], clashWith: drainClash - 1 })
   }
+  plan.parts.push({ module: finish, boxes: [drainBox], top: 0.56 })
   vessels.push(roundBasin('receiving-basin', drainCentre, 0.95, 0.04, 0.56, 0.4, { drain: { crest: 0.12, width: 2.0, at: drainCentre } }))
   boxes.push([drainBox])
   // A few plants where there is room, beside the course.
@@ -490,7 +513,7 @@ export function compileCraft(course: CraftCourse): CraftResult {
     }
   }
   const design = withCompanions(() => ({ id: 'craft', vessels, source: source([0, 0], [0, 1.85], lipZ, 0.42), plants }))()
-  return { design, issues, stages }
+  return { design, issues, stages, plan }
 }
 
 let serial = 0
@@ -502,7 +525,7 @@ export function craftModule(kind: CraftKind, overrides: Partial<CraftModule> = {
   }
 }
 
-export interface CraftTemplate { id: string; name: string; description: string; course: CraftCourse }
+export interface CraftTemplate { id: string; name: string; description: string; level: '입문' | '중급' | '대장정'; course: CraftCourse }
 
 const m = (kind: CraftKind, overrides: Partial<CraftModule> = {}): CraftModule => ({
   id: `${kind}-${overrides.seed ?? 0}-${Math.random().toString(36).slice(2, 7)}`, kind, turn: 'straight', exit: 'plain', size: 'medium', seed: 7, wheels: false, ...overrides,
@@ -511,7 +534,7 @@ const m = (kind: CraftKind, overrides: Partial<CraftModule> = {}): CraftModule =
 export function craftTemplates(): CraftTemplate[] {
   return [
     {
-      id: 'terraced', name: '계단 정원', description: '미로에서 시작해 시시오도시, 계단 폭포, 빗물 사슬로 이어지는 차분한 정원',
+      id: 'terraced', name: '계단 정원', level: '입문', description: '미로에서 시작해 시시오도시, 계단 폭포, 빗물 사슬로 이어지는 차분한 정원',
       course: { version: 1, name: '계단 정원', source: 4.3, modules: [
         m('maze', { size: 'medium', exit: 'tipper', seed: 11 }),
         m('terraces', { size: 'medium', wheels: true, turn: 'left' }),
@@ -519,7 +542,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'grand-tour', name: '물의 대장정', description: '미로 → 계단 → 노리아가 끌어올린 물이 나선 탑을 돌아 사이펀으로 쏟아지는 긴 여정',
+      id: 'grand-tour', name: '물의 대장정', level: '대장정', description: '미로 → 계단 → 노리아가 끌어올린 물이 나선 탑을 돌아 사이펀으로 쏟아지는 긴 여정',
       course: { version: 1, name: '물의 대장정', source: 4.3, modules: [
         m('maze', { size: 'medium', exit: 'tipper', seed: 3 }),
         m('terraces', { size: 'small', wheels: true, exit: 'wheel' }),
@@ -529,12 +552,76 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'screw-aqueduct', name: '스크류와 수도교', description: '스크류가 들어 올린 물이 긴 수도교를 건너 지그재그로 내려옵니다',
+      id: 'screw-aqueduct', name: '스크류와 수도교', level: '중급', description: '스크류가 들어 올린 물이 긴 수도교를 건너 지그재그로 내려옵니다',
       course: { version: 1, name: '스크류와 수도교', source: 3.4, modules: [
         m('maze', { size: 'small', seed: 5 }),
         m('screw', { size: 'large' }),
         m('aqueduct', { size: 'medium', turn: 'left' }),
         m('zigzag', { size: 'small' }),
+      ] },
+    },
+    {
+      id: 'first-pond', name: '첫 연못', level: '입문', description: '연못 하나와 빗물 사슬. 처음 만들어 보기 좋은 가장 작은 물길',
+      course: { version: 1, name: '첫 연못', source: 2.6, modules: [
+        m('pond', { size: 'small', exit: 'chain' }),
+      ] },
+    },
+    {
+      id: 'zen', name: '시시오도시 정원', level: '입문', description: '연못과 미로 사이로 대나무 통이 “딱” 소리를 내며 물을 옮기는 고요한 정원',
+      course: { version: 1, name: '시시오도시 정원', source: 3.8, modules: [
+        m('pond', { size: 'medium', exit: 'tipper' }),
+        m('maze', { size: 'small', exit: 'tipper', seed: 21, turn: 'right' }),
+        m('pond', { size: 'small' }),
+      ] },
+    },
+    {
+      id: 'rain-chains', name: '빗물 사슬 계단', level: '입문', description: '계단 폭포마다 구리 컵 사슬을 타고 물이 졸졸 내려옵니다',
+      course: { version: 1, name: '빗물 사슬 계단', source: 4.0, modules: [
+        m('terraces', { size: 'small', exit: 'chain' }),
+        m('terraces', { size: 'small', exit: 'chain', turn: 'left' }),
+        m('pond', { size: 'small' }),
+      ] },
+    },
+    {
+      id: 'wheel-village', name: '물레바퀴 마을', level: '중급', description: '둑마다 물레가 돌고, 출구의 물레바퀴가 떨어지는 물로 힘차게 돕니다',
+      course: { version: 1, name: '물레바퀴 마을', source: 4.4, modules: [
+        m('terraces', { size: 'medium', wheels: true, exit: 'wheel' }),
+        m('maze', { size: 'small', wheels: true, exit: 'wheel', seed: 9, turn: 'right' }),
+        m('pond', { size: 'small' }),
+      ] },
+    },
+    {
+      id: 'labyrinths', name: '미로 삼부작', level: '중급', description: '크고 작은 미로 수조 세 개를 차례로 지나는, 길 찾기 좋아하는 물의 여행',
+      course: { version: 1, name: '미로 삼부작', source: 5.4, modules: [
+        m('maze', { size: 'large', seed: 31 }),
+        m('maze', { size: 'medium', seed: 32, turn: 'left' }),
+        m('maze', { size: 'small', seed: 33, turn: 'right' }),
+      ] },
+    },
+    {
+      id: 'spiral-siphon', name: '나선 탑과 사이펀', level: '중급', description: '높은 탑을 빙글빙글 돌아 내려온 물이 사이펀에 모였다가 한꺼번에 쏟아집니다',
+      course: { version: 1, name: '나선 탑과 사이펀', source: 5.2, modules: [
+        m('spiral', { size: 'large' }),
+        m('siphon'),
+      ] },
+    },
+    {
+      id: 'twin-lifts', name: '두 번 끌어올리기', level: '대장정', description: '스크류와 노리아가 차례로 물을 끌어올려, 낮은 수원에서도 긴 여정을 이어 갑니다',
+      course: { version: 1, name: '두 번 끌어올리기', source: 3.0, modules: [
+        m('maze', { size: 'small', seed: 41 }),
+        m('screw', { size: 'medium' }),
+        m('terraces', { size: 'small', turn: 'right' }),
+        m('noria', { size: 'medium' }),
+        m('zigzag', { size: 'medium' }),
+      ] },
+    },
+    {
+      id: 'aqueduct-journey', name: '수도교 여행', level: '대장정', description: '두 개의 수도교와 지그재그 수로를 건너 연못에 닿는, 멀리 가는 물길',
+      course: { version: 1, name: '수도교 여행', source: 4.6, modules: [
+        m('aqueduct', { size: 'large' }),
+        m('zigzag', { size: 'small', turn: 'left' }),
+        m('aqueduct', { size: 'medium', turn: 'right' }),
+        m('pond', { size: 'small', exit: 'chain' }),
       ] },
     },
   ]

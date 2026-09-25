@@ -9,7 +9,7 @@ import { gardenLayout, type GardenLayout } from './layout'
 import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
 import { sceneColorFor } from './post'
-import { sandDistanceTexture, type SandIsland } from './ground'
+import { CinematicDirector } from './cinematic'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
 import { GardenPlants } from './plants'
@@ -44,7 +44,12 @@ const LIGHTING = {
  */
 export class GardenPresentation3D {
   readonly scene = new THREE.Scene()
-  readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 120)
+  /** The studio view (orthographic) and the film camera of the cinematic mode. */
+  private readonly orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 120)
+  private readonly film = new THREE.PerspectiveCamera(30, 1, 0.1, 400)
+  private cinematic = false
+  private readonly director: CinematicDirector
+  get camera(): THREE.Camera { return this.cinematic ? this.film : this.orthographic }
   readonly target = new THREE.Vector3()
   readonly viewSize = new THREE.Vector2(1, 1)
   readonly viewDirection = new THREE.Vector3(0, 0, 1)
@@ -59,7 +64,6 @@ export class GardenPresentation3D {
   private readonly waterMaterial: THREE.MeshPhysicalMaterial
   private readonly groundMaterial: THREE.MeshStandardMaterial
   private readonly groundBackground: THREE.IUniform<THREE.Color>
-  private readonly sand: THREE.IUniform<THREE.Texture>
   private readonly soilMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4632, roughness: 1 })
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
@@ -118,6 +122,16 @@ export class GardenPresentation3D {
     })
     this.channelPaths = transportEdges(layout).map(edge => resample(edge.path!, 0.1).map(p => [p[0], p[1], p[2]] as [number, number, number]))
     this.started = new Float64Array(layout.pools.length + this.channelPaths.length).fill(-1)
+    // Devices worth a close look, for the cinematic camera's tour.
+    const sights = [
+      ...layout.tippers.map(t => new THREE.Vector3(t.pivot[0], t.pivot[1], t.pivotZ)),
+      ...layout.wheels.map(w => new THREE.Vector3(w.center[0], w.center[1], w.z)),
+      ...layout.lifts.map(l => new THREE.Vector3(l.center[0], l.center[1], l.hub)),
+      ...layout.siphons.map(p => new THREE.Vector3(p.at[0], p.at[1], p.base + p.trigger)),
+      new THREE.Vector3(layout.source.landing[0], layout.source.landing[1], layout.source.lipZ),
+    ]
+    const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(new SurfaceTrackball().orientation)
+    this.director = new CinematicDirector(this.center, this.extent, Math.atan2(facing.y, facing.x), sights)
 
     this.wallMaterial = createCeramicMaterial(this.uniforms, 'wall')
     this.bedMaterial = createCeramicMaterial(this.uniforms, 'bed')
@@ -127,7 +141,6 @@ export class GardenPresentation3D {
     const ground = createGroundMaterial(this.uniforms, new THREE.Vector2(this.center.x, this.center.y), radius + 1.5)
     this.groundMaterial = ground.material
     this.groundBackground = ground.background
-    this.sand = ground.sand
     const wallDepth = createWallDepthMaterial(this.uniforms)
     this.materials.push(this.wallMaterial, this.bedMaterial, this.trimMaterial, this.waterMaterial, this.groundMaterial, this.soilMaterial, wallDepth)
 
@@ -158,6 +171,12 @@ export class GardenPresentation3D {
     this.uniforms.uSurface.value.dispose()
     this.uniforms.uSurface.value = this.surfaceTexture
     this.uniforms.uSurfaceBounds.value.set(sg.x0, sg.y0, sg.cell)
+    // Which vessel simulates each texel (+1), to keep beds and water in their own.
+    const owner = new THREE.DataTexture(Uint8Array.from(surface.texelVessel, v => v + 1), sg.width, sg.height, THREE.RedFormat, THREE.UnsignedByteType)
+    owner.minFilter = owner.magFilter = THREE.NearestFilter
+    owner.needsUpdate = true
+    this.uniforms.uOwner.value.dispose()
+    this.uniforms.uOwner.value = owner
     mesh(solids.trim, this.trimMaterial, 'garden-spouts-and-tower')
     if (solids.planterSoil) mesh(solids.planterSoil, this.soilMaterial, 'garden-planter-soil', false)
     const brass = new THREE.MeshPhysicalMaterial({ color: 0xc08a4e, metalness: 1, roughness: 0.28, clearcoat: 0.3, envMapIntensity: 1.2 })
@@ -195,7 +214,6 @@ export class GardenPresentation3D {
       const b = field.data[(cy * field.width + cx) * 4 + 2] / 255
       return b >= 0.5 ? (b - 0.5) * 4 : 0
     }
-    const islands: SandIsland[] = []
     layout.design.plants.forEach((plant, i) => {
       // Keep planting clear of every basin, spout and receiving trough.
       let [x, y] = plant.at
@@ -204,11 +222,7 @@ export class GardenPresentation3D {
         x += dx / length * 0.15; y += dy / length * 0.15
       }
       this.plants.add(plant.kind, x, y, plant.z ?? 0, plant.scale, 17 + i * 31)
-      if (!plant.z) islands.push([x, y, (plant.kind === 'stones' ? 0.62 : 0.32) * plant.scale])
     })
-    // The rake goes around the sculpture and every island on the sand.
-    this.sand.value.dispose()
-    this.sand.value = sandDistanceTexture(plan, islands)
     for (const vessel of layout.vessels) vessel.spec.planters.forEach((at, i) => this.plants.add('rosemary', at[0], at[1], vessel.top - 0.04, 0.55, 5 + i * 13))
     this.plants.build()
     this.content.add(this.plants.group)
@@ -391,6 +405,31 @@ export class GardenPresentation3D {
     if (!this.state) this.uniforms.uGardenTime.value = time
   }
 
+  /** Film the running water in shots (perspective); off returns to the studio view. */
+  setCinematic(enabled: boolean): void {
+    if (enabled === this.cinematic) return
+    this.cinematic = enabled
+    this.director.reset()
+    if (enabled && this.state) this.filmWater(this.state)
+  }
+
+  private filmWater(state: GardenSnapshot['garden']): void {
+    const shot = this.director.frame(performance.now() / 1000, this.waterHead(state))
+    const aspect = this.view ? Math.max(1, this.view.width) / Math.max(1, this.view.height) : 1.5
+    const film = this.film
+    film.aspect = aspect
+    // Keep the framed height, and on narrow screens the framed width too.
+    const height = Math.max(shot.height, shot.height * 1.3 / aspect)
+    const distance = height / 2 / Math.tan(THREE.MathUtils.degToRad(film.fov / 2))
+    film.position.copy(shot.target).addScaledVector(shot.direction, distance)
+    film.up.set(0, 0, 1)
+    film.lookAt(shot.target)
+    film.near = Math.max(0.05, distance * 0.05); film.far = distance + 200
+    film.updateProjectionMatrix(); film.updateMatrixWorld()
+    this.target.copy(shot.target)
+    this.viewDirection.copy(shot.direction)
+  }
+
   /** Follow the water (on by default): the camera travels with the newest arrival. */
   setFollow(enabled: boolean): void {
     // Tracking starts from the garden's centre and closes in on the water.
@@ -444,14 +483,15 @@ export class GardenPresentation3D {
     const now = performance.now() / 1000
     const dt = this.focusTime === null ? 0 : Math.min(0.25, Math.max(0, now - this.focusTime))
     this.focusTime = now
+    if (this.cinematic) { this.filmWater(state); return }
     if (!this.follow) { this.applyView(); return }
     const head = this.waterHead(state)
     if (head) {
       // Dead zone: the camera only moves once the water leaves the middle of
       // the frame, then glides just far enough to keep it there. Small jumps
       // of the wetting front never shake the view.
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion)
-      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion)
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.orthographic.quaternion)
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.orthographic.quaternion)
       const offset = head.clone().sub(this.desired)
       const zoneX = this.viewSize.x * 0.22, zoneY = this.viewSize.y * 0.2
       const dx = offset.dot(right), dy = offset.dot(up)
@@ -491,14 +531,14 @@ export class GardenPresentation3D {
     const offset = new THREE.Vector3(panX, panY, 0).applyQuaternion(orientation)
     this.target.copy(this.center).lerp(this.focus, close).add(offset)
     this.viewDirection.set(0, 0, 1).applyQuaternion(orientation)
-    this.camera.left = -this.viewSize.x / 2; this.camera.right = this.viewSize.x / 2
-    this.camera.top = viewHeight / 2; this.camera.bottom = -viewHeight / 2
+    this.orthographic.left = -this.viewSize.x / 2; this.orthographic.right = this.viewSize.x / 2
+    this.orthographic.top = viewHeight / 2; this.orthographic.bottom = -viewHeight / 2
     const distance = Math.hypot(this.extent.x, this.extent.y, this.extent.z) + 30
-    this.camera.near = 0.1; this.camera.far = distance * 2.2
-    this.camera.position.copy(this.target).addScaledVector(this.viewDirection, distance)
-    this.camera.quaternion.copy(orientation)
-    this.camera.up.set(0, 1, 0).applyQuaternion(orientation)
-    this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld()
+    this.orthographic.near = 0.1; this.orthographic.far = distance * 2.2
+    this.orthographic.position.copy(this.target).addScaledVector(this.viewDirection, distance)
+    this.orthographic.quaternion.copy(orientation)
+    this.orthographic.up.set(0, 1, 0).applyQuaternion(orientation)
+    this.orthographic.updateProjectionMatrix(); this.orthographic.updateMatrixWorld()
   }
 
   dispose(): void {
@@ -507,7 +547,7 @@ export class GardenPresentation3D {
     this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
-    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.sand]) uniform.value.dispose()
+    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.uniforms.uOwner]) uniform.value.dispose()
     this.surfaceTexture.dispose()
     this.environment?.dispose()
     this.sun.shadow.dispose()
@@ -522,7 +562,7 @@ export class GardenPresentation3D {
 export function buildBedSurface(plan: SurfacePlan): THREE.BufferGeometry {
   const { grid, texelVessel, bed } = plan
   const { width, height, x0, y0, cell } = grid
-  const positions: number[] = [], index: number[] = []
+  const positions: number[] = [], index: number[] = [], own: number[] = [], owners: number[] = []
   const vessels = new Set<number>()
   for (const v of texelVessel) if (v >= 0) vessels.add(v)
   for (const vessel of vessels) {
@@ -537,34 +577,49 @@ export function buildBedSurface(plan: SurfacePlan): THREE.BufferGeometry {
       }
     }
     const corner = new Map<number, number>()
+    // A corner with no bed around it has no height: -1 (its quads are left out;
+    // dropping it to the ground hung sheets of water below the basin).
     const vertex = (ci: number, cj: number) => {
       const key = cj * (width + 1) + ci
       let id = corner.get(key)
       if (id !== undefined) return id
       // The corner height averages the texels around it, preferring the
       // vessel's own over those under its walls.
-      let sum = 0, n = 0, own = 0, ownN = 0
-      for (const [di, dj] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
+      let sum = 0, n = 0, ownSum = 0, ownN = 0, mask = 0
+      ;[[-1, -1], [0, -1], [-1, 0], [0, 0]].forEach(([di, dj], k) => {
         const i = ci + di, j = cj + dj
-        if (i < 0 || j < 0 || i >= width || j >= height) continue
+        if (i < 0 || j < 0 || i >= width || j >= height) return
         const t = j * width + i
-        if (!include[t] || bed[t] <= NO_WATER + 1) continue
+        if (!include[t] || bed[t] <= NO_WATER + 1) return
         sum += bed[t]; n++
-        if (include[t] === 2) { own += bed[t]; ownN++ }
-      }
+        if (include[t] === 2) { ownSum += bed[t]; ownN++; mask |= 1 << k }
+      })
+      if (!n) { corner.set(key, -1); return -1 }
       id = positions.length / 3
-      positions.push(x0 + ci * cell, y0 + cj * cell, ownN ? own / ownN : n ? sum / n : 0)
+      positions.push(x0 + ci * cell, y0 + cj * cell, ownN ? ownSum / ownN : sum / n)
+      // Which of the four texels are this vessel's own (the water reads
+      // only those), and the vessel (+1) for clipping under shared walls.
+      own.push(mask); owners.push(vessel + 1)
       corner.set(key, id)
       return id
     }
     for (let j = 0; j < height; j++) for (let i = 0; i < width; i++) {
       if (!include[j * width + i]) continue
       const a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1)
+      if (a < 0 || b < 0 || c < 0 || d < 0) continue
+      // Under a wall the carried-on bed may average a spout with the pool far
+      // below it: never hang a steep sheet off the edge there.
+      if (include[j * width + i] === 1) {
+        const zs = [a, b, c, d].map(v => positions[v * 3 + 2])
+        if (Math.max(...zs) - Math.min(...zs) > 0.2) continue
+      }
       index.push(a, b, c, a, c, d)
     }
   }
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('aOwn', new THREE.Float32BufferAttribute(own, 1))
+  geometry.setAttribute('aVessel', new THREE.Float32BufferAttribute(owners, 1))
   geometry.setIndex(index)
   geometry.computeVertexNormals()
   return geometry

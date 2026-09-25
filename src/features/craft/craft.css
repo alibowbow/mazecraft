@@ -1,18 +1,57 @@
 /* Craft studio: the water atelier's layout, with a course builder panel. */
 .water-studio.craft-studio { grid-template-rows: 70px minmax(0, 1fr); }
+/* Immersive view: the header is hidden, so the workspace takes the whole height. */
+.water-studio.craft-studio.is-focused { grid-template-rows: minmax(0, 1fr); }
 .craft-studio .ws-workspace { grid-template-columns: minmax(0, 1fr) 360px; }
 .craft-studio .ws-canvas { inset: 12px 0 35px; }
-.craft-stale { position: absolute; top: 96px; left: 32px; z-index: 2; padding: 8px 12px; border-radius: 8px; background: #fff7e8e6; color: #7a5a2c; font-size: 11px; border: 1px solid #efdcb9; }
 
 .craft-content { display: flex; flex-direction: column; gap: 0; padding-top: 8px; }
 .craft-verdict { display: flex; align-items: flex-start; gap: 9px; padding: 12px 14px; border-radius: 10px; font-size: 12px; line-height: 1.5; margin-bottom: 18px; }
 .craft-verdict > svg { flex-shrink: 0; margin-top: 2px; }
 .craft-verdict.is-working { background: #e6f2ef; color: #1d5d63; }
-.craft-verdict.has-issue { background: #fbefe6; color: #8a4b24; }
+.craft-verdict.has-issue { background: #fbefe6; color: #8a4b24; margin-bottom: 10px; }
+.craft-verdict small { display: block; margin-top: 2px; font-size: 11px; opacity: .75; }
 
-.craft-templates { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
-.water-studio .craft-templates button { padding: 8px 12px; border-radius: 16px; border: 1px solid #d9e0d8; font-size: 11px; color: #3f5b5d; background: #fffef9; }
-.water-studio .craft-templates button:hover { border-color: var(--ws-accent); color: var(--ws-accent); background: #f3f8f5; }
+/* Recommended fixes: each one already checked to build. */
+.craft-advice { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.craft-advice-label { display: flex; align-items: center; gap: 5px; font-size: 10px; letter-spacing: .02em; color: #8a6a4b; margin-bottom: 2px; }
+.water-studio .craft-advice button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 12px; border-radius: 10px; border: 1px solid #e7d5c2; background: #fffdf9; text-align: left; }
+.water-studio .craft-advice button:hover { border-color: var(--ws-accent); background: #f3f8f5; }
+.craft-advice strong { font-size: 12px; font-weight: 650; color: #2f4a4b; }
+.craft-advice small { font-size: 10.5px; color: #7b8a86; }
+
+/* Plan of the course over the scene, with the problem marked. */
+.craft-plan-card { position: absolute; top: 96px; left: 24px; z-index: 3; width: min(300px, 42%); padding: 10px 12px 12px; border-radius: 14px; background: #fffef9f0; border: 1px solid #e3e5dc; box-shadow: 0 10px 30px #2a3e3a1a; backdrop-filter: blur(6px); display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.craft-plan-card.has-issue { border-color: #e9c2a2; }
+.craft-plan-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #3f5b5d; }
+.craft-plan-head span { margin-left: auto; font-size: 10px; color: #9a7b5c; }
+.craft-plan-head .ws-icon { margin-left: auto; width: 24px; height: 24px; }
+.craft-plan-card p { margin: 0; font-size: 11px; line-height: 1.5; color: #8a4b24; }
+.water-studio .craft-plan-fix { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 9px; background: var(--ws-accent); color: #fff; font-size: 11px; font-weight: 600; text-align: left; }
+.craft-plan { width: 100%; max-height: 220px; }
+.craft-plan-route { fill: none; stroke: #9cc3bf; stroke-dasharray: 1 0.6; stroke-linecap: round; stroke-linejoin: round; }
+.craft-plan-part rect { fill: #e7f1ee; stroke: #8fb8b3; }
+.craft-plan-source rect { fill: #dcebf0; stroke: #7ea7b5; }
+.craft-plan-clashing rect { fill: #fbe3d3; stroke: #d98b57; }
+.craft-plan text { fill: #2f5556; font-weight: 700; font-family: inherit; }
+.craft-plan-failure rect, .craft-plan-failure circle { fill: #f3a36c33; stroke: #d0652a; }
+.craft-plan-failure line { stroke: #d0652a; stroke-linecap: round; }
+.craft-plan-failure text { fill: #b4501d; }
+
+/* Preset gallery. */
+.water-studio .craft-presets-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 11px 12px; margin-bottom: 10px; border-radius: 10px; border: 1px solid #dfe3da; background: #fffef9; font-size: 12px; color: #3f5b5d; }
+.craft-presets-toggle small { margin-left: auto; color: #8a9793; font-size: 10px; }
+.craft-presets-toggle[aria-expanded=true] svg:last-child { transform: rotate(180deg); }
+.craft-presets { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.craft-preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.water-studio .craft-preset-grid button { display: flex; flex-direction: column; align-items: stretch; gap: 5px; padding: 10px; border-radius: 11px; border: 1px solid #e1e4dc; background: #fffef9; text-align: left; }
+.water-studio .craft-preset-grid button:hover { border-color: #a9cbc6; background: #f4f9f6; }
+.craft-preset-top { display: flex; align-items: center; gap: 6px; }
+.craft-preset-top strong { font-size: 12px; font-weight: 650; }
+.craft-preset-top em { margin-left: auto; font-style: normal; font-size: 9px; padding: 2px 6px; border-radius: 8px; background: #e6f0ed; color: var(--ws-accent); }
+.craft-preset-grid small { font-size: 10px; line-height: 1.45; color: #7b8a86; }
+.craft-preset-icons { display: flex; gap: 4px; color: var(--ws-accent); }
+
 .craft-source { margin-bottom: 18px !important; }
 .craft-source input { width: 100%; accent-color: var(--ws-accent); }
 
@@ -60,6 +99,7 @@
 @media (max-width: 1150px) { .craft-studio .ws-workspace { grid-template-columns: minmax(0, 1fr) 330px; } }
 @media (max-width: 800px) {
   .water-studio.craft-studio { grid-template-rows: 58px minmax(0, 1fr); }
+  .water-studio.craft-studio.is-focused { grid-template-rows: minmax(0, 1fr); }
   .craft-studio .ws-workspace { grid-template-columns: minmax(0, 1fr); }
   .craft-studio .ws-canvas { inset: 80px 0 90px; }
   .craft-studio .ws-tuning { top: 58px; bottom: 0; width: min(380px, 100%); }
@@ -68,5 +108,6 @@
   .craft-studio .ws-canvas { inset: 65px 0 95px; }
   .craft-studio .ws-tuning { top: auto; bottom: 0; width: 100%; height: 72dvh; max-height: 72dvh; }
   .craft-palette { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .craft-stale { top: 70px; left: 18px; right: 18px; }
+  .craft-plan-card { top: 62px; left: 10px; right: 10px; width: auto; max-height: 38dvh; }
+  .craft-plan { max-height: 16dvh; }
 }

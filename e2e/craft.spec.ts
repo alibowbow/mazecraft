@@ -18,7 +18,8 @@ test('crafts a water course from devices and runs it with the physics engine', a
   if (!(await panel.isVisible())) await page.getByRole('button', { name: '장치 목록 열기' }).click()
 
   // A template is a complete course.
-  await panel.getByRole('button', { name: '스크류와 수도교' }).click()
+  await panel.getByRole('button', { name: '프리셋 둘러보기' }).click()
+  await panel.getByRole('group', { name: '추천 조합' }).getByRole('button', { name: '스크류와 수도교' }).click()
   await expect(panel.getByTestId('craft-verdict')).toContainText('물이 끝까지 흐르는 물길')
   const garden = await page.getByTestId('craft-canvas').getAttribute('data-garden')
   // The template ends low: only a lift still fits, and adding it rebuilds
@@ -54,4 +55,10 @@ test('explains why a course cannot be built', async ({ page }) => {
   await source.press('Home')
   for (let k = 0; k < 4; k++) await panel.getByRole('button', { name: '미로 수조 추가' }).click()
   await expect(panel.getByTestId('craft-verdict')).toContainText('높이가 부족')
+  // The plan marks the device that does not fit, and a checked fix applies in one click.
+  await expect(page.getByTestId('craft-plan')).toContainText('남음')
+  const fixes = panel.getByRole('group', { name: '추천 해결 방법' }).getByRole('button')
+  await expect(fixes.first()).toBeVisible()
+  await fixes.first().click()
+  await expect(panel.getByTestId('craft-verdict')).toContainText('물이 끝까지 흐르는 물길')
 })

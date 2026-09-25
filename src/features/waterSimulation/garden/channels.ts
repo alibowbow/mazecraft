@@ -36,7 +36,11 @@ export class GardenChannels {
         rows.push((row + 0.5) / this.rows); sides.push(side); lengths.push(length); widths.push(width)
       }))
       const n = across.length
-      for (let i = 0; i + 1 < points.length; i++) for (let k = 0; k + 1 < n; k++) {
+      // A lift carries its water in buckets or screw pockets (devices.ts):
+      // only its trough at the top runs as open channel.
+      const top = Math.max(...points.map(p => p[2]))
+      const first = edge.kind === 'lift' ? Math.max(0, points.findIndex(p => p[2] >= top - 0.3)) : 0
+      for (let i = first; i + 1 < points.length; i++) for (let k = 0; k + 1 < n; k++) {
         const a = base + i * n + k, b = a + 1, c = a + n, d = c + 1
         index.push(a, c, b, b, c, d)
       }

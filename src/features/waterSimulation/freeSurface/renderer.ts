@@ -724,6 +724,17 @@ export class FreeSurfaceRenderer {
   sceneWarming(): Promise<void> | null { return this.warming }
 
 
+  private cinematic = false
+
+  /** Water gardens: film the running water in cinematic shots. */
+  setCinematic(enabled: boolean): void {
+    this.cinematic = enabled
+    this.canvas.dataset.cinematic = enabled ? 'on' : 'off'
+    if (this.disposed) return
+    if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setCinematic(enabled)
+    this.draw()
+  }
+
   /** Water gardens: let the camera travel with the water. */
   setFollow(enabled: boolean): void {
     this.followWater = enabled
@@ -826,6 +837,7 @@ export class FreeSurfaceRenderer {
       if (this.basinSnapshot) this.presentation3d.setBasinSnapshot(this.basinSnapshot)
       this.presentation3d.setInflow(this.canvas.dataset.inflow !== 'disabled')
       if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setFollow(this.followWater)
+      if (this.presentation3d instanceof GardenPresentation3D) this.presentation3d.setCinematic(this.cinematic)
       if (this.presentation3d instanceof GardenPresentation3D) {
         this.ensurePost()
         this.presentation3d.setPostOutput(this.post !== null)
@@ -1067,6 +1079,8 @@ export class FreeSurfaceRenderer {
   private onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType === 'mouse' && event.button !== 0 && event.button !== 1 && event.button !== 2) return
     if (this.pointers.size >= 2) return
+    // Taking the camera by hand ends the cinematic shots.
+    if (this.cinematic) this.canvas.dispatchEvent(new CustomEvent('cinematic-end', { bubbles: true }))
     if (event.pointerType === 'mouse') {
       this.panDrag = event.button !== 0
       if (event.button === 1) event.preventDefault()
