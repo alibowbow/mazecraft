@@ -15,6 +15,7 @@ import { GardenDevices } from './devices'
 import { GardenChannels } from './channels'
 import { createGardenSky } from './environment'
 import { PROFILE_SAMPLES, transportEdges, type GardenSnapshot } from './simulation'
+import { NO_WATER, surfacePlan, type SurfacePlan } from './physics/surface'
 import { resample } from './geometry'
 
 interface Glaze { glaze: string; bed: string; roughness: number; clearcoat: number; clearcoatRoughness: number; sheen: number }
@@ -88,6 +89,8 @@ export class GardenPresentation3D {
   /** When each pool / channel first took water, to follow the newest arrival. */
   private readonly started: Float64Array
   private disposed = false
+  private readonly surfaceData: Uint16Array
+  private readonly surfaceTexture: THREE.DataTexture
 
   constructor(id: GardenKey, private readonly renderer: THREE.WebGLRenderer) {
     const layout = this.layout = gardenLayout(id)
@@ -134,7 +137,22 @@ export class GardenPresentation3D {
     const walls = mesh(solids.walls, this.wallMaterial, 'garden-glazed-walls')
     walls.customDepthMaterial = wallDepth
     walls.frustumCulled = false
-    mesh(solids.beds, this.bedMaterial, 'garden-glazed-beds', false)
+    // Beds follow the physics exactly: the rill slopes and step crests the
+    // water actually runs over.
+    solids.beds.dispose()
+    const surface = surfacePlan(layout)
+    mesh(buildBedSurface(surface), this.bedMaterial, 'garden-glazed-beds', false)
+    const { grid: sg } = surface
+    this.surfaceData = new Uint16Array(sg.width * sg.height * 4)
+    this.surfaceTexture = new THREE.DataTexture(this.surfaceData, sg.width, sg.height, THREE.RGBAFormat, THREE.HalfFloatType)
+    this.surfaceTexture.minFilter = this.surfaceTexture.magFilter = THREE.NearestFilter
+    this.surfaceTexture.name = 'garden-simulated-surface'
+    const none = THREE.DataUtils.toHalfFloat(NO_WATER)
+    for (let t = 0; t < sg.width * sg.height; t++) this.surfaceData[t * 4] = none
+    this.surfaceTexture.needsUpdate = true
+    this.uniforms.uSurface.value.dispose()
+    this.uniforms.uSurface.value = this.surfaceTexture
+    this.uniforms.uSurfaceBounds.value.set(sg.x0, sg.y0, sg.cell)
     mesh(solids.trim, this.trimMaterial, 'garden-spouts-and-tower')
     if (solids.planterSoil) mesh(solids.planterSoil, this.soilMaterial, 'garden-planter-soil', false)
     const brass = new THREE.MeshPhysicalMaterial({ color: 0xc08a4e, metalness: 1, roughness: 0.28, clearcoat: 0.3, envMapIntensity: 1.2 })
@@ -142,7 +160,9 @@ export class GardenPresentation3D {
     this.materials.push(brass, opening)
     mesh(solids.brass, brass, 'garden-brass-pipe-and-drains')
     mesh(solids.openings, opening, 'garden-pipe-bore-and-drain-holes', false)
-    const water = mesh(solids.water, this.waterMaterial, 'garden-pool-water', false)
+    // The water sheet shares the bed's height field and rides above it.
+    solids.water.dispose()
+    const water = mesh(buildBedSurface(surface), this.waterMaterial, 'garden-pool-water', false)
     water.receiveShadow = false
     water.frustumCulled = false
     water.renderOrder = 2
@@ -300,6 +320,11 @@ export class GardenPresentation3D {
   setBasinSnapshot(snapshot: BasinSnapshot): void {
     if (this.disposed || !('garden' in snapshot)) return
     const state = this.state = (snapshot as GardenSnapshot).garden
+    if (state.surface.length === this.surfaceData.length) {
+      const data = this.surfaceData, source = state.surface
+      for (let k = 0; k < source.length; k++) data[k] = THREE.DataUtils.toHalfFloat(source[k])
+      this.surfaceTexture.needsUpdate = true
+    }
     const levels = this.uniforms.uLevels.value, flow = this.uniforms.uPoolFlow.value, fronts = this.uniforms.uFront.value
     this.layout.pools.forEach((pool, i) => {
       levels[i] = state.levels[i]
@@ -452,4 +477,59 @@ export class GardenPresentation3D {
     this.sun.shadow.dispose()
     this.scene.clear()
   }
+}
+
+/**
+ * The glazed beds as one height field per vessel, taken from the physics
+ * plan: a vertex at every texel corner, carried two texels under the walls.
+ */
+export function buildBedSurface(plan: SurfacePlan): THREE.BufferGeometry {
+  const { grid, texelVessel, bed } = plan
+  const { width, height, x0, y0, cell } = grid
+  const positions: number[] = [], index: number[] = []
+  const vessels = new Set<number>()
+  for (const v of texelVessel) if (v >= 0) vessels.add(v)
+  for (const vessel of vessels) {
+    const include = new Uint8Array(width * height)
+    for (let t = 0; t < include.length; t++) if (texelVessel[t] === vessel) include[t] = 2
+    for (let ring = 0; ring < 2; ring++) {
+      const current = include.slice()
+      for (let j = 1; j < height - 1; j++) for (let i = 1; i < width - 1; i++) {
+        const t = j * width + i
+        if (current[t] || texelVessel[t] >= 0) continue
+        if (current[t - 1] || current[t + 1] || current[t - width] || current[t + width]) include[t] = 1
+      }
+    }
+    const corner = new Map<number, number>()
+    const vertex = (ci: number, cj: number) => {
+      const key = cj * (width + 1) + ci
+      let id = corner.get(key)
+      if (id !== undefined) return id
+      // The corner height averages the texels around it, preferring the
+      // vessel's own over those under its walls.
+      let sum = 0, n = 0, own = 0, ownN = 0
+      for (const [di, dj] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
+        const i = ci + di, j = cj + dj
+        if (i < 0 || j < 0 || i >= width || j >= height) continue
+        const t = j * width + i
+        if (!include[t] || bed[t] <= NO_WATER + 1) continue
+        sum += bed[t]; n++
+        if (include[t] === 2) { own += bed[t]; ownN++ }
+      }
+      id = positions.length / 3
+      positions.push(x0 + ci * cell, y0 + cj * cell, ownN ? own / ownN : n ? sum / n : 0)
+      corner.set(key, id)
+      return id
+    }
+    for (let j = 0; j < height; j++) for (let i = 0; i < width; i++) {
+      if (!include[j * width + i]) continue
+      const a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1)
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(index)
+  geometry.computeVertexNormals()
+  return geometry
 }

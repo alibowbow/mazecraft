@@ -29,10 +29,12 @@ export const NORIA_SPILL = 0.13
 /** Rim speed a noria's motor settles at under a full load (m/s). */
 export const NORIA_RIM_SPEED = 1.1
 
-interface Domain {
+export interface Domain {
   vessel: number
   grid: ShallowWaterGrid
   top: number
+  /** Pool of each cell (-1 for walls and outside). */
+  poolOf: Int32Array
   /** Cells of each pool of this vessel, keyed by pool index. */
   pools: Map<number, Int32Array>
 }
@@ -258,7 +260,7 @@ export class PhysicsWorld {
       for (let c = 0; c < grid.count; c++) if (poolOf[c] === pool.index) cells.push(c)
       pools.set(pool.index, Int32Array.from(cells))
     }
-    const domain: Domain = { vessel, grid, top: compiled.top, pools }
+    const domain: Domain = { vessel, grid, top: compiled.top, pools, poolOf }
     for (const edge of layout.edges) {
       if (edge.kind !== 'drain' || layout.pools[edge.a].vessel !== vessel) continue
       const cells: number[] = []

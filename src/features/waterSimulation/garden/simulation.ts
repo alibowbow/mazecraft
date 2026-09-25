@@ -4,6 +4,7 @@ import type { Edge, GardenLayout } from './layout'
 import { gardenField, FAR, type GardenField } from './flowField'
 import { PhysicsWorld, SOURCE_FLOW, TICK, NORIA_POTS } from './physics/world'
 import { DRY } from './physics/shallowWater'
+import { NO_WATER, surfacePlan, type SurfaceGrid } from './physics/surface'
 
 /** Rectangular weir coefficient, Q = C·w·h^1.5 (SI), for reference and rendering. */
 export const WEIR_COEFFICIENT = 1.705
@@ -43,7 +44,19 @@ export interface GardenState {
   /** Per noria: wheel rotation (rad) and, per pot, how full it is (0–1). */
   readonly noriaAngles: Float32Array
   readonly noriaPots: Float32Array
+  /**
+   * The simulated water as a plan texture over the garden field: RGBA per
+   * texel = surface height (absolute), depth, and velocity (x, y). Texels
+   * without water carry their neighbours' surface so it runs on under walls.
+   */
+  readonly surface: Float32Array
+  /** The beds the water runs over, absolute height per texel (static). */
+  readonly bed: Float32Array
+  /** Texel grid: world x0, y0, texel size, width, height. */
+  readonly surfaceGrid: SurfaceGrid
 }
+
+export { NO_WATER, type SurfaceGrid } from './physics/surface'
 
 export interface GardenSnapshot extends BasinSnapshot {
   readonly garden: GardenState
@@ -76,6 +89,12 @@ export class GardenSimulation {
   private readonly velocity: Float32Array
   private readonly connections: Uint8Array
   private readonly totalArea: number
+  private readonly surface: Float32Array
+  private readonly bed: Float32Array
+  private readonly surfaceGrid: SurfaceGrid
+  /** Per texel: owning domain (or -1) and its cell. */
+  private readonly texelDomain: Int16Array
+  private readonly texelCell: Int32Array
   private accumulator = 0
 
   constructor(readonly layout: GardenLayout, private readonly grid: Pick<FluidLayout, 'rows' | 'cols' | 'activeCellCount'>, cell?: number) {
@@ -102,6 +121,41 @@ export class GardenSimulation {
     this.velocity = new Float32Array(cells * 2)
     this.connections = new Uint8Array(cells).fill(255)
     this.totalArea = layout.pools.reduce((sum, pool) => sum + pool.area, 0)
+    // Plan texture aligned with the physics grids (they share the field's origin).
+    const plan = surfacePlan(layout, this.world)
+    this.surfaceGrid = plan.grid
+    this.surface = new Float32Array(plan.grid.width * plan.grid.height * 4)
+    this.bed = plan.bed
+    this.texelDomain = plan.texelDomain
+    this.texelCell = plan.texelCell
+    this.fillSurface()
+  }
+
+  /** Write the simulated water into the plan texture. */
+  private fillSurface(): void {
+    const { surface, texelDomain, texelCell, world } = this
+    const { width, height } = this.surfaceGrid
+    const count = width * height
+    for (let t = 0; t < count; t++) {
+      const d = texelDomain[t], o = t * 4
+      if (d < 0) { surface[o] = NO_WATER; surface[o + 1] = 0; surface[o + 2] = 0; surface[o + 3] = 0; continue }
+      const grid = world.domains[d].grid, c = texelCell[t], h = grid.h[c]
+      if (h > DRY * 10) {
+        const [u, v] = grid.velocity(c)
+        surface[o] = grid.bed[c] + h; surface[o + 1] = h; surface[o + 2] = u; surface[o + 3] = v
+      } else { surface[o] = NO_WATER; surface[o + 1] = 0; surface[o + 2] = 0; surface[o + 3] = 0 }
+    }
+    // Carry the surface a few texels on under walls and over dry edges, so
+    // the water mesh meets its banks without dipping.
+    for (let pass = 0; pass < 3; pass++) {
+      for (let j = 1; j < height - 1; j++) for (let i = 1; i < width - 1; i++) {
+        const t = j * width + i, o = t * 4
+        if (surface[o + 1] > 0 || surface[o] > NO_WATER + 1) continue
+        let best = NO_WATER
+        for (const n of [t - 1, t + 1, t - width, t + width]) if (surface[n * 4] > best) best = surface[n * 4]
+        if (best > NO_WATER + 1) surface[o] = best - 1e-4
+      }
+    }
   }
 
   /** Mean surface of a pool's wet water (absolute z). */
@@ -172,6 +226,7 @@ export class GardenSimulation {
     })
     world.siphons.forEach((pipe, i) => { this.siphonPrimed[i] = pipe.primed ? 1 : 0 })
     stored = world.stored()
+    this.fillSurface()
     let maxVelocity = 0
     for (const domain of world.domains) for (const u of domain.grid.u) maxVelocity = Math.max(maxVelocity, Math.abs(u))
     const saturated = world.poolLevel(layout.source.pool) >= layout.pools[layout.source.pool].brim - 0.05
@@ -183,6 +238,7 @@ export class GardenSimulation {
         tipperAngles: this.tipperAngles, tipperLoads: this.tipperLoads, tipperPours: this.tipperPours,
         channelFlow: this.channelFlow, liftLoads: this.liftLoads, siphonPrimed: this.siphonPrimed,
         wheelAngles: this.wheelAngles, noriaAngles: this.noriaAngles, noriaPots: this.noriaPots,
+        surface: this.surface, bed: this.bed, surfaceGrid: this.surfaceGrid,
       },
       diagnostics: {
         time: world.time, count: 0, injected: world.injected, discharged: world.drained, escaped: world.escaped, stored,

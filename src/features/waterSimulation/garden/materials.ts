@@ -43,8 +43,41 @@ export function createGardenUniforms(field: GardenField) {
     uRipplesB: { value: createRippleNormals(63, 256, 18, 3.4) },
     uCaustics: { value: 1 },
     uSunDirection: { value: new THREE.Vector3(-0.5, 0.35, 0.8).normalize() },
+    /** The simulated water: RGBA = surface, depth, velocity x, y (see physics/surface.ts). */
+    uSurface: { value: placeholderSurface() },
+    uSurfaceBounds: { value: new THREE.Vector3(0, 0, 1) },
   }
 }
+
+function placeholderSurface(): THREE.DataTexture {
+  const texture = new THREE.DataTexture(new Uint16Array([THREE.DataUtils.toHalfFloat(-100), 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.HalfFloatType)
+  texture.needsUpdate = true
+  return texture
+}
+
+/**
+ * Bilinear sample of the simulated water that ignores texels without water
+ * (no surface to blend with): x = surface height, y = depth, zw = velocity.
+ * Returns x = -100 where there is no water nearby.
+ */
+export const SURFACE_GLSL = /* glsl */ `
+  uniform sampler2D uSurface;
+  uniform vec3 uSurfaceBounds;
+  vec4 gardenSurface(vec2 p) {
+    vec2 st = (p - uSurfaceBounds.xy) / uSurfaceBounds.z - 0.5;
+    vec2 base = floor(st), f = st - base;
+    ivec2 size = textureSize(uSurface, 0), i0 = ivec2(base);
+    vec4 acc = vec4(0.0);
+    float total = 0.0;
+    for (int k = 0; k < 4; k++) {
+      ivec2 o = ivec2(k & 1, k >> 1);
+      vec4 s = texelFetch(uSurface, clamp(i0 + o, ivec2(0), size - 1), 0);
+      float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+      if (s.x > -50.0) { acc += s * w; total += w; }
+    }
+    return total > 1e-4 ? acc / total : vec4(-100.0, 0.0, 0.0, 0.0);
+  }
+`
 
 export type GardenUniforms = ReturnType<typeof createGardenUniforms>
 
@@ -60,6 +93,7 @@ export const GARDEN_COMMON_GLSL = /* glsl */ `
   uniform float uCaustics;
   vec2 gardenUv(vec2 p) { return (p - uGardenBounds.xy) / uGardenBounds.zw; }
   vec4 gardenField(vec2 p) { return texture2D(uGardenField, gardenUv(p)); }
+  ${SURFACE_GLSL}
   int gardenPool(vec2 p) {
     ivec2 size = textureSize(uGardenField, 0);
     ivec2 c = clamp(ivec2(gardenUv(p) * vec2(size)), ivec2(0), size - ivec2(1));
@@ -207,7 +241,8 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           int gardenPoolIndex = gardenPool(vGardenWorld.xy);
           float gardenDistance = gardenBed.b < 0.499 ? gardenBed.b : 0.5;
           float gardenAo = mix(0.52, 1.0, smoothstep(0.0, 0.22, gardenDistance));
-          float gardenDepth = gardenPoolIndex >= 0 ? uLevels[gardenPoolIndex] - vGardenWorld.z : 0.0;
+          vec4 gardenWater = gardenSurface(vGardenWorld.xy);
+          float gardenDepth = gardenWater.y > 0.002 ? gardenWater.x - vGardenWorld.z : 0.0;
           float gardenLight = 0.82 + gardenCausticAt(vGardenWorld.xy, gardenDepth) * 4.2 * uCaustics;
         ` : `
           vec2 gardenProbe = vGardenWorld.xy + gardenNormal.xy * 0.07;
@@ -216,10 +251,11 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           int gardenPoolIndex = gardenPool(gardenProbe);
           float gardenAo = mix(0.5, 1.0, smoothstep(0.0, 0.42, vGardenWorld.z));
           float gardenLight = 1.0;
-          if (gardenWet && gardenPoolIndex >= 0) {
-            float h = vGardenWorld.z - uFloors[gardenPoolIndex];
+          vec4 gardenWater = gardenSurface(gardenProbe);
+          if (gardenWet && gardenPoolIndex >= 0 && gardenWater.y > 0.002) {
+            float h = vGardenWorld.z - (gardenWater.x - gardenWater.y);
             gardenAo *= mix(0.58, 1.0, smoothstep(-0.02, 0.32, h));
-            float depth = uLevels[gardenPoolIndex] - vGardenWorld.z;
+            float depth = gardenWater.x - vGardenWorld.z;
             if (depth > 0.0) gardenLight += gardenCausticAt(vGardenWorld.xy + vec2(vGardenWorld.z * 0.8), depth) * 1.6 * uCaustics;
           }
         `}
@@ -252,7 +288,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           #endif`)
     }
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v8`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v9`
   return material
 }
 
@@ -284,7 +320,6 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
     inject(shader, uniforms)
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute float aPool;
         #define GARDEN_MAX_POOLS ${MAX_POOLS}
         uniform sampler2D uGardenField;
         uniform vec4 uGardenBounds;
@@ -300,8 +335,8 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform int uImpactCount;
         uniform vec4 uDrain;
         varying float vPoolDepth;
-        varying float vPoolFlow;
-        varying float vPoolFront;
+        varying vec2 vPoolFlow;
+        ${SURFACE_GLSL}
         // Real surface undulation: deep-water wave trains (ω² = g·k), one
         // aligned with the local current, plus rings spreading from falls.
         float waterWave(vec2 p, vec2 dir, float k, float amplitude, float phase, inout vec2 grad) {
@@ -311,13 +346,25 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
           return amplitude * sin(arg);
         }`)
       .replace('#include <beginnormal_vertex>', `
-        int gardenPoolIndex = int(aPool + 0.5);
-        float poolLevel = uLevels[gardenPoolIndex];
+        // The sheet shares the bed's vertices (texel corners): it stands the
+        // simulated depth above the bed, averaged over the wet texels around
+        // the corner, so water and bed can never cross.
+        vec2 cornerSt = (position.xy - uSurfaceBounds.xy) / uSurfaceBounds.z;
+        ivec2 corner = ivec2(floor(cornerSt + 0.5));
+        ivec2 surfaceSize = textureSize(uSurface, 0);
+        vec4 simulated = vec4(0.0);
+        float wetTexels = 0.0;
+        for (int k = 0; k < 4; k++) {
+          vec4 s = texelFetch(uSurface, clamp(corner + ivec2(k & 1, k >> 1) - 1, ivec2(0), surfaceSize - 1), 0);
+          if (s.y > 0.0) { simulated += s; wetTexels += 1.0; }
+        }
+        simulated /= max(wetTexels, 1.0);
+        float poolLevel = position.z + simulated.y;
         vec4 waveField = texture2D(uGardenField, (position.xy - uGardenBounds.xy) / uGardenBounds.zw);
-        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uFlowMean;
+        vec2 waveFlow = simulated.zw;
         float waveSpeed = length(waveFlow);
         float wallDistance = waveField.b < 0.499 ? waveField.b : 0.5;
-        float settled = step(9000.0, uFront[gardenPoolIndex]);
+        float settled = smoothstep(0.01, 0.05, simulated.y);
         float amplitude = (0.004 + 0.016 * smoothstep(0.02, 0.5, waveSpeed)) * (0.4 + 0.6 * uGardenStyle)
           * smoothstep(0.02, 0.16, wallDistance) * mix(0.25, 1.0, settled);
         vec2 along = waveSpeed > 1e-4 ? waveFlow / waveSpeed : vec2(0.6, 0.8);
@@ -350,10 +397,10 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
           vec3 objectTangent = vec3(1.0, 0.0, 0.0);
         #endif`)
       .replace('#include <begin_vertex>', `
-        vec3 transformed = vec3(position.xy, poolLevel + waveHeight);
-        vPoolDepth = poolLevel - uFloors[gardenPoolIndex];
-        vPoolFlow = uFlowMean;
-        vPoolFront = uFront[gardenPoolIndex];`)
+        // Waves ride on the water, never deeper than it is.
+        vec3 transformed = vec3(position.xy, poolLevel + 0.0015 + waveHeight * smoothstep(0.0, 0.03, simulated.y));
+        vPoolDepth = simulated.y;
+        vPoolFlow = waveFlow;`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D uRipplesA;
@@ -361,19 +408,18 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform vec4 uImpacts[${MAX_IMPACTS}];
         uniform float uImpactZ[${MAX_IMPACTS}];
         uniform int uImpactCount;
-        uniform sampler2D uGardenEntry;
         uniform vec4 uDrain;
         varying float vPoolDepth;
-        varying float vPoolFlow;
-        varying float vPoolFront;`)
+        varying vec2 vPoolFlow;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        // Wetting front: a dry bed is uncovered in the order water reaches it.
-        float entryDistance = texture2D(uGardenEntry, gardenUv(vGardenWorld.xy)).r;
-        if (vPoolFront < 0.0 || entryDistance > vPoolFront + 0.02) discard;
-        float leadingEdge = vPoolFront > 9000.0 ? 0.0 : 1.0 - smoothstep(0.0, 0.3, vPoolFront - entryDistance);
+        // Only where the simulation has water: its edge is the real front.
+        if (vPoolDepth < 0.0025) discard;
+        vec4 simulatedWater = gardenSurface(vGardenWorld.xy);
         vec4 waterField = gardenField(vGardenWorld.xy);
-        vec2 waterFlow = (waterField.rg * 2.0 - 1.0) * vPoolFlow;
+        vec2 waterFlow = simulatedWater.zw;
         float waterSpeed = length(waterFlow);
+        // A thin sheet running fast over the bed is broken and aerated.
+        float leadingEdge = (1.0 - smoothstep(0.003, 0.018, simulatedWater.y)) * smoothstep(0.08, 0.5, waterSpeed);
         // Two-phase flow map: texture coordinates advect along the route and
         // reset alternately, so the pattern travels without stretching.
         float flowCycle = 1.4;
@@ -436,7 +482,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         .replace('totalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );',
           'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3((0.2 + 0.25 * clamp(vPoolDepth, 0.0, 0.6)) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
   }
-  material.customProgramCacheKey = () => 'garden-water-v2'
+  material.customProgramCacheKey = () => 'garden-water-v4'
   return material
 }
 
