@@ -75,6 +75,8 @@ interface Props {
   onEdit(project: MazeProject): void
   onSave(project: MazeProject): Promise<void>
   onShare(project: MazeProject): void
+  /** Open the water craft studio. */
+  onCraft?(): void
 }
 
 /**
@@ -85,7 +87,7 @@ function speedFactor(mode: 'surface-3d' | 'free-surface', sculpture: string | un
   return mode === 'surface-3d' && sculpture?.startsWith('garden:') ? 1 : 2
 }
 
-export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onHome, onEdit, onSave, onShare }: Props) {
+export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onHome, onEdit, onSave, onShare, onCraft }: Props) {
   const [customProject, setCustomProject] = useState<MazeProject | null>(initialProject ?? null)
   const [preferences, setPreferences] = useState(readPreferences)
   const [draft, setDraft] = useState<WaterMazeOptions>(() => readPreferences().generator)
@@ -259,7 +261,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     style={{ '--ws-scene': STUDIO_BACKGROUND, '--ws-material': selectedTheme.color } as CSSProperties}>
     <header className="ws-header">
       <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome ?? onLibrary}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER ATELIER</span></div></button>
-      <nav className="ws-navigation" aria-label="주 메뉴"><button onClick={onHome ?? onLibrary}>홈</button><span aria-current="page">물의 정원</span><button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
+      <nav className="ws-navigation" aria-label="주 메뉴"><button onClick={onHome ?? onLibrary}>홈</button><span aria-current="page">물의 정원</span>{onCraft && <button onClick={onCraft}>크래프트</button>}<button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
       <div className="ws-header-actions"><button className="ws-create-shortcut" aria-label="미로 만들기" onClick={openCreation}><Wand2 size={17} /><span>미로 만들기</span></button><button className="ws-icon" aria-label="몰입 화면" aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? <X size={19} /> : <Expand size={19} />}</button><button className="ws-save" aria-label={saveState === 'saved' ? '미로 저장 완료' : '미로 저장'} disabled={saveState === 'saving'} onClick={() => void save()}>{saveState === 'saved' ? <Check size={16} /> : <Save size={16} />}<span>{saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장 완료' : saveState === 'error' ? '다시 저장' : '미로 저장'}</span></button></div>
     </header>
     <div className="ws-workspace">

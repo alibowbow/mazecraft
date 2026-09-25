@@ -4,10 +4,12 @@ import { StudioShadows } from '../freeSurface/studioLighting'
 import type { BasinSnapshot } from '../freeSurface/basinSimulation'
 import type { WaterAppearance } from '../freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, normalizeWaterLook, WATER_LIGHTS, type WaterLook, type WaterTheme } from '../freeSurface/lookdev'
-import type { GardenId } from './designs'
+import type { GardenKey } from './index'
 import { gardenLayout, type GardenLayout } from './layout'
 import { FAR, gardenField } from './flowField'
 import { buildGardenSolids } from './geometry'
+import { sceneColorFor } from './post'
+import { sandDistanceTexture, type SandIsland } from './ground'
 import { createCeramicMaterial, createGardenUniforms, createGroundMaterial, createWallDepthMaterial, createWaterMaterial, type GardenUniforms } from './materials'
 import { GardenFalls } from './falls'
 import { GardenPlants } from './plants'
@@ -15,6 +17,7 @@ import { GardenDevices } from './devices'
 import { GardenChannels } from './channels'
 import { createGardenSky } from './environment'
 import { PROFILE_SAMPLES, transportEdges, type GardenSnapshot } from './simulation'
+import { NO_WATER, surfacePlan, type SurfacePlan } from './physics/surface'
 import { resample } from './geometry'
 
 interface Glaze { glaze: string; bed: string; roughness: number; clearcoat: number; clearcoatRoughness: number; sheen: number }
@@ -56,6 +59,7 @@ export class GardenPresentation3D {
   private readonly waterMaterial: THREE.MeshPhysicalMaterial
   private readonly groundMaterial: THREE.MeshStandardMaterial
   private readonly groundBackground: THREE.IUniform<THREE.Color>
+  private readonly sand: THREE.IUniform<THREE.Texture>
   private readonly soilMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4632, roughness: 1 })
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly materials: THREE.Material[] = []
@@ -88,8 +92,11 @@ export class GardenPresentation3D {
   /** When each pool / channel first took water, to follow the newest arrival. */
   private readonly started: Float64Array
   private disposed = false
+  private postOutput = false
+  private readonly surfaceData: Uint16Array
+  private readonly surfaceTexture: THREE.DataTexture
 
-  constructor(id: GardenId, private readonly renderer: THREE.WebGLRenderer) {
+  constructor(id: GardenKey, private readonly renderer: THREE.WebGLRenderer) {
     const layout = this.layout = gardenLayout(id)
     this.scene.name = `water-garden-${id}`
     this.uniforms = createGardenUniforms(gardenField(layout))
@@ -120,6 +127,7 @@ export class GardenPresentation3D {
     const ground = createGroundMaterial(this.uniforms, new THREE.Vector2(this.center.x, this.center.y), radius + 1.5)
     this.groundMaterial = ground.material
     this.groundBackground = ground.background
+    this.sand = ground.sand
     const wallDepth = createWallDepthMaterial(this.uniforms)
     this.materials.push(this.wallMaterial, this.bedMaterial, this.trimMaterial, this.waterMaterial, this.groundMaterial, this.soilMaterial, wallDepth)
 
@@ -134,7 +142,22 @@ export class GardenPresentation3D {
     const walls = mesh(solids.walls, this.wallMaterial, 'garden-glazed-walls')
     walls.customDepthMaterial = wallDepth
     walls.frustumCulled = false
-    mesh(solids.beds, this.bedMaterial, 'garden-glazed-beds', false)
+    // Beds follow the physics exactly: the rill slopes and step crests the
+    // water actually runs over.
+    solids.beds.dispose()
+    const surface = surfacePlan(layout)
+    mesh(buildBedSurface(surface), this.bedMaterial, 'garden-glazed-beds', false)
+    const { grid: sg } = surface
+    this.surfaceData = new Uint16Array(sg.width * sg.height * 4)
+    this.surfaceTexture = new THREE.DataTexture(this.surfaceData, sg.width, sg.height, THREE.RGBAFormat, THREE.HalfFloatType)
+    this.surfaceTexture.minFilter = this.surfaceTexture.magFilter = THREE.NearestFilter
+    this.surfaceTexture.name = 'garden-simulated-surface'
+    const none = THREE.DataUtils.toHalfFloat(NO_WATER)
+    for (let t = 0; t < sg.width * sg.height; t++) this.surfaceData[t * 4] = none
+    this.surfaceTexture.needsUpdate = true
+    this.uniforms.uSurface.value.dispose()
+    this.uniforms.uSurface.value = this.surfaceTexture
+    this.uniforms.uSurfaceBounds.value.set(sg.x0, sg.y0, sg.cell)
     mesh(solids.trim, this.trimMaterial, 'garden-spouts-and-tower')
     if (solids.planterSoil) mesh(solids.planterSoil, this.soilMaterial, 'garden-planter-soil', false)
     const brass = new THREE.MeshPhysicalMaterial({ color: 0xc08a4e, metalness: 1, roughness: 0.28, clearcoat: 0.3, envMapIntensity: 1.2 })
@@ -142,7 +165,9 @@ export class GardenPresentation3D {
     this.materials.push(brass, opening)
     mesh(solids.brass, brass, 'garden-brass-pipe-and-drains')
     mesh(solids.openings, opening, 'garden-pipe-bore-and-drain-holes', false)
-    const water = mesh(solids.water, this.waterMaterial, 'garden-pool-water', false)
+    // The water sheet shares the bed's height field and rides above it.
+    solids.water.dispose()
+    const water = mesh(buildBedSurface(surface), this.waterMaterial, 'garden-pool-water', false)
     water.receiveShadow = false
     water.frustumCulled = false
     water.renderOrder = 2
@@ -170,6 +195,7 @@ export class GardenPresentation3D {
       const b = field.data[(cy * field.width + cx) * 4 + 2] / 255
       return b >= 0.5 ? (b - 0.5) * 4 : 0
     }
+    const islands: SandIsland[] = []
     layout.design.plants.forEach((plant, i) => {
       // Keep planting clear of every basin, spout and receiving trough.
       let [x, y] = plant.at
@@ -178,7 +204,11 @@ export class GardenPresentation3D {
         x += dx / length * 0.15; y += dy / length * 0.15
       }
       this.plants.add(plant.kind, x, y, plant.z ?? 0, plant.scale, 17 + i * 31)
+      if (!plant.z) islands.push([x, y, (plant.kind === 'stones' ? 0.62 : 0.32) * plant.scale])
     })
+    // The rake goes around the sculpture and every island on the sand.
+    this.sand.value.dispose()
+    this.sand.value = sandDistanceTexture(plan, islands)
     for (const vessel of layout.vessels) vessel.spec.planters.forEach((at, i) => this.plants.add('rosemary', at[0], at[1], vessel.top - 0.04, 0.55, 5 + i * 13))
     this.plants.build()
     this.content.add(this.plants.group)
@@ -202,15 +232,18 @@ export class GardenPresentation3D {
    * the first frame and the first falls never stall the page. Hidden parts
    * (falls, spray, bucket water) are shown just long enough to be compiled.
    */
-  async warmUp(): Promise<void> {
+  async warmUp(target: THREE.WebGLRenderTarget | null = null): Promise<void> {
     const renderer = this.renderer
     const hidden: THREE.Object3D[] = []
     this.scene.traverse(object => { if (!object.visible) { hidden.push(object); object.visible = true } })
-    const shadows = renderer.shadowMap.enabled, toneMapping = renderer.toneMapping
+    const shadows = renderer.shadowMap.enabled, toneMapping = renderer.toneMapping, previous = renderer.getRenderTarget()
     renderer.shadowMap.enabled = true
     renderer.toneMapping = this.toneMapping
+    // Programs depend on where they draw (HDR target or screen).
+    renderer.setRenderTarget(target)
     let pending: Promise<unknown>
     try { pending = renderer.compileAsync(this.scene, this.camera) } finally {
+      renderer.setRenderTarget(previous)
       renderer.shadowMap.enabled = shadows
       renderer.toneMapping = toneMapping
       for (const object of hidden) object.visible = false
@@ -244,8 +277,7 @@ export class GardenPresentation3D {
     this.uniforms.uSunDirection.value.copy(direction)
     this.exposure = mood.exposure
     this.groundMaterial.color.set(mood.ground)
-    this.groundBackground.value.set(mood.background).convertLinearToSRGB()
-    this.scene.background = new THREE.Color(mood.background)
+    this.applyBackdrop()
     this.scene.environmentIntensity = mood.sky
     const key = this.look.light
     if (key !== this.lightKey) {
@@ -258,6 +290,29 @@ export class GardenPresentation3D {
     this.shadows.update(this.sun)
     this.sun.shadow.needsUpdate = true
     this.renderer.shadowMap.needsUpdate = true
+  }
+
+  /**
+   * The scene is either tone mapped straight to the screen or rendered in
+   * HDR for the post pipeline (post.ts). Either way the backdrop, and the
+   * ground where it fades into it, must come out as the mood's page colour.
+   */
+  setPostOutput(enabled: boolean): void {
+    if (this.postOutput === enabled) return
+    this.postOutput = enabled
+    this.applyBackdrop()
+  }
+
+  private applyBackdrop(): void {
+    const display = new THREE.Color(LIGHTING[this.look.light].background)
+    if (this.postOutput) {
+      const scene = sceneColorFor(display, this.exposure)
+      this.groundBackground.value.copy(scene)
+      this.scene.background = scene
+    } else {
+      this.groundBackground.value.copy(display).convertLinearToSRGB()
+      this.scene.background = display
+    }
   }
 
   private fitShadow(): void {
@@ -300,6 +355,11 @@ export class GardenPresentation3D {
   setBasinSnapshot(snapshot: BasinSnapshot): void {
     if (this.disposed || !('garden' in snapshot)) return
     const state = this.state = (snapshot as GardenSnapshot).garden
+    if (state.surface.length === this.surfaceData.length) {
+      const data = this.surfaceData, source = state.surface
+      for (let k = 0; k < source.length; k++) data[k] = THREE.DataUtils.toHalfFloat(source[k])
+      this.surfaceTexture.needsUpdate = true
+    }
     const levels = this.uniforms.uLevels.value, flow = this.uniforms.uPoolFlow.value, fronts = this.uniforms.uFront.value
     this.layout.pools.forEach((pool, i) => {
       levels[i] = state.levels[i]
@@ -447,9 +507,65 @@ export class GardenPresentation3D {
     this.falls.dispose(); this.plants.dispose(); this.devices.dispose(); this.channels.dispose()
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials) material.dispose()
-    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB]) uniform.value.dispose()
+    for (const uniform of [this.uniforms.uGardenField, this.uniforms.uGardenEntry, this.uniforms.uRipplesA, this.uniforms.uRipplesB, this.sand]) uniform.value.dispose()
+    this.surfaceTexture.dispose()
     this.environment?.dispose()
     this.sun.shadow.dispose()
     this.scene.clear()
   }
+}
+
+/**
+ * The glazed beds as one height field per vessel, taken from the physics
+ * plan: a vertex at every texel corner, carried two texels under the walls.
+ */
+export function buildBedSurface(plan: SurfacePlan): THREE.BufferGeometry {
+  const { grid, texelVessel, bed } = plan
+  const { width, height, x0, y0, cell } = grid
+  const positions: number[] = [], index: number[] = []
+  const vessels = new Set<number>()
+  for (const v of texelVessel) if (v >= 0) vessels.add(v)
+  for (const vessel of vessels) {
+    const include = new Uint8Array(width * height)
+    for (let t = 0; t < include.length; t++) if (texelVessel[t] === vessel) include[t] = 2
+    for (let ring = 0; ring < 2; ring++) {
+      const current = include.slice()
+      for (let j = 1; j < height - 1; j++) for (let i = 1; i < width - 1; i++) {
+        const t = j * width + i
+        if (current[t] || texelVessel[t] >= 0) continue
+        if (current[t - 1] || current[t + 1] || current[t - width] || current[t + width]) include[t] = 1
+      }
+    }
+    const corner = new Map<number, number>()
+    const vertex = (ci: number, cj: number) => {
+      const key = cj * (width + 1) + ci
+      let id = corner.get(key)
+      if (id !== undefined) return id
+      // The corner height averages the texels around it, preferring the
+      // vessel's own over those under its walls.
+      let sum = 0, n = 0, own = 0, ownN = 0
+      for (const [di, dj] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
+        const i = ci + di, j = cj + dj
+        if (i < 0 || j < 0 || i >= width || j >= height) continue
+        const t = j * width + i
+        if (!include[t] || bed[t] <= NO_WATER + 1) continue
+        sum += bed[t]; n++
+        if (include[t] === 2) { own += bed[t]; ownN++ }
+      }
+      id = positions.length / 3
+      positions.push(x0 + ci * cell, y0 + cj * cell, ownN ? own / ownN : n ? sum / n : 0)
+      corner.set(key, id)
+      return id
+    }
+    for (let j = 0; j < height; j++) for (let i = 0; i < width; i++) {
+      if (!include[j * width + i]) continue
+      const a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1)
+      index.push(a, b, c, a, c, d)
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setIndex(index)
+  geometry.computeVertexNormals()
+  return geometry
 }

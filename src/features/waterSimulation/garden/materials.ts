@@ -43,8 +43,41 @@ export function createGardenUniforms(field: GardenField) {
     uRipplesB: { value: createRippleNormals(63, 256, 18, 3.4) },
     uCaustics: { value: 1 },
     uSunDirection: { value: new THREE.Vector3(-0.5, 0.35, 0.8).normalize() },
+    /** The simulated water: RGBA = surface, depth, velocity x, y (see physics/surface.ts). */
+    uSurface: { value: placeholderSurface() },
+    uSurfaceBounds: { value: new THREE.Vector3(0, 0, 1) },
   }
 }
+
+function placeholderSurface(): THREE.DataTexture {
+  const texture = new THREE.DataTexture(new Uint16Array([THREE.DataUtils.toHalfFloat(-100), 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.HalfFloatType)
+  texture.needsUpdate = true
+  return texture
+}
+
+/**
+ * Bilinear sample of the simulated water that ignores texels without water
+ * (no surface to blend with): x = surface height, y = depth, zw = velocity.
+ * Returns x = -100 where there is no water nearby.
+ */
+export const SURFACE_GLSL = /* glsl */ `
+  uniform sampler2D uSurface;
+  uniform vec3 uSurfaceBounds;
+  vec4 gardenSurface(vec2 p) {
+    vec2 st = (p - uSurfaceBounds.xy) / uSurfaceBounds.z - 0.5;
+    vec2 base = floor(st), f = st - base;
+    ivec2 size = textureSize(uSurface, 0), i0 = ivec2(base);
+    vec4 acc = vec4(0.0);
+    float total = 0.0;
+    for (int k = 0; k < 4; k++) {
+      ivec2 o = ivec2(k & 1, k >> 1);
+      vec4 s = texelFetch(uSurface, clamp(i0 + o, ivec2(0), size - 1), 0);
+      float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+      if (s.x > -50.0) { acc += s * w; total += w; }
+    }
+    return total > 1e-4 ? acc / total : vec4(-100.0, 0.0, 0.0, 0.0);
+  }
+`
 
 export type GardenUniforms = ReturnType<typeof createGardenUniforms>
 
@@ -60,6 +93,7 @@ export const GARDEN_COMMON_GLSL = /* glsl */ `
   uniform float uCaustics;
   vec2 gardenUv(vec2 p) { return (p - uGardenBounds.xy) / uGardenBounds.zw; }
   vec4 gardenField(vec2 p) { return texture2D(uGardenField, gardenUv(p)); }
+  ${SURFACE_GLSL}
   int gardenPool(vec2 p) {
     ivec2 size = textureSize(uGardenField, 0);
     ivec2 c = clamp(ivec2(gardenUv(p) * vec2(size)), ivec2(0), size - ivec2(1));
@@ -207,7 +241,8 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           int gardenPoolIndex = gardenPool(vGardenWorld.xy);
           float gardenDistance = gardenBed.b < 0.499 ? gardenBed.b : 0.5;
           float gardenAo = mix(0.52, 1.0, smoothstep(0.0, 0.22, gardenDistance));
-          float gardenDepth = gardenPoolIndex >= 0 ? uLevels[gardenPoolIndex] - vGardenWorld.z : 0.0;
+          vec4 gardenWater = gardenSurface(vGardenWorld.xy);
+          float gardenDepth = gardenWater.y > 0.002 ? gardenWater.x - vGardenWorld.z : 0.0;
           float gardenLight = 0.82 + gardenCausticAt(vGardenWorld.xy, gardenDepth) * 4.2 * uCaustics;
         ` : `
           vec2 gardenProbe = vGardenWorld.xy + gardenNormal.xy * 0.07;
@@ -216,10 +251,11 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           int gardenPoolIndex = gardenPool(gardenProbe);
           float gardenAo = mix(0.5, 1.0, smoothstep(0.0, 0.42, vGardenWorld.z));
           float gardenLight = 1.0;
-          if (gardenWet && gardenPoolIndex >= 0) {
-            float h = vGardenWorld.z - uFloors[gardenPoolIndex];
+          vec4 gardenWater = gardenSurface(gardenProbe);
+          if (gardenWet && gardenPoolIndex >= 0 && gardenWater.y > 0.002) {
+            float h = vGardenWorld.z - (gardenWater.x - gardenWater.y);
             gardenAo *= mix(0.58, 1.0, smoothstep(-0.02, 0.32, h));
-            float depth = uLevels[gardenPoolIndex] - vGardenWorld.z;
+            float depth = gardenWater.x - vGardenWorld.z;
             if (depth > 0.0) gardenLight += gardenCausticAt(vGardenWorld.xy + vec2(vGardenWorld.z * 0.8), depth) * 1.6 * uCaustics;
           }
         `}
@@ -252,7 +288,7 @@ export function createCeramicMaterial(uniforms: GardenUniforms, kind: 'wall' | '
           #endif`)
     }
   }
-  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v8`
+  material.customProgramCacheKey = () => `garden-ceramic-${kind}-v9`
   return material
 }
 
@@ -284,7 +320,6 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
     inject(shader, uniforms)
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute float aPool;
         #define GARDEN_MAX_POOLS ${MAX_POOLS}
         uniform sampler2D uGardenField;
         uniform vec4 uGardenBounds;
@@ -300,8 +335,8 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform int uImpactCount;
         uniform vec4 uDrain;
         varying float vPoolDepth;
-        varying float vPoolFlow;
-        varying float vPoolFront;
+        varying vec2 vPoolFlow;
+        ${SURFACE_GLSL}
         // Real surface undulation: deep-water wave trains (ω² = g·k), one
         // aligned with the local current, plus rings spreading from falls.
         float waterWave(vec2 p, vec2 dir, float k, float amplitude, float phase, inout vec2 grad) {
@@ -311,13 +346,25 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
           return amplitude * sin(arg);
         }`)
       .replace('#include <beginnormal_vertex>', `
-        int gardenPoolIndex = int(aPool + 0.5);
-        float poolLevel = uLevels[gardenPoolIndex];
+        // The sheet shares the bed's vertices (texel corners): it stands the
+        // simulated depth above the bed, averaged over the wet texels around
+        // the corner, so water and bed can never cross.
+        vec2 cornerSt = (position.xy - uSurfaceBounds.xy) / uSurfaceBounds.z;
+        ivec2 corner = ivec2(floor(cornerSt + 0.5));
+        ivec2 surfaceSize = textureSize(uSurface, 0);
+        vec4 simulated = vec4(0.0);
+        float wetTexels = 0.0;
+        for (int k = 0; k < 4; k++) {
+          vec4 s = texelFetch(uSurface, clamp(corner + ivec2(k & 1, k >> 1) - 1, ivec2(0), surfaceSize - 1), 0);
+          if (s.y > 0.0) { simulated += s; wetTexels += 1.0; }
+        }
+        simulated /= max(wetTexels, 1.0);
+        float poolLevel = position.z + simulated.y;
         vec4 waveField = texture2D(uGardenField, (position.xy - uGardenBounds.xy) / uGardenBounds.zw);
-        vec2 waveFlow = (waveField.rg * 2.0 - 1.0) * uFlowMean;
+        vec2 waveFlow = simulated.zw;
         float waveSpeed = length(waveFlow);
         float wallDistance = waveField.b < 0.499 ? waveField.b : 0.5;
-        float settled = step(9000.0, uFront[gardenPoolIndex]);
+        float settled = smoothstep(0.01, 0.05, simulated.y);
         float amplitude = (0.004 + 0.016 * smoothstep(0.02, 0.5, waveSpeed)) * (0.4 + 0.6 * uGardenStyle)
           * smoothstep(0.02, 0.16, wallDistance) * mix(0.25, 1.0, settled);
         vec2 along = waveSpeed > 1e-4 ? waveFlow / waveSpeed : vec2(0.6, 0.8);
@@ -350,10 +397,10 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
           vec3 objectTangent = vec3(1.0, 0.0, 0.0);
         #endif`)
       .replace('#include <begin_vertex>', `
-        vec3 transformed = vec3(position.xy, poolLevel + waveHeight);
-        vPoolDepth = poolLevel - uFloors[gardenPoolIndex];
-        vPoolFlow = uFlowMean;
-        vPoolFront = uFront[gardenPoolIndex];`)
+        // Waves ride on the water, never deeper than it is.
+        vec3 transformed = vec3(position.xy, poolLevel + 0.0015 + waveHeight * smoothstep(0.0, 0.03, simulated.y));
+        vPoolDepth = simulated.y;
+        vPoolFlow = waveFlow;`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform sampler2D uRipplesA;
@@ -361,19 +408,18 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         uniform vec4 uImpacts[${MAX_IMPACTS}];
         uniform float uImpactZ[${MAX_IMPACTS}];
         uniform int uImpactCount;
-        uniform sampler2D uGardenEntry;
         uniform vec4 uDrain;
         varying float vPoolDepth;
-        varying float vPoolFlow;
-        varying float vPoolFront;`)
+        varying vec2 vPoolFlow;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        // Wetting front: a dry bed is uncovered in the order water reaches it.
-        float entryDistance = texture2D(uGardenEntry, gardenUv(vGardenWorld.xy)).r;
-        if (vPoolFront < 0.0 || entryDistance > vPoolFront + 0.02) discard;
-        float leadingEdge = vPoolFront > 9000.0 ? 0.0 : 1.0 - smoothstep(0.0, 0.3, vPoolFront - entryDistance);
+        // Only where the simulation has water: its edge is the real front.
+        if (vPoolDepth < 0.0025) discard;
+        vec4 simulatedWater = gardenSurface(vGardenWorld.xy);
         vec4 waterField = gardenField(vGardenWorld.xy);
-        vec2 waterFlow = (waterField.rg * 2.0 - 1.0) * vPoolFlow;
+        vec2 waterFlow = simulatedWater.zw;
         float waterSpeed = length(waterFlow);
+        // A thin sheet running fast over the bed is broken and aerated.
+        float leadingEdge = (1.0 - smoothstep(0.003, 0.018, simulatedWater.y)) * smoothstep(0.08, 0.5, waterSpeed);
         // Two-phase flow map: texture coordinates advect along the route and
         // reset alternately, so the pattern travels without stretching.
         float flowCycle = 1.4;
@@ -436,7 +482,7 @@ export function createWaterMaterial(uniforms: GardenUniforms): THREE.MeshPhysica
         .replace('totalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );',
           'transmitted.rgb *= pow(max(attenuationColor, vec3(1e-3)), vec3((0.2 + 0.25 * clamp(vPoolDepth, 0.0, 0.6)) * thickness * 1.15 / attenuationDistance));\n\ttotalDiffuse = mix( totalDiffuse, transmitted.rgb, material.transmission );'))
   }
-  material.customProgramCacheKey = () => 'garden-water-v2'
+  material.customProgramCacheKey = () => 'garden-water-v4'
   return material
 }
 
@@ -447,6 +493,9 @@ export interface CurtainUniforms {
   uDrop: THREE.IUniform<number>
   uWidth: THREE.IUniform<number>
   uFlare: THREE.IUniform<number>
+  /** Sheet thickness at the lip (m) and speed leaving it (m/s). */
+  uThickness: THREE.IUniform<number>
+  uSpeed: THREE.IUniform<number>
   uStrength: THREE.IUniform<number>
   uAeration: THREE.IUniform<number>
   uTravel: THREE.IUniform<number>
@@ -461,7 +510,7 @@ export interface CurtainUniforms {
 export function createCurtainMaterial(uniforms: GardenUniforms): { material: THREE.MeshPhysicalMaterial; uniforms: CurtainUniforms } {
   const own: CurtainUniforms = {
     uStart: { value: new THREE.Vector3() }, uDirection: { value: new THREE.Vector2(0, -1) },
-    uReach: { value: 0.3 }, uDrop: { value: 0.5 }, uWidth: { value: 0.5 }, uFlare: { value: 0.15 },
+    uReach: { value: 0.3 }, uDrop: { value: 0.5 }, uWidth: { value: 0.5 }, uFlare: { value: 0.15 }, uThickness: { value: 0.02 }, uSpeed: { value: 1 },
     uStrength: { value: 0 }, uAeration: { value: 0.6 }, uTravel: { value: 0 }, uCurtainTint: { value: new THREE.Color(0.75, 0.93, 0.95) },
   }
   const material = new THREE.MeshPhysicalMaterial({
@@ -480,6 +529,8 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         uniform float uWidth;
         uniform float uFlare;
         uniform float uTravel;
+        uniform float uThickness;
+        uniform float uSpeed;
         varying vec2 vCurtainUv;
         varying float vCurtainFacing;`)
       .replace('#include <beginnormal_vertex>', `
@@ -497,7 +548,10 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
           vec3 objectTangent = curtainAcross;
         #endif`)
       .replace('#include <begin_vertex>', `
-        float thickness = min(0.07, uWidth * 0.14) * (0.6 + 0.8 * cv);
+        // Continuity (q = h·v): the sheet leaves the lip as deep as the water
+        // over it and thins as gravity accelerates it.
+        float fallSpeed = sqrt(uSpeed * uSpeed + 2.0 * 9.81 * uDrop * cv * cv);
+        float thickness = uThickness * uSpeed / fallSpeed;
         // Travelling wobble: the sheet necks and swells as it falls.
         float wobble = sin(cv * 9.0 - uTravel * 5.0 + uv.x * 3.0) * 0.012 * cv;
         vec3 transformed = uStart + curtainDir * (uReach * cv) - vec3(0.0, 0.0, uDrop * cv * cv)
@@ -530,11 +584,15 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
         float lip = smoothstep(0.0, 0.04, along);
         // Aeration grows with the fall; the tail breaks into ragged fingers.
         // Clear, refracting water; only the bottom of a real drop aerates.
-        float aerated = uAeration * smoothstep(0.45, 1.0, along);
+        float aerated = uAeration * smoothstep(0.3, 1.0, along) * mix(0.75, 1.2, clamp(uDrop / 0.8, 0.0, 1.0));
+        // The free edges of a sheet fray into strands first.
+        float side = 1.0 - smoothstep(0.0, 0.22, min(vCurtainUv.x, 1.0 - vCurtainUv.x));
+        aerated += side * 0.45 * smoothstep(0.08, 0.5, along);
         float white = smoothstep(0.35, 0.85, aerated * (0.55 + streaks * 0.9));
         float tail = 1.0 - smoothstep(0.85, 1.0, along) * (1.0 - smoothstep(0.35, 0.75, streaks));
         diffuseColor.rgb = mix(uCurtainTint, vec3(1.0), white);
-        diffuseColor.a = uStrength * edge * lip * tail * mix(0.9, 0.97, white);`)
+        // Clear water is mostly seen by what it bends and reflects.
+        diffuseColor.a = uStrength * edge * lip * tail * mix(0.72, 0.97, white);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(0.03, 0.55, white);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -544,7 +602,7 @@ export function createCurtainMaterial(uniforms: GardenUniforms): { material: THR
       .replace('#include <transmission_fragment>', THREE.ShaderChunk.transmission_fragment
         .replace('material.transmission = transmission;', 'material.transmission = transmission * (1.0 - white);'))
   }
-  material.customProgramCacheKey = () => 'garden-curtain-v3'
+  material.customProgramCacheKey = () => 'garden-curtain-v5'
   return { material, uniforms: own }
 }
 
@@ -579,23 +637,57 @@ export function createDropletMaterial(uniforms: GardenUniforms): THREE.MeshStand
  * contact occlusion halo from the plan field. It fades exactly into the
  * background colour so the studio has no visible horizon edge.
  */
-export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color> } {
+/**
+ * Raked sand: rings that follow the sculpture's outline and each island of
+ * stones or planting, then straight rows beyond, as in a raked gravel garden.
+ * `sand` holds the exact distance to the nearest outline (ground.ts).
+ */
+export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vector2, radius: number): { material: THREE.MeshStandardMaterial; background: THREE.IUniform<THREE.Color>; sand: THREE.IUniform<THREE.Texture> } {
   const background = { value: new THREE.Color(0xf0e7da) }
+  const sand: THREE.IUniform<THREE.Texture> = { value: placeholderSand() }
   const material = new THREE.MeshStandardMaterial({ color: 0xd9c8b0, roughness: 0.93, metalness: 0, envMapIntensity: 0.6 })
   material.onBeforeCompile = shader => {
     inject(shader, uniforms)
-    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius } })
+    Object.assign(shader.uniforms, { uBackgroundColor: background, uGroundCenter: { value: center }, uGroundRadius: { value: radius }, uSandDistance: sand })
     shader.vertexShader = FORCE_WORLDPOS + shader.vertexShader
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <dithering_pars_fragment>', `#include <dithering_pars_fragment>
         uniform vec3 uBackgroundColor;
         uniform vec2 uGroundCenter;
-        uniform float uGroundRadius;`)
+        uniform float uGroundRadius;
+        uniform sampler2D uSandDistance;
+        float sandDistance(vec2 p) { return texture2D(uSandDistance, gardenUv(p)).r; }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec2 sandP = vGardenWorld.xy;
         float sand = gardenNoise(sandP * 0.6) * 0.5 + gardenNoise(sandP * 2.3) * 0.3 + gardenNoise(sandP * 9.0) * 0.2;
         float grain = gardenHash(floor(sandP * 220.0));
-        diffuseColor.rgb *= 0.93 + sand * 0.1 + (grain - 0.5) * 0.05;`)
+        diffuseColor.rgb *= 0.93 + sand * 0.1 + (grain - 0.5) * 0.05;
+        // Tine spacing, reach of the rings and ridge height (m).
+        const float RAKE = 0.085;
+        const float RINGS = 1.3;
+        const float RIDGE = 0.01;
+        float sandD = sandDistance(sandP);
+        vec2 phaseGrad;
+        float rakePhase;
+        if (sandD < RINGS) {
+          rakePhase = (sandD - 0.16) / RAKE;
+          phaseGrad = vec2(sandDistance(sandP + vec2(0.03, 0.0)) - sandDistance(sandP - vec2(0.03, 0.0)),
+            sandDistance(sandP + vec2(0.0, 0.03)) - sandDistance(sandP - vec2(0.0, 0.03))) / (0.06 * RAKE);
+        } else {
+          // Straight rows with the slight drift of a hand-drawn rake.
+          rakePhase = (sandP.y + 0.035 * sin(sandP.x * 0.9)) / RAKE;
+          phaseGrad = vec2(0.0315 * cos(sandP.x * 0.9), 1.0) / RAKE;
+        }
+        // Smoothed against walls and stones, faded with distance and where
+        // the rows are finer than a pixel (no moire when zoomed out).
+        float rakeAmount = (1.0 - smoothstep(0.25, 0.55, fwidth(rakePhase)))
+          * smoothstep(0.1, 0.22, sandD)
+          * (1.0 - smoothstep(uGroundRadius * 0.9, uGroundRadius * 1.7, length(sandP - uGroundCenter)));
+        float rakeRidge = 0.5 - 0.5 * cos(6.2831853 * rakePhase);
+        vec2 rakeSlope = RIDGE * 3.14159265 * sin(6.2831853 * rakePhase) * phaseGrad * rakeAmount;
+        diffuseColor.rgb *= 1.0 + (rakeRidge - 0.5) * 0.09 * rakeAmount;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        normal = normalize((viewMatrix * vec4(normalize(vec3(-rakeSlope, 1.0)), 0.0)).xyz);`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         vec4 groundField = gardenField(vGardenWorld.xy);
         float outside = groundField.b >= 0.5 ? (groundField.b - 0.5) * 2.0 * 2.0 : 0.0;
@@ -606,8 +698,14 @@ export function createGroundMaterial(uniforms: GardenUniforms, center: THREE.Vec
         float groundFade = smoothstep(uGroundRadius * 1.1, uGroundRadius * 2.4, length(vGardenWorld.xy - uGroundCenter));
         gl_FragColor.rgb = mix(gl_FragColor.rgb, uBackgroundColor, groundFade);`)
   }
-  material.customProgramCacheKey = () => 'garden-sand-ground-v1'
-  return { material, background }
+  material.customProgramCacheKey = () => 'garden-sand-ground-v2'
+  return { material, background, sand }
+}
+
+function placeholderSand(): THREE.DataTexture {
+  const texture = new THREE.DataTexture(new Uint16Array([THREE.DataUtils.toHalfFloat(60)]), 1, 1, THREE.RedFormat, THREE.HalfFloatType)
+  texture.needsUpdate = true
+  return texture
 }
 
 export interface ChannelUniforms {
@@ -646,6 +744,7 @@ export function createChannelWaterMaterial(uniforms: GardenUniforms, flow: THREE
         vFlow = channelFlow(aAlong);
         vAhead = channelFlow(min(1.0, aAlong + 0.35 / aLength));
         // Critical depth over the channel width, crowned in the middle.
+        // Capped just under the channel walls (falls.ts OPEN_DEPTH).
         float depth = clamp(pow(max(vFlow, 0.0) / (1.705 * aWidth), 0.6667), 0.0, 0.13);
         vec3 transformed = position;
         transformed.z += 0.004 + depth * (1.0 + 0.12 * (1.0 - aSide * aSide));

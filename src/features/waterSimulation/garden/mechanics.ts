@@ -8,17 +8,19 @@ import type { Vec2 } from './polygon'
  */
 
 /** Mouth-side arm of the tipper tube, pivot to mouth (m). */
-export const TIPPER_ARM = 0.38
+export const TIPPER_ARM = 0.55
 /** Counterweight arm, pivot to the closed end (m). */
-export const TIPPER_TAIL = 0.26
-export const TIPPER_RADIUS = 0.1
+export const TIPPER_TAIL = 0.32
+export const TIPPER_RADIUS = 0.15
 /** Resting tilt (mouth up) and full tip (mouth down), radians. */
-export const TIPPER_REST = 0.3
-export const TIPPER_TIPPED = -0.58
+export const TIPPER_REST = 0.35
+export const TIPPER_TIPPED = -0.5
+/** Bamboo node closing the water chamber, just on the mouth side of the pivot. */
+export const TIPPER_NODE = -0.04
 /** Mouth sits this far beyond the spout lip, where the jet comes down. */
 export const TIPPER_MOUTH_REACH = 0.16
 /** Mouth rim below the spout crest at rest. */
-export const TIPPER_MOUTH_DROP = 0.1
+export const TIPPER_MOUTH_DROP = 0.12
 /** Swing down, pour and swing back (s). */
 export const TIPPER_TIP_TIME = 0.38
 export const TIPPER_POUR_TIME = 0.55

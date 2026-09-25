@@ -1,0 +1,72 @@
+/* Craft studio: the water atelier's layout, with a course builder panel. */
+.water-studio.craft-studio { grid-template-rows: 70px minmax(0, 1fr); }
+.craft-studio .ws-workspace { grid-template-columns: minmax(0, 1fr) 360px; }
+.craft-studio .ws-canvas { inset: 12px 0 35px; }
+.craft-stale { position: absolute; top: 96px; left: 32px; z-index: 2; padding: 8px 12px; border-radius: 8px; background: #fff7e8e6; color: #7a5a2c; font-size: 11px; border: 1px solid #efdcb9; }
+
+.craft-content { display: flex; flex-direction: column; gap: 0; padding-top: 8px; }
+.craft-verdict { display: flex; align-items: flex-start; gap: 9px; padding: 12px 14px; border-radius: 10px; font-size: 12px; line-height: 1.5; margin-bottom: 18px; }
+.craft-verdict > svg { flex-shrink: 0; margin-top: 2px; }
+.craft-verdict.is-working { background: #e6f2ef; color: #1d5d63; }
+.craft-verdict.has-issue { background: #fbefe6; color: #8a4b24; }
+
+.craft-templates { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
+.water-studio .craft-templates button { padding: 8px 12px; border-radius: 16px; border: 1px solid #d9e0d8; font-size: 11px; color: #3f5b5d; background: #fffef9; }
+.water-studio .craft-templates button:hover { border-color: var(--ws-accent); color: var(--ws-accent); background: #f3f8f5; }
+.craft-source { margin-bottom: 18px !important; }
+.craft-source input { width: 100%; accent-color: var(--ws-accent); }
+
+.craft-course { list-style: none; padding: 0; margin: 0 0 26px; display: flex; flex-direction: column; gap: 6px; position: relative; }
+.craft-course::before { content: ''; position: absolute; left: 14px; top: 14px; bottom: 14px; width: 1px; background: repeating-linear-gradient(to bottom, #a8c9c6 0 4px, transparent 4px 8px); }
+.craft-anchor { position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 7px; font-size: 11px; color: #5c7474; }
+.craft-anchor > svg { position: relative; z-index: 1; padding: 5px; width: 26px; height: 26px; border-radius: 50%; background: #e3efec; color: var(--ws-accent); }
+.craft-step { position: relative; border: 1px solid #e0e3db; border-radius: 12px; background: #fffef9; box-shadow: 0 1px 2px #2c3d3508; }
+.craft-step.is-open { border-color: #b9d3cf; box-shadow: 0 6px 20px #28524d12; }
+.craft-step.has-issue { border-color: #e3b38f; background: #fffaf5; }
+.craft-step-head { display: flex; align-items: center; }
+.water-studio .craft-step-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 9px 6px 9px 7px; text-align: left; border-radius: 12px 0 0 12px; }
+.craft-step-title > svg { color: var(--ws-accent); flex-shrink: 0; }
+.craft-step-title strong { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.craft-step-title small { margin-left: auto; font-size: 10px; color: #8a9793; font-variant-numeric: tabular-nums; }
+.craft-step-index { position: relative; z-index: 1; display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: var(--ws-accent); color: #fff; font-size: 9px; font-weight: 700; flex-shrink: 0; }
+.craft-step-actions { display: flex; padding-right: 5px; }
+.water-studio .craft-step-actions button { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #6f817d; }
+.craft-step-options { padding: 2px 12px 14px 36px; display: flex; flex-direction: column; gap: 11px; }
+.craft-step-options > p { margin: 0; font-size: 11px; line-height: 1.55; color: #6b7c79; }
+.craft-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: #4e6564; }
+.craft-option .ws-segment button { padding: 7px 10px; font-size: 10px; display: inline-flex; align-items: center; }
+.craft-exits { flex-direction: column; align-items: stretch; }
+.craft-exits > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.water-studio .craft-exits button { display: flex; align-items: center; gap: 6px; padding: 8px 9px; border-radius: 8px; border: 1px solid #e0e4dc; font-size: 11px; background: #fbfaf5; }
+.water-studio .craft-exits button[aria-pressed=true] { border-color: var(--ws-accent); color: var(--ws-accent); background: #eef6f3; font-weight: 650; }
+.craft-toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.craft-toggles input { accent-color: var(--ws-accent); }
+.water-studio .craft-toggles button { display: flex; align-items: center; gap: 5px; padding: 7px 10px; border-radius: 8px; font-size: 11px; color: #4e6564; }
+.craft-issue { margin: 0; padding: 0 12px 12px 36px; font-size: 11px; line-height: 1.5; color: #9a5528; }
+
+.craft-palette-group { margin-bottom: 14px; }
+.craft-palette-label { display: block; font-size: 10px; letter-spacing: .08em; color: #8b9893; margin-bottom: 7px; }
+.craft-palette { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.water-studio .craft-palette button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 11px 9px 9px; min-height: 84px; border-radius: 11px; border: 1px solid #e1e4dc; background: #fffef9; text-align: left; }
+.water-studio .craft-palette button:hover { border-color: #a9cbc6; background: #f4f9f6; }
+.craft-palette button > svg { color: var(--ws-accent); }
+.craft-palette strong { font-size: 11px; font-weight: 600; line-height: 1.3; }
+.craft-palette small { font-size: 9px; color: #8a9793; }
+.water-studio .craft-palette button.is-short { border-style: dashed; background: #faf8f2; }
+.craft-palette button.is-short > svg, .craft-palette button.is-short strong { opacity: .55; }
+.craft-palette button.is-short small { color: #b0703f; }
+.water-studio .craft-clear { align-self: flex-start; display: flex; align-items: center; gap: 6px; padding: 9px 12px; margin-top: 6px; border-radius: 8px; font-size: 11px; color: #8a5a3a; }
+
+@media (max-width: 1150px) { .craft-studio .ws-workspace { grid-template-columns: minmax(0, 1fr) 330px; } }
+@media (max-width: 800px) {
+  .water-studio.craft-studio { grid-template-rows: 58px minmax(0, 1fr); }
+  .craft-studio .ws-workspace { grid-template-columns: minmax(0, 1fr); }
+  .craft-studio .ws-canvas { inset: 80px 0 90px; }
+  .craft-studio .ws-tuning { top: 58px; bottom: 0; width: min(380px, 100%); }
+}
+@media (max-width: 540px) {
+  .craft-studio .ws-canvas { inset: 65px 0 95px; }
+  .craft-studio .ws-tuning { top: auto; bottom: 0; width: 100%; height: 72dvh; max-height: 72dvh; }
+  .craft-palette { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .craft-stale { top: 70px; left: 18px; right: 18px; }
+}
