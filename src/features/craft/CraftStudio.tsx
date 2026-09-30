@@ -16,13 +16,12 @@ import {
 import { registerGardenDesign } from '../waterSimulation/garden/layout'
 import { adviseCraft, spareHeight, type CraftAdvice } from '../waterSimulation/garden/craftAdvisor'
 import { CraftPlanView } from './CraftPlanView'
-import { ChallengePanel, readChallengeSave, Stars, writeChallengeSave, type ChallengeSave } from './ChallengePanel'
+import { ChallengePanel, Stars } from './ChallengePanel'
+import { CRAFT_KEY, CHALLENGE_KEY, readCourse, readChallengeSave, writeChallengeSave, nextChallengeId, type ChallengeSave } from './craftStorage'
 import { CHALLENGES, challengeCourse, judgeGoals, starsFor, type Challenge } from '../waterSimulation/garden/challenges'
 import type { GardenSculpture } from '../waterSimulation/garden'
 import '../waterStudio/waterStudio.css'
 import './craft.css'
-
-const STORAGE_KEY = 'mazecraft.craft.v1'
 
 const ICONS: Record<CraftKind, LucideIcon> = {
   maze: Grid3x3, terraces: ChartBarDecreasing, pond: Flower2, noria: Cog, screw: Drill,
@@ -30,17 +29,6 @@ const ICONS: Record<CraftKind, LucideIcon> = {
 }
 const EXIT_ICONS: Record<CraftExit, LucideIcon> = { plain: Droplets, tipper: Link, wheel: Fan, chain: Link }
 const CATEGORY_NAMES = { basin: '수조', lift: '양수 장치', channel: '수로', special: '특수 장치' } as const
-
-function readCourse(): CraftCourse {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as CraftCourse | null
-    const kinds = new Set(CRAFT_MODULES.map(item => item.kind))
-    if (stored && stored.version === 1 && Array.isArray(stored.modules) && stored.modules.every(item => kinds.has(item.kind))) {
-      return { ...stored, source: Math.max(2.5, Math.min(6.5, Number(stored.source) || 4.3)), modules: stored.modules.slice(0, 12) }
-    }
-  } catch { /* Storage may be disabled. */ }
-  return craftTemplates()[1].course
-}
 
 /** A short, stable key for a course, so an unchanged course keeps its garden. */
 function courseKey(course: CraftCourse): `craft-${string}` {
@@ -53,14 +41,22 @@ function courseKey(course: CraftCourse): `craft-${string}` {
 interface Props {
   onHome(): void
   onWater(): void
+  initialMode?: 'free' | 'challenge'
+  exhibition?: boolean
 }
 
-export default function CraftStudio({ onHome, onWater }: Props) {
-  const [course, setCourse] = useState<CraftCourse>(readCourse)
+export default function CraftStudio({ onHome, onWater, initialMode = 'free', exhibition = false }: Props) {
+  const courseStorageKey = exhibition ? `${CRAFT_KEY}.tripothon` : CRAFT_KEY
+  const challengeStorageKey = exhibition ? `${CHALLENGE_KEY}.tripothon` : CHALLENGE_KEY
+  const [save, setSave] = useState<ChallengeSave>(() => readChallengeSave(challengeStorageKey))
+  const [stageId, setStageId] = useState(() => nextChallengeId(save))
+  const [course, setCourse] = useState<CraftCourse>(() => {
+    if (initialMode === 'free') return readCourse(courseStorageKey, exhibition ? craftTemplates()[0].course : undefined)
+    const first = CHALLENGES.find(item => item.id === stageId) ?? CHALLENGES[0]
+    return challengeCourse(first, save.drafts[first.id] ?? [])
+  })
   // Free crafting, or a challenge stage with its own palette and goals.
-  const [mode, setMode] = useState<'free' | 'challenge'>('free')
-  const [save, setSave] = useState<ChallengeSave>(readChallengeSave)
-  const [stageId, setStageId] = useState(() => CHALLENGES.find((stage, k) => k === 0 || (readChallengeSave().stars[CHALLENGES[k - 1].id] ?? 0) > 0 && !readChallengeSave().stars[stage.id])?.id ?? CHALLENGES[0].id)
+  const [mode, setMode] = useState<'free' | 'challenge'>(initialMode)
   const [cleared, setCleared] = useState<{ stage: string; stars: number; open: boolean } | null>(null)
   const stage = CHALLENGES.find(item => item.id === stageId) ?? CHALLENGES[0]
   const challenge = mode === 'challenge' ? stage : null
@@ -97,13 +93,13 @@ export default function CraftStudio({ onHome, onWater }: Props) {
   const templates = useMemo(() => craftTemplates(), [])
 
   useEffect(() => {
-    if (mode === 'free') { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(course)) } catch { /* Storage may be disabled. */ } }
+    if (mode === 'free') { try { localStorage.setItem(courseStorageKey, JSON.stringify(course)) } catch { /* Storage may be disabled. */ } }
     else {
       // An edited course is a new attempt at the stage.
       setCleared(null)
       setSave(previous => {
         const next = { ...previous, drafts: { ...previous.drafts, [stage.id]: course.modules.slice(stage.locked.length) } }
-        writeChallengeSave(next)
+        writeChallengeSave(next, challengeStorageKey)
         return next
       })
     }
@@ -162,7 +158,7 @@ export default function CraftStudio({ onHome, onWater }: Props) {
     if (next === mode) return
     setMode(next); setCleared(null); setOpen(null)
     if (next === 'challenge') enterStage(stage)
-    else setCourse(readCourse())
+    else setCourse(readCourse(courseStorageKey, exhibition ? craftTemplates()[0].course : undefined))
   }
   const lockedCount = challenge?.locked.length ?? 0
   const goals = challenge ? judgeGoals(challenge, course, status?.garden ?? null, status?.simulationTime ?? 0) : []
@@ -174,7 +170,7 @@ export default function CraftStudio({ onHome, onWater }: Props) {
     setCleared({ stage: challenge.id, stars, open: true })
     setSave(previous => {
       const next = { ...previous, stars: { ...previous.stars, [challenge.id]: Math.max(stars, previous.stars[challenge.id] ?? 0) } }
-      writeChallengeSave(next)
+      writeChallengeSave(next, challengeStorageKey)
       return next
     })
   }, [goals.join(), challenge, result.design, status?.garden])

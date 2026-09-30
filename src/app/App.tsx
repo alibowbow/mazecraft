@@ -49,10 +49,11 @@ import {
   type MachineSnapshot,
 } from './stateMachine'
 
-type Route = 'loading' | 'water' | 'craft' | 'home' | 'studio' | 'play'
+type Route = 'loading' | 'water' | 'craft' | 'home' | 'studio' | 'play' | 'tripothon'
 
 const WaterStudio = lazy(() => import('../features/waterStudio/WaterStudio'))
 const CraftStudio = lazy(() => import('../features/craft/CraftStudio'))
+const TripothonEntry = lazy(() => import('../features/tripothon/TripothonEntry'))
 
 const StudioScreen = lazy(() =>
   import('../features/creator/StudioScreen').then((module) => ({
@@ -191,6 +192,8 @@ const candidateWithWorker = (
 
 export function App() {
   const [route, setRoute] = useState<Route>('loading')
+  const [exhibition, setExhibition] = useState(() => location.hash === '#/tripothon')
+  const [exhibitionMode, setExhibitionMode] = useState<'free' | 'challenge'>('challenge')
   const [project, setProject] = useState<MazeProject | null>(null)
   const [waterProject, setWaterProject] = useState<MazeProject | null>(null)
   const [projects, setProjects] = useState<MazeProject[]>([])
@@ -231,6 +234,7 @@ export function App() {
 
   useEffect(() => {
     const openLibraryFromLocation = () => {
+      if (location.hash === '#/tripothon') { setExhibition(true); setRoute('tripothon'); return }
       if (location.hash !== '#/library') return
       setRoute('home')
       void refreshProjects().catch(() => toast('저장한 미로를 불러오지 못했습니다.', true))
@@ -242,6 +246,7 @@ export function App() {
   useEffect(() => {
     let active = true
     void (async () => {
+      if (location.hash === '#/tripothon') { setExhibition(true); setRoute('tripothon'); return }
       try {
         const payload = readShareHash()
         if (payload) {
@@ -505,6 +510,10 @@ export function App() {
 
   return (
     <>
+      {route === 'tripothon' && <Suspense fallback={<RouteFallback label="출품 데모를 여는 중…" />}>
+        <TripothonEntry onStart={mode => { setExhibitionMode(mode); setRoute('craft') }}
+          onHome={() => { setExhibition(false); setLibraryLocation(false); void refreshProjects(); setRoute('home') }} />
+      </Suspense>}
       {route === 'water' && (
         <Suspense fallback={<RouteFallback label="물 스튜디오를 여는 중…" />}>
           <WaterStudio
@@ -521,7 +530,9 @@ export function App() {
       )}
       {route === 'craft' && (
         <Suspense fallback={<RouteFallback label="크래프트 작업실을 여는 중…" />}>
-          <CraftStudio onHome={() => { void refreshProjects(); setRoute('home') }} onWater={() => setRoute('water')} />
+          <CraftStudio initialMode={exhibition ? exhibitionMode : 'free'} exhibition={exhibition}
+            onHome={() => { void refreshProjects(); setRoute(exhibition ? 'tripothon' : 'home') }}
+            onWater={() => { setExhibition(false); setLibraryLocation(false); setRoute('water') }} />
         </Suspense>
       )}
       {route === 'home' && (

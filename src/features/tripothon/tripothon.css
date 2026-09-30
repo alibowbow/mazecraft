@@ -1,0 +1,28 @@
+.tripothon-entry{min-height:100dvh;background:#f5f3ed;color:#253a36;padding:26px max(24px,calc((100vw - 1380px)/2));font-family:inherit}
+.tripothon-entry header,.tripothon-entry footer{display:flex;align-items:center;justify-content:space-between;gap:20px}
+.tripothon-entry header>span{font-size:11px;letter-spacing:.15em;color:#68766c}
+.tripothon-brand{display:flex;align-items:center;gap:10px;border:0;background:transparent;color:inherit;cursor:pointer;letter-spacing:.13em}
+.tripothon-layout{display:grid;grid-template-columns:.95fr 1.1fr;align-items:center;gap:56px;margin:48px 0 42px}
+.tripothon-eyebrow{font-size:11px;letter-spacing:.18em;color:#718272}
+.tripothon-copy h1{font-size:clamp(32px,3.5vw,58px);line-height:1.24;letter-spacing:-.06em;margin:20px 0 24px;font-weight:650;word-break:keep-all}
+.tripothon-lead{font-size:16px;line-height:1.85;color:#5d6e64;margin:0 0 30px;word-break:keep-all}
+.tripothon-actions{display:grid;gap:12px;max-width:440px}
+.tripothon-actions button{display:flex;align-items:center;gap:14px;text-align:left;padding:18px 20px;border:1px solid #d3dace;border-radius:16px;color:#314d40;background:#ebece3;cursor:pointer;font:inherit;font-size:15px}
+.tripothon-actions button>span{flex:1;line-height:1.4;font-weight:600}
+.tripothon-actions small{display:block;margin-top:4px;font-size:11px;opacity:.75;font-weight:400}
+.tripothon-actions .tripothon-primary{color:#fff;background:#3a5946;border-color:#3a5946}
+.tripothon-actions button:hover{filter:brightness(1.05)}
+.tripothon-reset{display:flex;align-items:center;gap:7px;margin:18px 0 0;padding:6px 0;border:0;background:none;color:#627466;cursor:pointer;font:inherit;font-size:12px}
+.tripothon-note{max-width:450px;color:#7e897e;font-size:11px;line-height:1.6;margin:10px 0 0;word-break:keep-all}
+.tripothon-visual{position:relative;min-height:490px;border-radius:28px;overflow:hidden;background:#e4e0d4;align-self:stretch}
+.tripothon-visual img{width:100%;height:100%;position:absolute;object-fit:cover;object-position:center}
+.tripothon-visual-caption{position:absolute;bottom:22px;left:22px;right:22px;display:flex;align-items:center;gap:12px;border:1px solid #ffffff99;border-radius:16px;background:#f5f3edee;padding:16px 18px;color:#4b6654;font-size:12px;letter-spacing:.12em;backdrop-filter:blur(14px)}
+.tripothon-visual-caption small{display:block;font-size:10px;letter-spacing:0;color:#7c887e;margin-top:5px}
+.tripothon-guide{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;list-style:none;padding:24px 0 28px;margin:0;border-top:1px solid #d7dccf;border-bottom:1px solid #d7dccf}
+.tripothon-guide li{display:flex;gap:14px;align-items:flex-start}
+.tripothon-guide b{font-size:12px;color:#92a080;padding-top:2px}
+.tripothon-guide span{font-size:12px;line-height:1.7;color:#788377;word-break:keep-all}
+.tripothon-guide strong{display:block;font-size:14px;color:#3b5240;font-weight:600;margin-bottom:5px}
+.tripothon-entry footer{font-size:10px;color:#84917f;padding-top:22px;letter-spacing:.04em}
+.tripothon-entry button:focus-visible{outline:3px solid #a4b985;outline-offset:4px}
+@media(max-width:800px){.tripothon-entry{padding:22px}.tripothon-layout{grid-template-columns:1fr;gap:28px;margin:34px 0 28px}.tripothon-copy h1{font-size:40px}.tripothon-lead{font-size:14px}.tripothon-visual{min-height:300px;grid-row:2}.tripothon-guide{grid-template-columns:1fr;gap:18px}.tripothon-entry footer{align-items:flex-start;flex-direction:column;gap:10px}.tripothon-entry header>span{font-size:9px}.tripothon-brand{font-size:12px}}
