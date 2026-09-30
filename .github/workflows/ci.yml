@@ -39,8 +39,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { suite: regression, shard: 1, total: 2 }
-          - { suite: regression, shard: 2, total: 2 }
+          # Water/garden scenarios are expensive on software WebGL. Three
+          # regression shards keep each runner within its 20 minute budget.
+          - { suite: regression, shard: 1, total: 3 }
+          - { suite: regression, shard: 2, total: 3 }
+          - { suite: regression, shard: 3, total: 3 }
           - { suite: studio, shard: 1, total: 3 }
           - { suite: studio, shard: 2, total: 3 }
           - { suite: studio, shard: 3, total: 3 }
