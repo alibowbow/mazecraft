@@ -20,7 +20,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await expect(palette.getByRole('button')).toHaveCount(7)
   await expect(palette.getByRole('button', { name: '물 색상 투명 물', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(stage).toHaveAttribute('data-water-color', 'clear')
-  const clear = await canvas.screenshot()
+  const clear = await canvas.screenshot({ path: testInfo.outputPath('clear-canvas.png') })
   const initialFieldBuilds = await canvas.getAttribute('data-surface-builds')
   expect(Number(initialFieldBuilds)).toBeGreaterThan(0)
 
@@ -115,9 +115,30 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await page.getByRole('button', { name: '2D 물 흐름', exact: true }).click()
   await expect(canvas).toHaveAttribute('data-view-mode', 'free-surface')
   await expect.poll(() => readWaterState(stage)).toEqual(state)
-  // The React mode effect schedules a new frame. Keep byte-for-byte equality,
-  // but compare after the restored 2D state has actually reached the canvas.
-  await expect.poll(async () => (await canvas.screenshot()).equals(clear)).toBe(true)
+  // PNG encoding is not the visual contract. Compare every decoded RGBA value
+  // (zero pixel tolerance), after the mode effect reaches the canvas. Retain
+  // both images so a failure reports actual pixels rather than Buffer equality.
+  await expect.poll(async () => {
+    const restored = await canvas.screenshot({ path: testInfo.outputPath('restored-canvas.png') })
+    return page.evaluate(async ({ before, after }) => {
+      const decode = async (encoded: string) => {
+        const image = new Image()
+        image.src = 'data:image/png;base64,' + encoded
+        await image.decode()
+        const output = document.createElement('canvas')
+        output.width = image.naturalWidth; output.height = image.naturalHeight
+        const context = output.getContext('2d')!
+        context.drawImage(image, 0, 0)
+        return { width: output.width, height: output.height,
+          pixels: context.getImageData(0, 0, output.width, output.height).data }
+      }
+      const [a, b] = await Promise.all([decode(before), decode(after)])
+      const sameSize = a.width === b.width && a.height === b.height
+      let differingChannels = 0
+      if (sameSize) for (let i = 0; i < a.pixels.length; i++) differingChannels += Number(a.pixels[i] !== b.pixels[i])
+      return { sameSize, differingChannels }
+    }, { before: clear.toString('base64'), after: restored.toString('base64') })
+  }).toEqual({ sameSize: true, differingChannels: 0 })
   expect(await readWorkerProbe(page)).toEqual(workers)
   await expect(canvas).toHaveAttribute('data-color-test-identity', 'same-water')
   await expect(stage).toHaveAttribute('data-phase', 'paused')

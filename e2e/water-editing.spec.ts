@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { MazeProject } from '../src/core/maze'
 import { openWaterGarden } from './helpers/navigation'
+import { e2eTimeout } from './helpers/runtimeBudget'
 
 async function ready(page: Page) {
   await expect(page.getByTestId('water-studio-canvas')).toHaveAttribute('data-renderer', 'ready', { timeout: 90_000 })
@@ -143,7 +144,8 @@ test('image-to-maze preserves photo aspect and interior gaps and opens in 2D, re
 })
 
 test('15.9 mobile garden has an overhead inlet and controls outside the canvas', async ({ page }, info) => {
-  test.setTimeout(120_000)
+  // Software WebGL can spend tens of seconds on each mobile garden frame.
+  test.setTimeout(e2eTimeout(120_000))
   await page.addInitScript(() => localStorage.setItem('mazecraft.water-studio.v1', JSON.stringify({ preset: 'garden', look: { theme: 'porcelain', light: 'daylight' }, color: '#16aeb7' })))
   await openWaterGarden(page)
   await ready(page)

@@ -39,8 +39,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Water/garden scenarios are expensive on software WebGL. Three
-          # regression shards keep each runner within its 20 minute budget.
+          # Shard the regression and garden passes separately so the five
+          # expensive garden presets do not all land on the last runner.
           - { suite: regression, shard: 1, total: 3 }
           - { suite: regression, shard: 2, total: 3 }
           - { suite: regression, shard: 3, total: 3 }
@@ -63,7 +63,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # Keep one software-WebGL worker per runner. Separate runners prevent
       # expensive material tests from competing for the same CPU renderer.
-      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }}
+      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }} --output=test-results/${{ matrix.suite }}
+      - name: Test garden presets
+        if: ${{ !cancelled() && matrix.suite == 'regression' }}
+        env:
+          PLAYWRIGHT_SUITE: garden
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }} --output=test-results/garden
       - uses: actions/upload-artifact@v4
         if: always()
         with:
