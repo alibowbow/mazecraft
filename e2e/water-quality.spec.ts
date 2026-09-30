@@ -96,7 +96,8 @@ test('low와 high가 같은 미로 입력을 사용하고 3D 초기 물량·유�
     expect(state.error).toBeLessThan(1e-5)
     const probe = await readWorkerProbe(page)
     expect(probe.fluidLayouts).toHaveLength(1)
-    expect(probe.fluidInitKeys).toEqual(['generation,layout,type'])
+    // The worker init preserves view-switch state through the resume payload.
+    expect(probe.fluidInitKeys).toEqual(['generation,layout,resume,type'])
     layouts.push(probe.fluidLayouts[0])
     await page.getByRole('button', { name: '물 시뮬레이션 닫기' }).click()
   }

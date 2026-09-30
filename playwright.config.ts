@@ -10,12 +10,13 @@ export default defineConfig({
   // blender-water-runtime.spec.ts, which performs the awaited DOM assertions.
   testIgnore: [
     '**/blender-water.spec.ts',
-    ...(ciSuite === 'regression' ? ['**/water-studio.spec.ts'] : []),
+    ...(ciSuite === 'regression' ? ['**/water-studio.spec.ts', '**/water-garden.spec.ts'] : []),
   ],
-  testMatch: ciSuite === 'studio' ? '**/water-studio.spec.ts' : undefined,
-  // Studio scenarios each own their page/context. Let sharding split that
+  testMatch: ciSuite === 'studio' ? '**/water-studio.spec.ts'
+    : ciSuite === 'garden' ? '**/water-garden.spec.ts' : undefined,
+  // Studio/garden scenarios each own their page/context. Let sharding split each
   // expensive file by test while still using one WebGL worker per runner.
-  fullyParallel: ciSuite === 'studio',
+  fullyParallel: ciSuite === 'studio' || ciSuite === 'garden',
   timeout: e2eTimeout(30_000),
   expect: { timeout: e2eTimeout(5_000) },
   // GitHub runners use software WebGL. Serializing there prevents the two 3D

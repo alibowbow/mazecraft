@@ -15,12 +15,18 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   const state = await readWaterState(stage)
   const workers = await readWorkerProbe(page)
   const canvas = stage.locator('canvas.water-simulation-canvas')
+  // Chromium can re-antialias the dialog's rounded CSS clip after a 3D layer
+  // transition. Capture the complete water canvas without that outer frame;
+  // the screenshot-only style leaves scene pixels and application CSS intact.
+  const captureCanvas = (path?: string) => canvas.screenshot({
+    path, style: '.water-simulation-shell { border-radius: 0 !important; }',
+  })
   await canvas.evaluate(element => { element.dataset.colorTestIdentity = 'same-water' })
   const palette = page.getByRole('group', { name: '물 색상', exact: true })
   await expect(palette.getByRole('button')).toHaveCount(7)
   await expect(palette.getByRole('button', { name: '물 색상 투명 물', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(stage).toHaveAttribute('data-water-color', 'clear')
-  const clear = await canvas.screenshot()
+  const clear = await captureCanvas(testInfo.outputPath('clear-canvas.png'))
   const initialFieldBuilds = await canvas.getAttribute('data-surface-builds')
   expect(Number(initialFieldBuilds)).toBeGreaterThan(0)
 
@@ -28,7 +34,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await page.screenshot({ path: testInfo.outputPath('water-colorless-desktop.png') })
   await palette.getByRole('button', { name: '물 색상 청록', exact: true }).click()
   await expect(canvas).toHaveAttribute('data-water-optics', 'aqua')
-  const aqua = await canvas.screenshot()
+  const aqua = await captureCanvas()
   await page.screenshot({ path: testInfo.outputPath('water-original-aqua-desktop.png') })
   // Compare actual water pixels, selected by their cyan tint in the aqua
   // rendering. Clear water may refract the warm backing, but must not be dyed.
@@ -63,7 +69,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await palette.getByRole('button', { name: '물 색상 파랑', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color-preset', 'blue')
   await expect(stage).toHaveAttribute('data-water-color', '#168bff')
-  const blue = await canvas.screenshot()
+  const blue = await captureCanvas()
   expect(blue.equals(clear)).toBe(false)
   await page.screenshot({ path: testInfo.outputPath('water-blue-desktop.png') })
   expect(await readWaterState(stage)).toEqual(state)
@@ -78,7 +84,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   })
   await expect(stage).toHaveAttribute('data-water-color-preset', 'custom')
   await expect(stage).toHaveAttribute('data-water-color', '#ed2f79')
-  const custom = await canvas.screenshot()
+  const custom = await captureCanvas()
   expect(custom.equals(clear)).toBe(false)
   expect(custom.equals(blue)).toBe(false)
   expect(await readWaterState(stage)).toEqual(state)
@@ -90,7 +96,7 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   expect(basinState.stored).toBeGreaterThan(0)
   expect(basinState.particles).toBe(0)
   await expect(stage).toHaveAttribute('data-water-color', '#ed2f79')
-  const threeDColored = await canvas.screenshot()
+  const threeDColored = await captureCanvas()
   await page.screenshot({ path: testInfo.outputPath('water-custom-3d-desktop.png') })
   const threeDFieldBuilds = await canvas.getAttribute('data-surface-builds')
   const threeDOrientation = await canvas.getAttribute('data-camera-orientation')
@@ -106,18 +112,39 @@ test('물 색상이 정지된 실제 수면에 적용되고 투명 물로 되돌
   await palette.getByRole('button', { name: '물 색상 투명 물', exact: true }).click()
   await expect(stage).toHaveAttribute('data-water-color', 'clear')
   await expect(canvas).toHaveAttribute('data-surface-builds', threeDFieldBuilds!)
-  expect((await canvas.screenshot()).equals(threeDColored)).toBe(false)
-  const clearThreeD = await canvas.screenshot()
+  expect((await captureCanvas()).equals(threeDColored)).toBe(false)
+  const clearThreeD = await captureCanvas()
   await page.screenshot({ path: testInfo.outputPath('water-colorless-ripple-3d-desktop.png') })
   await page.waitForTimeout(320)
-  expect((await canvas.screenshot()).equals(clearThreeD)).toBe(true)
+  expect((await captureCanvas()).equals(clearThreeD)).toBe(true)
   expect(await readWaterState(stage)).toEqual(basinState)
   await page.getByRole('button', { name: '2D 물 흐름', exact: true }).click()
   await expect(canvas).toHaveAttribute('data-view-mode', 'free-surface')
   await expect.poll(() => readWaterState(stage)).toEqual(state)
-  // The React mode effect schedules a new frame. Keep byte-for-byte equality,
-  // but compare after the restored 2D state has actually reached the canvas.
-  await expect.poll(async () => (await canvas.screenshot()).equals(clear)).toBe(true)
+  // PNG encoding is not the visual contract. Compare every decoded RGBA value
+  // (zero pixel tolerance), after the mode effect reaches the canvas. Retain
+  // both images so a failure reports actual pixels rather than Buffer equality.
+  await expect.poll(async () => {
+    const restored = await captureCanvas(testInfo.outputPath('restored-canvas.png'))
+    return page.evaluate(async ({ before, after }) => {
+      const decode = async (encoded: string) => {
+        const image = new Image()
+        image.src = 'data:image/png;base64,' + encoded
+        await image.decode()
+        const output = document.createElement('canvas')
+        output.width = image.naturalWidth; output.height = image.naturalHeight
+        const context = output.getContext('2d')!
+        context.drawImage(image, 0, 0)
+        return { width: output.width, height: output.height,
+          pixels: context.getImageData(0, 0, output.width, output.height).data }
+      }
+      const [a, b] = await Promise.all([decode(before), decode(after)])
+      const sameSize = a.width === b.width && a.height === b.height
+      let differingChannels = 0
+      if (sameSize) for (let i = 0; i < a.pixels.length; i++) differingChannels += Number(a.pixels[i] !== b.pixels[i])
+      return { sameSize, differingChannels }
+    }, { before: clear.toString('base64'), after: restored.toString('base64') })
+  }).toEqual({ sameSize: true, differingChannels: 0 })
   expect(await readWorkerProbe(page)).toEqual(workers)
   await expect(canvas).toHaveAttribute('data-color-test-identity', 'same-water')
   await expect(stage).toHaveAttribute('data-phase', 'paused')
