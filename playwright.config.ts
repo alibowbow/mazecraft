@@ -29,7 +29,8 @@ export default defineConfig({
     launchOptions: process.env.PLAYWRIGHT_EXECUTABLE_PATH
       ? {
           executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+            '--in-process-gpu', '--disable-gpu-compositing', '--enable-unsafe-swiftshader'],
         }
       : undefined,
   },

@@ -1,22 +1,7 @@
 import { Check, Circle, Lock, Star, X } from 'lucide-react'
 import { goalText, type Challenge, type GoalState } from '../waterSimulation/garden/challenges'
 
-export const CHALLENGE_KEY = 'mazecraft.challenges.v1'
-
-/** Stars earned per stage and the devices a player placed in each. */
-export interface ChallengeSave { stars: Record<string, number>; drafts: Record<string, unknown[]> }
-
-export function readChallengeSave(): ChallengeSave {
-  try {
-    const stored = JSON.parse(localStorage.getItem(CHALLENGE_KEY) ?? 'null') as ChallengeSave | null
-    if (stored && typeof stored.stars === 'object' && typeof stored.drafts === 'object') return stored
-  } catch { /* Storage may be disabled. */ }
-  return { stars: {}, drafts: {} }
-}
-
-export function writeChallengeSave(save: ChallengeSave): void {
-  try { localStorage.setItem(CHALLENGE_KEY, JSON.stringify(save)) } catch { /* Storage may be disabled. */ }
-}
+export { CHALLENGE_KEY, readChallengeSave, writeChallengeSave, type ChallengeSave } from './craftStorage'
 
 export function Stars({ count, size = 13 }: { count: number; size?: number }) {
   return <span className="challenge-stars" aria-label={`별 ${count}개`}>
