@@ -132,7 +132,9 @@ export class GardenSound {
   private analyzer: GardenSoundAnalyzer
   private enabled = false
   private active = false
-  private volume = 0.7
+  private volume = 0.5
+  /** Bubbles of the babbling water, owed since the last frame. */
+  private babbleDebt = 0
   private dripDebt = 0
   private lastTick = 0
   private lastFrame = 0
@@ -195,8 +197,10 @@ export class GardenSound {
       hum.connect(filter('lowpass', 240)).connect(humGain).connect(this.master)
       hum.start()
       this.layers = {
-        stream: layer(brown, [filter('bandpass', 520, 0.5), filter('peaking', 1400, 1)]),
-        splash: layer(this.white, [filter('highpass', 900), filter('lowpass', 7000)]),
+        // A low, soft bed of running water; the character comes from the
+        // babbling bubbles on top, not from broadband noise (that roared).
+        stream: layer(brown, [filter('lowpass', 700, 0.4), filter('highpass', 120)]),
+        splash: layer(this.white, [filter('bandpass', 1800, 0.9), filter('lowpass', 3600)]),
         gurgle: layer(brown, [filter('bandpass', 260, 3)]),
         hum: { gain: humGain },
       }
@@ -217,10 +221,13 @@ export class GardenSound {
     const dt = Math.min(0.25, this.lastFrame ? now - this.lastFrame : 0)
     this.lastFrame = now
     const set = (layer: Layer, value: number) => layer.gain.gain.setTargetAtTime(value, now, 0.3)
-    set(this.layers.stream, 0.5 * frame.stream)
-    set(this.layers.splash, 0.28 * frame.splash)
+    set(this.layers.stream, 0.1 * frame.stream)
+    set(this.layers.splash, 0.035 * frame.splash)
+    // Babbling: small bubbles ringing as the water runs, more where it flows and falls.
+    this.babbleDebt += (frame.stream * 9 + frame.splash * 14) * dt
+    while (this.babbleDebt >= 1) { this.babbleDebt--; this.bubble(now + Math.random() * dt, 0.35 + 0.65 * frame.splash) }
     // A siphon gurgles in pulses, like air chasing the water.
-    set(this.layers.gurgle, frame.gurgle * (0.25 + 0.2 * Math.sin(now * 17) * Math.sin(now * 5.3)))
+    set(this.layers.gurgle, frame.gurgle * (0.1 + 0.08 * Math.sin(now * 17) * Math.sin(now * 5.3)))
     set(this.layers.hum, 0.05 * frame.hum)
     frame.knocks.slice(0, 2).forEach((level, k) => { if (level > 0.02) this.knock(now + k * 0.05, level) })
     // Wheels: at most a few knocks a second, so a fast wheel rumbles instead of rattling.
@@ -278,6 +285,23 @@ export class GardenSound {
   }
 
   /** One drop leaving a copper cup. */
+  /**
+   * One bubble in running water: a short tone whose pitch rises as it
+   * rings (Minnaert resonance of a bubble near the surface), softly.
+   */
+  private bubble(at: number, level: number): void {
+    const context = this.context!, gain = context.createGain(), tone = context.createOscillator()
+    const pitch = 450 + Math.random() * 900
+    const length = 0.035 + Math.random() * 0.05
+    tone.frequency.setValueAtTime(pitch, at)
+    tone.frequency.exponentialRampToValueAtTime(pitch * 1.6, at + length)
+    gain.gain.setValueAtTime(0, at)
+    gain.gain.linearRampToValueAtTime(0.022 * level, at + 0.004)
+    gain.gain.exponentialRampToValueAtTime(0.0005, at + length)
+    tone.connect(gain).connect(this.master!)
+    tone.start(at); tone.stop(at + length + 0.01)
+  }
+
   private drip(at: number): void {
     const context = this.context!, gain = context.createGain(), tone = context.createOscillator()
     const pitch = 1400 + Math.random() * 1600
