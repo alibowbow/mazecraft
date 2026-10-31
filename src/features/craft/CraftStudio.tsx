@@ -18,7 +18,7 @@ import { registerGardenDesign } from '../waterSimulation/garden/layout'
 import { adviseCraft, spareHeight, type CraftAdvice } from '../waterSimulation/garden/craftAdvisor'
 import { CraftPlanView } from './CraftPlanView'
 import { ChallengePanel, Stars } from './ChallengePanel'
-import { CRAFT_KEY, CHALLENGE_KEY, readCourse, readChallengeSave, writeChallengeSave, nextChallengeId, type ChallengeSave } from './craftStorage'
+import { CRAFT_KEY, readCourse, readChallengeSave, writeChallengeSave, nextChallengeId, type ChallengeSave } from './craftStorage'
 import { CHALLENGES, challengeCourse, judgeGoals, starsFor, type Challenge } from '../waterSimulation/garden/challenges'
 import type { GardenSculpture } from '../waterSimulation/garden'
 import '../waterStudio/waterStudio.css'
@@ -44,7 +44,6 @@ interface Props {
   onWater(): void
   /** The mode to show; a later change (Back, an edited address) switches to it. */
   initialMode?: 'free' | 'challenge'
-  exhibition?: boolean
   /** Reports a mode chosen in the studio, so the address can follow it. */
   onModeChange?(mode: 'free' | 'challenge'): void
   /** Open help and settings. */
@@ -53,13 +52,11 @@ interface Props {
   quality?: 'low' | 'high'
 }
 
-export default function CraftStudio({ onHome, onWater, initialMode = 'free', exhibition = false, onModeChange, onHelp, quality = 'high' }: Props) {
-  const courseStorageKey = exhibition ? `${CRAFT_KEY}.tripothon` : CRAFT_KEY
-  const challengeStorageKey = exhibition ? `${CHALLENGE_KEY}.tripothon` : CHALLENGE_KEY
-  const [save, setSave] = useState<ChallengeSave>(() => readChallengeSave(challengeStorageKey))
+export default function CraftStudio({ onHome, onWater, initialMode = 'free', onModeChange, onHelp, quality = 'high' }: Props) {
+  const [save, setSave] = useState<ChallengeSave>(() => readChallengeSave())
   const [stageId, setStageId] = useState(() => nextChallengeId(save))
   const [course, setCourse] = useState<CraftCourse>(() => {
-    if (initialMode === 'free') return readCourse(courseStorageKey, exhibition ? craftTemplates()[0].course : undefined)
+    if (initialMode === 'free') return readCourse()
     const first = CHALLENGES.find(item => item.id === stageId) ?? CHALLENGES[0]
     return challengeCourse(first, save.drafts[first.id] ?? [])
   })
@@ -102,13 +99,13 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
   const templates = useMemo(() => craftTemplates(), [])
 
   useEffect(() => {
-    if (mode === 'free') { try { localStorage.setItem(courseStorageKey, JSON.stringify(course)) } catch { /* Storage may be disabled. */ } }
+    if (mode === 'free') { try { localStorage.setItem(CRAFT_KEY, JSON.stringify(course)) } catch { /* Storage may be disabled. */ } }
     else {
       // An edited course is a new attempt at the stage.
       setCleared(null)
       setSave(previous => {
         const next = { ...previous, drafts: { ...previous.drafts, [stage.id]: course.modules.slice(stage.locked.length) } }
-        writeChallengeSave(next, challengeStorageKey)
+        writeChallengeSave(next)
         return next
       })
     }
@@ -175,7 +172,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
     if (next === mode) return
     setMode(next); setCleared(null); setOpen(null)
     if (next === 'challenge') enterStage(stage)
-    else setCourse(readCourse(courseStorageKey, exhibition ? craftTemplates()[0].course : undefined))
+    else setCourse(readCourse())
     onModeChange?.(next)
   }
   // Back/Forward or an edited address can ask for the other mode.
@@ -196,7 +193,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
     setCleared({ stage: challenge.id, stars, open: true })
     setSave(previous => {
       const next = { ...previous, stars: { ...previous.stars, [challenge.id]: Math.max(stars, previous.stars[challenge.id] ?? 0) } }
-      writeChallengeSave(next, challengeStorageKey)
+      writeChallengeSave(next)
       return next
     })
   }, [goals.join(), challenge, result.design, status?.garden])

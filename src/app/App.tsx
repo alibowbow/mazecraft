@@ -60,7 +60,6 @@ type Route = 'loading' | Screen
 
 const WaterStudio = lazyScreen(() => import('../features/waterStudio/WaterStudio'))
 const CraftStudio = lazyScreen(() => import('../features/craft/CraftStudio'))
-const TripothonEntry = lazyScreen(() => import('../features/tripothon/TripothonEntry'))
 const InfoDialog = lazyScreen(() => import('../features/info/InfoDialog'))
 
 const StudioScreen = lazyScreen(() =>
@@ -219,7 +218,6 @@ const candidateWithWorker = (
 
 export function App() {
   const [route, setRouteState] = useState<Route>('loading')
-  const [exhibition, setExhibition] = useState(() => parseLocation(location.hash).exhibition === true)
   const [craftMode, setCraftMode] = useState<CraftMode>('free')
   const [project, setProjectState] = useState<MazeProject | null>(null)
   const [waterProject, setWaterProject] = useState<MazeProject | null>(null)
@@ -332,10 +330,7 @@ export function App() {
       return
     }
     if (target.screen === 'craft') {
-      setExhibition(Boolean(target.exhibition))
       setCraftMode(target.craftMode ?? 'free')
-    } else if (target.screen === 'tripothon') {
-      setExhibition(true)
     } else if (target.screen === 'studio') {
       dispatch({ type: 'STOP' })
     } else if (target.screen === 'play') {
@@ -432,12 +427,6 @@ export function App() {
     void (async () => {
       const target = parseLocation(location.hash)
       lastHref.current = location.href
-      if (target.exhibition) {
-        if (target.craftMode) setCraftMode(target.craftMode)
-        setRoute(target.screen)
-        void checkStorage()
-        return
-      }
       if (openShared(() => active)) {
         void checkStorage()
         return
@@ -467,8 +456,11 @@ export function App() {
         if (target.screen === 'play') dispatch({ type: 'PLAY' })
         setRoute(target.screen)
       } else {
-        if (target.screen !== 'home') {
-          history.replaceState(null, '', baseUrl())
+        // Anything else opens the home: a studio address with no project, or
+        // a screen this version no longer has (e.g. an old #/tripothon link).
+        const homeHash = target.screen === 'home' ? hashFor(target) : ''
+        if (location.hash.startsWith('#/') && location.hash !== homeHash) {
+          history.replaceState(null, '', baseUrl() + homeHash)
           lastHref.current = location.href
         }
         setRoute('home')
@@ -679,10 +671,9 @@ export function App() {
     navigate({ screen: 'water' })
   }
 
-  const openCraft = (mode: CraftMode, inExhibition = false) => {
-    setExhibition(inExhibition)
+  const openCraft = (mode: CraftMode) => {
     setCraftMode(mode)
-    navigate({ screen: 'craft', craftMode: mode, exhibition: inExhibition })
+    navigate({ screen: 'craft', craftMode: mode })
   }
 
   const play = (record = false) => {
@@ -755,10 +746,6 @@ export function App() {
   return (
     <>
       <ErrorBoundary resetKey={route} onHome={() => void home()}>
-        {route === 'tripothon' && <Suspense fallback={<RouteFallback label="출품 데모를 여는 중…" />}>
-          <TripothonEntry onStart={(mode) => openCraft(mode, true)}
-            onHome={() => { setExhibition(false); navigate({ screen: 'home' }) }} />
-        </Suspense>}
         {route === 'water' && (
           <Suspense fallback={<RouteFallback label="물의 정원을 여는 중…" />}>
             <WaterStudio
@@ -777,10 +764,10 @@ export function App() {
         )}
         {route === 'craft' && (
           <Suspense fallback={<RouteFallback label="물길 크래프트를 여는 중…" />}>
-            <CraftStudio key={exhibition ? 'exhibition' : 'standard'} initialMode={craftMode} exhibition={exhibition}
-              onModeChange={(mode) => { setCraftMode(mode); navigate({ screen: 'craft', craftMode: mode, exhibition }, { replace: true }) }}
-              onHome={() => navigate({ screen: exhibition ? 'tripothon' : 'home' })}
-              onWater={() => { setExhibition(false); navigate({ screen: 'water' }) }}
+            <CraftStudio initialMode={craftMode}
+              onModeChange={(mode) => { setCraftMode(mode); navigate({ screen: 'craft', craftMode: mode }, { replace: true }) }}
+              onHome={() => navigate({ screen: 'home' })}
+              onWater={() => navigate({ screen: 'water' })}
               onHelp={() => openInfo('help')}
               quality={studioQuality} />
           </Suspense>

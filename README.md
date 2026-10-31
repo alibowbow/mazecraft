@@ -49,7 +49,6 @@ npm run dev
 | `/#/water` | 물의 정원 |
 | `/#/craft` · `/#/challenges` | 물길 크래프트 자유 제작 · 챌린지 |
 | `/#/play?data=…` · `/#/water?data=…` | 공유 링크 |
-| `/#/tripothon` | Tripothon 출품 데모(별도 저장 공간) |
 
 ## 빌드와 배포
 
