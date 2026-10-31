@@ -25,6 +25,11 @@ export class ProjectService {
     return projects.slice(0, Math.max(0, limit))
   }
 
+  /** Every saved project, most recently changed first. */
+  async all(): Promise<MazeProject[]> {
+    return this.repository.list()
+  }
+
   async load(id: string): Promise<MazeProject | null> {
     const project = await this.repository.get(id)
     if (project) updateSettings({ lastProjectId: project.id })

@@ -1,5 +1,4 @@
 import {
-  lazy,
   Suspense,
   useCallback,
   useEffect,
@@ -21,20 +20,25 @@ import {
   migrateProject,
   validateMaze,
 } from '../core/maze'
+import { createId } from '../core/id'
 import { HomeScreen, type ProjectTemplate } from '../features/home/HomeScreen'
 import { BrandMark } from '../components/BrandMark'
 import { ProjectService } from '../features/projects/projectService'
-import {
-  createRemixProject,
-  readShareHash,
-  readShareRoute,
-} from '../features/share'
+// Direct imports keep the share dialog in its own lazily loaded file.
+import { readShareHash, readShareRoute } from '../features/share/codec'
+import { createRemixProject } from '../features/share/remix'
+import { looksLikeBackup, MAX_BACKUP_FILE_SIZE } from '../features/backup/backupFormat'
+import type { InfoTab } from '../features/info/InfoDialog'
+import { resolveStudioQuality } from '../features/waterSimulation/graphics'
 import {
   createAutosave,
+  describeStorageError,
   localProjectRepository,
   readSettings,
   updateSettings,
   type AutosaveStatus,
+  type ColorTheme,
+  type EffectQuality,
 } from '../storage'
 import {
   applyMazeCandidate,
@@ -48,29 +52,33 @@ import {
   type AppEvent,
   type MachineSnapshot,
 } from './stateMachine'
+import { isChunkLoadError, lazyScreen } from './chunkRecovery'
+import { ErrorBoundary } from './ErrorBoundary'
+import { hashFor, parseLocation, type AppLocation, type CraftMode, type Screen } from './routes'
 
-type Route = 'loading' | 'water' | 'craft' | 'home' | 'studio' | 'play' | 'tripothon'
+type Route = 'loading' | Screen
 
-const WaterStudio = lazy(() => import('../features/waterStudio/WaterStudio'))
-const CraftStudio = lazy(() => import('../features/craft/CraftStudio'))
-const TripothonEntry = lazy(() => import('../features/tripothon/TripothonEntry'))
+const WaterStudio = lazyScreen(() => import('../features/waterStudio/WaterStudio'))
+const CraftStudio = lazyScreen(() => import('../features/craft/CraftStudio'))
+const TripothonEntry = lazyScreen(() => import('../features/tripothon/TripothonEntry'))
+const InfoDialog = lazyScreen(() => import('../features/info/InfoDialog'))
 
-const StudioScreen = lazy(() =>
+const StudioScreen = lazyScreen(() =>
   import('../features/creator/StudioScreen').then((module) => ({
     default: module.StudioScreen,
   })),
 )
-const PlayerScreen = lazy(() =>
+const PlayerScreen = lazyScreen(() =>
   import('../features/player/PlayerScreen').then((module) => ({
     default: module.PlayerScreen,
   })),
 )
-const ShareDialog = lazy(() =>
+const ShareDialog = lazyScreen(() =>
   import('../features/share/ShareDialog').then((module) => ({
     default: module.ShareDialog,
   })),
 )
-const ExportDialog = lazy(() =>
+const ExportDialog = lazyScreen(() =>
   import('../features/export/ExportDialog').then((module) => ({
     default: module.ExportDialog,
   })),
@@ -82,11 +90,25 @@ interface Toast {
   error: boolean
 }
 
+/** Entries this app pushed, with the address they were pushed from. */
+interface HistoryEntryState {
+  mazecraft: 1
+  fromHash: string
+  /** The page load that pushed it: after a reload, Back would load a new document. */
+  document: string
+}
+
 const service = new ProjectService(localProjectRepository)
 const LAST_WATER_PROJECT_KEY = 'mazecraft.last-water-project-id'
+const SAVE_ERROR_TOAST_INTERVAL_MS = 30_000
 
-function setLibraryLocation(open: boolean): void {
-  history.replaceState(null, '', location.pathname + location.search + (open ? '#/library' : ''))
+const DOCUMENT_ID = createId('page')
+
+const baseUrl = () => location.pathname + location.search
+
+function readHistoryState(): HistoryEntryState | null {
+  const state = history.state as Partial<HistoryEntryState> | null
+  return state?.mazecraft === 1 && typeof state.fromHash === 'string' ? (state as HistoryEntryState) : null
 }
 
 function rememberWaterSelection(id: string): void {
@@ -95,6 +117,12 @@ function rememberWaterSelection(id: string): void {
 
 function isLastWaterSelection(id: string): boolean {
   try { return localStorage.getItem(LAST_WATER_PROJECT_KEY) === id } catch { return false }
+}
+
+async function readFileHead(file: Blob, bytes: number): Promise<string> {
+  const head = file.slice(0, bytes)
+  if (typeof head.text === 'function') return head.text()
+  return new Response(head).text()
 }
 
 function RouteFallback({ label }: { label: string }) {
@@ -107,9 +135,8 @@ function RouteFallback({ label }: { label: string }) {
   )
 }
 
-const resolveDark = () => {
-  const theme = readSettings().theme
-  return theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+function prefersDark(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 const candidateWithWorker = (
@@ -153,7 +180,7 @@ const candidateWithWorker = (
 
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../workers/maze.worker.ts', import.meta.url), { type: 'module' })
-    const requestId = crypto.randomUUID()
+    const requestId = createId('maze-request')
     let settled = false
     const finish = () => {
       if (!settled) {
@@ -191,10 +218,10 @@ const candidateWithWorker = (
 }
 
 export function App() {
-  const [route, setRoute] = useState<Route>('loading')
-  const [exhibition, setExhibition] = useState(() => location.hash === '#/tripothon')
-  const [exhibitionMode, setExhibitionMode] = useState<'free' | 'challenge'>('challenge')
-  const [project, setProject] = useState<MazeProject | null>(null)
+  const [route, setRouteState] = useState<Route>('loading')
+  const [exhibition, setExhibition] = useState(() => parseLocation(location.hash).exhibition === true)
+  const [craftMode, setCraftMode] = useState<CraftMode>('free')
+  const [project, setProjectState] = useState<MazeProject | null>(null)
   const [waterProject, setWaterProject] = useState<MazeProject | null>(null)
   const [projects, setProjects] = useState<MazeProject[]>([])
   const [machine, dispatch] = useReducer(
@@ -207,17 +234,39 @@ export function App() {
   const [shareOpen, setShareOpen] = useState(false)
   const [shareMode, setShareMode] = useState<'play' | 'water'>('play')
   const [exportProject, setExportProject] = useState<MazeProject | null>(null)
-  const [sharedPlay, setSharedPlay] = useState(false)
+  const [infoTab, setInfoTab] = useState<InfoTab | null>(null)
+  const [sharedPlay, setSharedPlayState] = useState(false)
   const [sharedSolution, setSharedSolution] = useState<CellPosition[] | null>(null)
   const [recordCreator, setRecordCreator] = useState(false)
-  const [dark, setDark] = useState(resolveDark)
+  const [theme, setTheme] = useState<ColorTheme>(() => readSettings().theme)
+  const [systemDark, setSystemDark] = useState(prefersDark)
+  const [qualityPreference, setQualityPreference] = useState<EffectQuality>(() => readSettings().effectQuality)
+  const [storageVolatile, setStorageVolatile] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const cancelGenerationRef = useRef<() => void>(() => undefined)
   const toastId = useRef(0)
+  const toastRef = useRef<(message: string, error?: boolean) => void>(() => undefined)
+  const lastSaveErrorToast = useRef(0)
+  const lastHref = useRef('')
+  const navigationId = useRef(0)
+  // Navigation reads these between renders, so each setter updates its ref at once.
+  const routeRef = useRef<Route>(route)
+  const projectRef = useRef(project)
+  const sharedPlayRef = useRef(sharedPlay)
+  const setRoute = useCallback((next: Route) => { routeRef.current = next; setRouteState(next) }, [])
+  const setProject = useCallback((next: MazeProject | null) => { projectRef.current = next; setProjectState(next) }, [])
+  const setSharedPlay = useCallback((next: boolean) => { sharedPlayRef.current = next; setSharedPlayState(next) }, [])
+  const dark = theme === 'dark' || (theme === 'system' && systemDark)
+  const studioQuality = useMemo(() => resolveStudioQuality(qualityPreference), [qualityPreference])
   const autosave = useMemo(
     () =>
       createAutosave(localProjectRepository, (status) => {
         setSaveStatus(status)
+        // Every failed attempt shows in the studio header; explain it now and then.
+        if (status.state === 'error' && Date.now() - lastSaveErrorToast.current > SAVE_ERROR_TOAST_INTERVAL_MS) {
+          lastSaveErrorToast.current = Date.now()
+          toastRef.current(describeStorageError(status.error), true)
+        }
       }),
     [],
   )
@@ -225,66 +274,219 @@ export function App() {
   const toast = useCallback((message: string, error = false) => {
     const item = { id: ++toastId.current, message, error }
     setToasts((items) => [...items, item].slice(-3))
-    window.setTimeout(() => setToasts((items) => items.filter((candidate) => candidate.id !== item.id)), 3000)
+    window.setTimeout(
+      () => setToasts((items) => items.filter((candidate) => candidate.id !== item.id)),
+      error ? 6000 : 3500,
+    )
   }, [])
+  toastRef.current = toast
 
   const refreshProjects = useCallback(async () => {
-    setProjects(await service.recent(12))
+    try {
+      setProjects(await service.all())
+    } catch {
+      toast('저장한 미로 목록을 불러오지 못했습니다.', true)
+    }
+  }, [toast])
+
+  const checkStorage = useCallback(async () => {
+    if (!(await localProjectRepository.isPersistent())) setStorageVolatile(true)
   }, [])
 
-  useEffect(() => {
-    const openLibraryFromLocation = () => {
-      if (location.hash === '#/tripothon') { setExhibition(true); setRoute('tripothon'); return }
-      if (location.hash !== '#/library') return
-      setRoute('home')
-      void refreshProjects().catch(() => toast('저장한 미로를 불러오지 못했습니다.', true))
+  /** Leaving the maze studio: save its last edit and let the water garden show it. */
+  const leaveStudio = async () => {
+    cancelGenerationRef.current()
+    await autosave.flush()
+    const current = projectRef.current
+    if (current && !sharedPlayRef.current) {
+      setWaterProject(current)
+      rememberWaterSelection(current.id)
     }
-    window.addEventListener('hashchange', openLibraryFromLocation)
-    return () => window.removeEventListener('hashchange', openLibraryFromLocation)
-  }, [refreshProjects, toast])
+  }
+
+  /** Arrive at a screen; the address bar is already pointing at it. */
+  const enter = async (target: AppLocation) => {
+    const id = ++navigationId.current
+    const from = routeRef.current
+    setShareOpen(false)
+    setExportProject(null)
+    setInfoTab(null)
+    if (from === 'studio' && target.screen !== 'studio' && target.screen !== 'play') await leaveStudio()
+    if (sharedPlayRef.current && target.screen !== 'play') {
+      setSharedPlay(false)
+      setSharedSolution(null)
+      setProject(null)
+      setWaterProject(null)
+    }
+    if (target.screen === 'home') {
+      setGenerationTrace([])
+      await refreshProjects()
+    }
+    if (id !== navigationId.current) return
+    if ((target.screen === 'studio' || target.screen === 'play') && !projectRef.current) {
+      // Nothing to show (e.g. Forward after the project was closed).
+      history.replaceState(null, '', baseUrl())
+      lastHref.current = location.href
+      await refreshProjects()
+      setRoute('home')
+      return
+    }
+    if (target.screen === 'craft') {
+      setExhibition(Boolean(target.exhibition))
+      setCraftMode(target.craftMode ?? 'free')
+    } else if (target.screen === 'tripothon') {
+      setExhibition(true)
+    } else if (target.screen === 'studio') {
+      dispatch({ type: 'STOP' })
+    } else if (target.screen === 'play') {
+      dispatch({ type: 'PLAY' })
+    }
+    setRoute(target.screen)
+  }
+
+  /**
+   * Show a screen and record it in the address bar. Returning to the screen
+   * this one was opened from steps back in history instead of stacking a copy,
+   * so the browser's Back button and the app's own links agree.
+   */
+  const navigate = (target: AppLocation, options: { replace?: boolean } = {}) => {
+    const hash = hashFor(target)
+    const entry = readHistoryState()
+    if (!options.replace && entry?.document === DOCUMENT_ID && entry.fromHash === hash && location.hash !== hash) {
+      history.back()
+      return
+    }
+    if (location.hash !== hash) {
+      const current = parseLocation(location.hash)
+      if (options.replace) {
+        history.replaceState(entry, '', baseUrl() + hash)
+      } else {
+        // A shared link stays in the address only while it is on screen; the
+        // entry left behind reopens the same screen without re-importing it.
+        const fromHash = current.shared ? hashFor(current) : location.hash
+        if (current.shared) history.replaceState(entry, '', baseUrl() + fromHash)
+        history.pushState({ mazecraft: 1, fromHash, document: DOCUMENT_ID } satisfies HistoryEntryState, '', baseUrl() + hash)
+      }
+    }
+    lastHref.current = location.href
+    void enter(target)
+  }
+
+  /** Open the shared maze in the address. Returns false when there is none. */
+  const openShared = (isActive: () => boolean = () => true): boolean => {
+    try {
+      const payload = readShareHash()
+      if (!payload) return false
+      const isWaterShare = readShareRoute() === 'water'
+      // A water scene is editable immediately. Give an incoming shared
+      // project a fresh local identity so saving never overwrites an
+      // existing project that happened to carry the original share ID.
+      const shared = migrateProject(isWaterShare ? { ...payload.project, id: undefined } : payload.project)
+      if (!isActive()) return true
+      setProject(shared)
+      if (isWaterShare) setWaterProject(shared)
+      setSharedPlay(!isWaterShare)
+      setSharedSolution(payload.solutionPath ?? null)
+      setRecordCreator(false)
+      setShareOpen(false)
+      setExportProject(null)
+      dispatch({ type: 'OPEN' })
+      setRoute(isWaterShare ? 'water' : 'play')
+      return true
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '공유 링크를 읽을 수 없습니다.', true)
+      history.replaceState(null, '', baseUrl())
+      lastHref.current = location.href
+      return false
+    }
+  }
+
+  // Back, Forward, an edited address or a pasted share link.
+  const followAddress = async () => {
+    if (location.href === lastHref.current || routeRef.current === 'loading') return
+    lastHref.current = location.href
+    const target = parseLocation(location.hash)
+    if (target.shared) {
+      if (routeRef.current === 'studio') await leaveStudio()
+      if (openShared()) return
+      void enter({ screen: 'home' })
+      return
+    }
+    void enter(target)
+  }
+  const followAddressRef = useRef(followAddress)
+  followAddressRef.current = followAddress
+
+  useEffect(() => {
+    const onAddressChange = () => void followAddressRef.current()
+    window.addEventListener('popstate', onAddressChange)
+    window.addEventListener('hashchange', onAddressChange)
+    return () => {
+      window.removeEventListener('popstate', onAddressChange)
+      window.removeEventListener('hashchange', onAddressChange)
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
     void (async () => {
-      if (location.hash === '#/tripothon') { setExhibition(true); setRoute('tripothon'); return }
-      try {
-        const payload = readShareHash()
-        if (payload) {
-          const isWaterShare = readShareRoute() === 'water'
-          // A water scene is editable immediately. Give an incoming shared
-          // project a fresh local identity so saving never overwrites an
-          // existing project that happened to carry the original share ID.
-          const shared = migrateProject(isWaterShare ? { ...payload.project, id: undefined } : payload.project)
-          if (!active) return
-          setProject(shared)
-          if (isWaterShare) setWaterProject(shared)
-          setSharedPlay(!isWaterShare)
-          setSharedSolution(payload.solutionPath ?? null)
-          setRecordCreator(false)
-          dispatch({ type: 'OPEN' })
-          setRoute(isWaterShare ? 'water' : 'play')
-          return
-        }
-      } catch (error) {
-        toast(error instanceof Error ? error.message : '공유 링크를 읽을 수 없습니다.', true)
-        history.replaceState(null, '', location.pathname + location.search)
+      const target = parseLocation(location.hash)
+      lastHref.current = location.href
+      if (target.exhibition) {
+        if (target.craftMode) setCraftMode(target.craftMode)
+        setRoute(target.screen)
+        void checkStorage()
+        return
       }
-      const [recent, recovered] = await Promise.all([service.recent(12), service.recoverLast()])
+      if (openShared(() => active)) {
+        void checkStorage()
+        return
+      }
+      let saved: MazeProject[] = []
+      let recovered: MazeProject | null = null
+      try {
+        ;[saved, recovered] = await Promise.all([service.all(), service.recoverLast()])
+      } catch {
+        toast('저장한 미로를 불러오지 못했습니다. 새로고침해 보세요.', true)
+      }
       if (!active) return
-      setProjects(recent)
+      setProjects(saved)
+      void checkStorage()
       if (recovered) {
         setProject(recovered)
         if (isLastWaterSelection(recovered.id)) setWaterProject(recovered)
         dispatch({ type: 'OPEN' })
       }
-      // MazeCraft opens on its home: the maze studio and the water garden are
-      // two doors from there. A recovered project is offered on the home.
-      setRoute('home')
+      // A reload returns to the screen in the address; the home is the default.
+      if (target.screen === 'water') {
+        setRoute('water')
+      } else if (target.screen === 'craft') {
+        setCraftMode(target.craftMode ?? 'free')
+        setRoute('craft')
+      } else if ((target.screen === 'studio' || target.screen === 'play') && recovered) {
+        if (target.screen === 'play') dispatch({ type: 'PLAY' })
+        setRoute(target.screen)
+      } else {
+        if (target.screen !== 'home') {
+          history.replaceState(null, '', baseUrl())
+          lastHref.current = location.href
+        }
+        setRoute('home')
+      }
     })()
     return () => {
       active = false
     }
-  }, [toast])
+    // The boot reads the address once; later changes arrive through followAddress.
+  }, [])
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const change = () => setSystemDark(media.matches)
+    media.addEventListener?.('change', change)
+    return () => media.removeEventListener?.('change', change)
+  }, [])
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
@@ -311,13 +513,24 @@ export function App() {
 
   const createProject = async (template: ProjectTemplate) => {
     dispatch({ type: 'NEW_PROJECT' })
-    const next = createProjectFromTemplate(template)
-    await service.save(next, false)
+    let next: MazeProject
+    try {
+      next = createProjectFromTemplate(template)
+    } catch (error) {
+      dispatch({ type: 'STOP' })
+      toast(error instanceof Error ? error.message : '새 미로를 만들지 못했습니다.', true)
+      return
+    }
+    try {
+      await service.save(next, false)
+    } catch (error) {
+      // The studio still opens; its autosave keeps retrying and shows the state.
+      toast(describeStorageError(error), true)
+    }
     setProject(next)
     setGenerationTrace([])
     dispatch({ type: 'OPEN' })
-    setLibraryLocation(false)
-    setRoute('studio')
+    navigate({ screen: 'studio' })
   }
 
   const openProject = (next: MazeProject) => {
@@ -325,8 +538,7 @@ export function App() {
     setGenerationTrace([])
     updateSettings({ lastProjectId: next.id })
     dispatch({ type: 'OPEN' })
-    setLibraryLocation(false)
-    setRoute('studio')
+    navigate({ screen: 'studio' })
   }
 
   const openWaterProject = (next: MazeProject) => {
@@ -336,8 +548,7 @@ export function App() {
     updateSettings({ lastProjectId: next.id })
     rememberWaterSelection(next.id)
     dispatch({ type: 'OPEN' })
-    setLibraryLocation(false)
-    setRoute('water')
+    navigate({ screen: 'water' })
   }
 
   const rememberWaterProject = useCallback((next: MazeProject) => {
@@ -348,11 +559,22 @@ export function App() {
     try {
       await service.save(next, false)
       rememberWaterSelection(next.id)
-      history.replaceState(null, '', location.pathname + location.search)
       openProject(next)
     } catch (error) {
-      toast(error instanceof Error ? error.message : '미로를 저장하지 못했습니다.', true)
+      toast(describeStorageError(error), true)
     }
+  }
+
+  const saveWaterProject = async (next: MazeProject) => {
+    try {
+      await service.save(next, false)
+    } catch (error) {
+      toast(describeStorageError(error), true)
+      throw error
+    }
+    rememberWaterSelection(next.id)
+    await refreshProjects()
+    toast('미로를 저장했습니다.')
   }
 
   const generateProject = useCallback(
@@ -400,56 +622,67 @@ export function App() {
   }
 
   const duplicate = async (source: MazeProject) => {
-    const copy = await service.duplicate(source)
-    await refreshProjects()
-    openProject(copy)
-  }
-
-  const remove = async (source: MazeProject) => {
-    if (await service.remove(source)) {
+    try {
+      const copy = await service.duplicate(source)
       await refreshProjects()
-      toast('프로젝트를 삭제했습니다.')
+      openProject(copy)
+    } catch (error) {
+      toast(describeStorageError(error), true)
     }
   }
 
-  const importProject = async (file: File) => {
+  const remove = async (source: MazeProject) => {
     try {
+      if (await service.remove(source)) {
+        await refreshProjects()
+        toast('프로젝트를 삭제했습니다.')
+      }
+    } catch {
+      toast('프로젝트를 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.', true)
+    }
+  }
+
+  /** A project file opens in the studio; a full backup is restored into the collection. */
+  const importFile = async (file: File) => {
+    try {
+      if (file.size <= MAX_BACKUP_FILE_SIZE && looksLikeBackup(await readFileHead(file, 512))) {
+        const { describeRestore, parseBackup, restoreBackup } = await import('../features/backup/backup')
+        const backup = parseBackup(await readFileHead(file, file.size))
+        if (backup) {
+          const summary = await restoreBackup(backup, localProjectRepository)
+          await refreshProjects()
+          toast(describeRestore(summary), summary.invalid > 0 && summary.added + summary.updated === 0)
+          return
+        }
+      }
       const imported = await service.import(file)
       await refreshProjects()
       openProject(imported)
     } catch (error) {
-      toast(error instanceof Error ? error.message : '프로젝트를 열 수 없습니다.', true)
+      if (isChunkLoadError(error)) toast('앱이 업데이트되었습니다. 새로고침한 뒤 다시 시도해 주세요.', true)
+      else toast(error instanceof Error ? error.message : '파일을 열 수 없습니다.', true)
     }
   }
 
   const home = async () => {
-    cancelGenerationRef.current()
-    await autosave.flush()
-    await refreshProjects()
-    setShareOpen(false)
-    setExportProject(null)
-    if (sharedPlay) {
-      history.replaceState(null, '', location.pathname + location.search)
-      setSharedPlay(false)
-      setSharedSolution(null)
-      setProject(null)
-      setWaterProject(null)
-    } else if (route === 'studio' && project) {
-      // The editor owns the current graph; returning to the water workspace
-      // must simulate these edited walls rather than recreate a preset.
-      setWaterProject(project)
-      rememberWaterSelection(project.id)
+    if (sharedPlayRef.current) {
+      // A shared link's entry is replaced: Back then leaves for wherever the link came from.
+      navigate({ screen: 'home' }, { replace: true })
+      return
     }
-    setGenerationTrace([])
-    setLibraryLocation(false)
-    setRoute('home')
+    navigate({ screen: 'home' })
   }
 
   const openWater = () => {
     // The hub's door opens the water garden's own collection.
     setWaterProject(null)
-    setLibraryLocation(false)
-    setRoute('water')
+    navigate({ screen: 'water' })
+  }
+
+  const openCraft = (mode: CraftMode, inExhibition = false) => {
+    setExhibition(inExhibition)
+    setCraftMode(mode)
+    navigate({ screen: 'craft', craftMode: mode, exhibition: inExhibition })
   }
 
   const play = (record = false) => {
@@ -458,7 +691,7 @@ export function App() {
     setRecordCreator(record)
     setSharedPlay(false)
     setSharedSolution(null)
-    setRoute('play')
+    navigate({ screen: 'play' })
   }
 
   const exitPlay = () => {
@@ -467,7 +700,7 @@ export function App() {
       return
     }
     dispatch({ type: 'STOP' })
-    setRoute(project ? 'studio' : 'home')
+    navigate({ screen: project ? 'studio' : 'home' })
   }
 
   const saveCreatorReplay = (replay: CreatorReplay) => {
@@ -480,128 +713,182 @@ export function App() {
     try {
       const next = createRemixProject(source)
       await service.save(next, false)
-      history.replaceState(null, '', location.pathname + location.search)
       setSharedPlay(false)
       setSharedSolution(null)
       setRecordCreator(false)
       setProject(next)
       setGenerationTrace([])
       dispatch({ type: 'OPEN' })
-      setRoute('studio')
+      navigate({ screen: 'studio' }, { replace: true })
       toast('원본을 보존한 리믹스 프로젝트를 만들었습니다.')
     } catch (error) {
       toast(error instanceof Error ? error.message : '리믹스를 만들 수 없습니다.', true)
     }
   }
 
-  const toggleTheme = () => {
-    const next = !dark
-    setDark(next)
-    updateSettings({ theme: next ? 'dark' : 'light' })
+  const changeTheme = (next: ColorTheme) => {
+    setTheme(next)
+    updateSettings({ theme: next })
   }
+
+  const toggleTheme = () => changeTheme(dark ? 'light' : 'dark')
+
+  const changeQuality = (next: EffectQuality) => {
+    setQualityPreference(next)
+    updateSettings({ effectQuality: next })
+  }
+
+  const openInfo = (tab: InfoTab = 'help') => setInfoTab(tab)
+  // Stable close handlers keep the dialogs' focus management from re-running on every render.
+  const closeShare = useCallback(() => setShareOpen(false), [])
+  const closeExport = useCallback(() => setExportProject(null), [])
+  const closeInfo = useCallback(() => setInfoTab(null), [])
 
   const valid = project
     ? validateMaze(project.mazeGraph, project.startCell, project.endCell).valid
     : false
 
   if (route === 'loading') {
-    return <main className="loading-screen" aria-live="polite"><BrandMark size={40} /><strong>MazeCraft</strong><p>프로젝트를 복구하고 있습니다…</p></main>
+    return <main className="loading-screen" aria-live="polite"><BrandMark size={40} /><strong>MazeCraft</strong><p>작업 공간을 여는 중…</p></main>
   }
 
   return (
     <>
-      {route === 'tripothon' && <Suspense fallback={<RouteFallback label="출품 데모를 여는 중…" />}>
-        <TripothonEntry onStart={mode => { setExhibitionMode(mode); setRoute('craft') }}
-          onHome={() => { setExhibition(false); setLibraryLocation(false); void refreshProjects(); setRoute('home') }} />
-      </Suspense>}
-      {route === 'water' && (
-        <Suspense fallback={<RouteFallback label="물 스튜디오를 여는 중…" />}>
-          <WaterStudio
-            initialProject={waterProject}
-            onProjectChange={rememberWaterProject}
-            onLibrary={() => { setWaterProject(project); setLibraryLocation(true); void refreshProjects(); setRoute('home') }}
-            onHome={() => { setWaterProject(project); setLibraryLocation(false); void refreshProjects(); setRoute('home') }}
-            onEdit={(next) => { void editWaterProject(next) }}
-            onSave={async (next) => { await service.save(next, false); rememberWaterSelection(next.id); await refreshProjects(); toast('미로를 저장했습니다.') }}
-            onShare={(next) => { setProject(next); setShareMode('water'); setShareOpen(true) }}
-            onCraft={() => setRoute('craft')}
-          />
-        </Suspense>
-      )}
-      {route === 'craft' && (
-        <Suspense fallback={<RouteFallback label="크래프트 작업실을 여는 중…" />}>
-          <CraftStudio initialMode={exhibition ? exhibitionMode : 'free'} exhibition={exhibition}
-            onHome={() => { void refreshProjects(); setRoute(exhibition ? 'tripothon' : 'home') }}
-            onWater={() => { setExhibition(false); setLibraryLocation(false); setRoute('water') }} />
-        </Suspense>
-      )}
-      {route === 'home' && (
-        <HomeScreen
-          projects={projects}
-          onCreate={(template) => void createProject(template)}
-          onOpen={openWaterProject}
-          onEdit={openProject}
-          onWater={openWater}
-          onCraft={() => setRoute('craft')}
-          onDuplicate={(source) => void duplicate(source)}
-          onDelete={(source) => void remove(source)}
-          onExport={(source) => setExportProject(source)}
-          onImport={(file) => void importProject(file)}
-          onThemeToggle={toggleTheme}
-          dark={dark}
-        />
-      )}
-      {route === 'studio' && project && (
-        <Suspense fallback={<RouteFallback label="제작실을 여는 중…" />}>
-          <StudioScreen
-            project={project}
-            state={machine.value}
-            saveStatus={saveStatus}
-            generationProgress={generationProgress}
-            generationTrace={generationTrace}
-            onChange={changeProject}
-            onGenerate={generateProject}
-            onCancelGeneration={cancelGeneration}
-            onPlay={play}
-            onHome={() => void home()}
-            onShare={() => { setShareMode('play'); setShareOpen(true) }}
-            onExport={() => setExportProject(project)}
+      <ErrorBoundary resetKey={route} onHome={() => void home()}>
+        {route === 'tripothon' && <Suspense fallback={<RouteFallback label="출품 데모를 여는 중…" />}>
+          <TripothonEntry onStart={(mode) => openCraft(mode, true)}
+            onHome={() => { setExhibition(false); navigate({ screen: 'home' }) }} />
+        </Suspense>}
+        {route === 'water' && (
+          <Suspense fallback={<RouteFallback label="물의 정원을 여는 중…" />}>
+            <WaterStudio
+              initialProject={waterProject}
+              onProjectChange={rememberWaterProject}
+              onLibrary={() => { setWaterProject(project); navigate({ screen: 'home', library: true }) }}
+              onHome={() => { setWaterProject(project); navigate({ screen: 'home' }) }}
+              onEdit={(next) => { void editWaterProject(next) }}
+              onSave={saveWaterProject}
+              onShare={(next) => { setProject(next); setShareMode('water'); setShareOpen(true) }}
+              onCraft={() => openCraft('free')}
+              onHelp={() => openInfo('help')}
+              quality={studioQuality}
+            />
+          </Suspense>
+        )}
+        {route === 'craft' && (
+          <Suspense fallback={<RouteFallback label="물길 크래프트를 여는 중…" />}>
+            <CraftStudio key={exhibition ? 'exhibition' : 'standard'} initialMode={craftMode} exhibition={exhibition}
+              onModeChange={(mode) => { setCraftMode(mode); navigate({ screen: 'craft', craftMode: mode, exhibition }, { replace: true }) }}
+              onHome={() => navigate({ screen: exhibition ? 'tripothon' : 'home' })}
+              onWater={() => { setExhibition(false); navigate({ screen: 'water' }) }}
+              onHelp={() => openInfo('help')}
+              quality={studioQuality} />
+          </Suspense>
+        )}
+        {route === 'home' && (
+          <HomeScreen
+            projects={projects}
+            onCreate={(template) => void createProject(template)}
+            onOpen={openWaterProject}
+            onEdit={openProject}
+            onWater={openWater}
+            onCraft={() => openCraft('free')}
+            onChallenges={() => openCraft('challenge')}
+            onDuplicate={(source) => void duplicate(source)}
+            onDelete={(source) => void remove(source)}
+            onExport={(source) => setExportProject(source)}
+            onImport={(file) => void importFile(file)}
             onThemeToggle={toggleTheme}
+            onInfo={openInfo}
+            storageVolatile={storageVolatile}
             dark={dark}
-            onToast={toast}
           />
-        </Suspense>
-      )}
-      {route === 'play' && project && (
-        <Suspense fallback={<RouteFallback label="플레이를 준비하는 중…" />}>
-          <PlayerScreen
-            project={project}
-            shared={sharedPlay}
-            allowSolution={!sharedPlay || Boolean(sharedSolution?.length)}
-            recordCreator={recordCreator}
-            onExit={exitPlay}
-            onRemix={(source) => void remix(source)}
-            onCreatorReplay={saveCreatorReplay}
-          />
-        </Suspense>
-      )}
-      {shareOpen && project && (
-        <Suspense fallback={null}>
-          <ShareDialog project={project} valid={valid} mode={shareMode} onClose={() => setShareOpen(false)} />
-        </Suspense>
-      )}
-      {exportProject && (
-        <Suspense fallback={null}>
-          <ExportDialog
-            project={exportProject}
-            valid={validateMaze(exportProject.mazeGraph, exportProject.startCell, exportProject.endCell).valid}
-            onClose={() => setExportProject(null)}
-          />
-        </Suspense>
-      )}
+        )}
+        {route === 'studio' && project && (
+          <Suspense fallback={<RouteFallback label="미로 제작실을 여는 중…" />}>
+            <StudioScreen
+              project={project}
+              state={machine.value}
+              saveStatus={saveStatus}
+              generationProgress={generationProgress}
+              generationTrace={generationTrace}
+              onChange={changeProject}
+              onGenerate={generateProject}
+              onCancelGeneration={cancelGeneration}
+              onPlay={play}
+              onHome={() => void home()}
+              onShare={() => { setShareMode('play'); setShareOpen(true) }}
+              onExport={() => setExportProject(project)}
+              onThemeToggle={toggleTheme}
+              dark={dark}
+              onToast={toast}
+            />
+          </Suspense>
+        )}
+        {route === 'play' && project && (
+          <Suspense fallback={<RouteFallback label="플레이를 준비하는 중…" />}>
+            <PlayerScreen
+              project={project}
+              shared={sharedPlay}
+              allowSolution={!sharedPlay || Boolean(sharedSolution?.length)}
+              recordCreator={recordCreator}
+              onExit={exitPlay}
+              onRemix={(source) => void remix(source)}
+              onCreatorReplay={saveCreatorReplay}
+            />
+          </Suspense>
+        )}
+      </ErrorBoundary>
+      <ErrorBoundary resetKey={`${shareOpen}-${exportProject?.id}-${infoTab}`} fallback={() => <DialogFailure onClose={() => { setShareOpen(false); setExportProject(null); setInfoTab(null) }} />}>
+        {shareOpen && project && (
+          <Suspense fallback={null}>
+            <ShareDialog project={project} valid={valid} mode={shareMode} onClose={closeShare} />
+          </Suspense>
+        )}
+        {exportProject && (
+          <Suspense fallback={null}>
+            <ExportDialog
+              project={exportProject}
+              valid={validateMaze(exportProject.mazeGraph, exportProject.startCell, exportProject.endCell).valid}
+              onClose={closeExport}
+            />
+          </Suspense>
+        )}
+        {infoTab && (
+          <Suspense fallback={null}>
+            <InfoDialog
+              initialTab={infoTab}
+              onClose={closeInfo}
+              theme={theme}
+              onThemeChange={changeTheme}
+              quality={qualityPreference}
+              onQualityChange={changeQuality}
+              storageVolatile={storageVolatile}
+              projectCount={projects.length}
+              onRestore={(file) => importFile(file)}
+              onToast={toast}
+            />
+          </Suspense>
+        )}
+      </ErrorBoundary>
       <div className="toast-region" aria-live="polite">
         {toasts.map((item) => <div key={item.id} className={`toast ${item.error ? 'error' : ''}`}>{item.message}</div>)}
       </div>
     </>
+  )
+}
+
+function DialogFailure({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section className="dialog" role="alertdialog" aria-labelledby="dialog-failure-title">
+        <header className="dialog-header"><h2 id="dialog-failure-title">창을 열지 못했습니다</h2></header>
+        <div className="dialog-body"><p>잠시 후 다시 시도하거나 페이지를 새로고침해 주세요. 작업 내용은 그대로 저장되어 있습니다.</p></div>
+        <footer className="dialog-actions">
+          <button className="button secondary" type="button" onClick={onClose}>닫기</button>
+          <button className="button" type="button" onClick={() => window.location.reload()}>새로고침</button>
+        </footer>
+      </section>
+    </div>
   )
 }

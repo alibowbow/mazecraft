@@ -1,4 +1,5 @@
 export * from './autosave'
 export * from './indexedDb'
+export * from './persistence'
 export * from './projectRepository'
 export * from './settings'

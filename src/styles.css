@@ -5285,3 +5285,70 @@ h1, h2, h3 { font-weight: 500; letter-spacing: -0.045em; }
 .inspector-disclosure > summary::after { content: '＋'; font-weight: 400; color: var(--muted, #6b7773); }
 .inspector-disclosure[open] > summary::after { content: '－'; }
 .inspector-disclosure > summary::-webkit-details-marker { display: none; }
+
+/* Recovery after a failed screen, and storage warnings */
+.recovery-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.recovery-card {
+  width: min(460px, 100%);
+  word-break: keep-all;
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.recovery-card .brand-logo { color: var(--primary); }
+.recovery-card h1 { margin: 0; font-size: 1.3rem; font-weight: 600; }
+.recovery-card p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.65; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.recovery-details { width: 100%; color: var(--muted); font-size: 0.78rem; }
+.recovery-details summary { cursor: pointer; }
+.recovery-details code { display: block; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.storage-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: 10px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+  font-size: 0.82rem;
+  line-height: 1.6;
+  word-break: keep-all;
+}
+
+.storage-warning svg { flex-shrink: 0; margin-top: 3px; color: var(--warning); }
+.storage-warning p { margin: 0; }
+.storage-warning strong { display: block; }
+.home-header .local-badge.is-volatile { color: var(--warning); }
+.home-header .local-badge.is-volatile i { background: var(--warning); }
+
+.project-grid .project-more { grid-column: 1 / -1; justify-self: center; }
+
+.home-footer { flex-wrap: wrap; row-gap: 10px; }
+.home-footer > span { display: inline-flex; align-items: center; gap: 8px; }
+.home-footer nav { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.home-footer nav button {
+  min-height: 32px;
+  padding: 0 2px;
+  background: transparent;
+  color: var(--muted);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.home-footer nav button:hover { color: var(--ink); }

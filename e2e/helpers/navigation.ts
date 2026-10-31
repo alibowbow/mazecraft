@@ -32,7 +32,7 @@ export async function enterProjectEditor(page: Page): Promise<void> {
   const resume = page.getByRole('button', { name: '최근 미로 이어서', exact: true })
   await expect(editor.or(studio).or(resume)).toBeVisible({ timeout: process.env.CI ? waterStartupTimeout : 5_000 })
   if (await editor.isVisible()) return
-  // A reload lands on the home, which offers the recovered project.
+  // The home offers the recovered project when the address held no screen.
   if (await resume.isVisible()) {
     await resume.click()
     await expect(editor).toBeVisible()

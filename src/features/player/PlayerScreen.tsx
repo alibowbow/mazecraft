@@ -59,6 +59,35 @@ const parseVisited = (keys: string[]) =>
 
 const personalBestKey = (project: MazeProject) => `mazecraft:best:${project.id}`
 
+/** Records are optional: blocked or full browser storage must never stop a game. */
+const readStored = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+const writeStored = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Storage is disabled or full; the game itself is unaffected.
+  }
+}
+
+const recordAttempt = (projectId: string, attempt: Record<string, unknown>): void => {
+  const key = `mazecraft:attempts:${projectId}`
+  let recent: unknown[] = []
+  try {
+    const parsed: unknown = JSON.parse(readStored(key) ?? '[]')
+    if (Array.isArray(parsed)) recent = parsed
+  } catch {
+    // A damaged history starts over.
+  }
+  writeStored(key, JSON.stringify([attempt, ...recent].slice(0, 10)))
+}
+
 const playTone = (kind: 'move' | 'complete') => {
   if (typeof AudioContext === 'undefined') return
   const context = new AudioContext()
@@ -104,8 +133,8 @@ export function PlayerScreen({
     useState<MazeAnimationSnapshot | null>(null)
   const [timedOut, setTimedOut] = useState(false)
   const [personalBest, setPersonalBest] = useState<number | null>(() => {
-    const value = localStorage.getItem(personalBestKey(project))
-    return value ? Number(value) : null
+    const value = Number(readStored(personalBestKey(project)) ?? Number.NaN)
+    return Number.isFinite(value) && value > 0 ? value : null
   })
   const completionHandled = useRef(false)
   const timeoutHandled = useRef(false)
@@ -194,29 +223,13 @@ export function PlayerScreen({
   useEffect(() => {
     if (!timedOut || timeoutHandled.current) return
     timeoutHandled.current = true
-    const recentKey = `mazecraft:attempts:${project.id}`
-    const recent = (() => {
-      try {
-        return JSON.parse(localStorage.getItem(recentKey) ?? '[]') as unknown[]
-      } catch {
-        return []
-      }
-    })()
-    localStorage.setItem(
-      recentKey,
-      JSON.stringify(
-        [
-          {
-            completedAt: new Date().toISOString(),
-            durationMs: limitMs ?? elapsed,
-            moves: session.stats.moves,
-            hints: session.stats.hintsUsed,
-            timedOut: true,
-          },
-          ...recent,
-        ].slice(0, 10),
-      ),
-    )
+    recordAttempt(project.id, {
+      completedAt: new Date().toISOString(),
+      durationMs: limitMs ?? elapsed,
+      moves: session.stats.moves,
+      hints: session.stats.hintsUsed,
+      timedOut: true,
+    })
   }, [elapsed, limitMs, project.id, session.stats.hintsUsed, session.stats.moves, timedOut])
 
   useEffect(() => {
@@ -224,31 +237,15 @@ export function PlayerScreen({
     completionHandled.current = true
     if (sound) playTone('complete')
     if (personalBest === null || session.elapsedMs < personalBest) {
-      localStorage.setItem(personalBestKey(project), String(session.elapsedMs))
+      writeStored(personalBestKey(project), String(session.elapsedMs))
       setPersonalBest(session.elapsedMs)
     }
-    const recentKey = `mazecraft:attempts:${project.id}`
-    const recent = (() => {
-      try {
-        return JSON.parse(localStorage.getItem(recentKey) ?? '[]') as unknown[]
-      } catch {
-        return []
-      }
-    })()
-    localStorage.setItem(
-      recentKey,
-      JSON.stringify(
-        [
-          {
-            completedAt: new Date().toISOString(),
-            durationMs: session.elapsedMs,
-            moves: session.stats.moves,
-            hints: session.stats.hintsUsed,
-          },
-          ...recent,
-        ].slice(0, 10),
-      ),
-    )
+    recordAttempt(project.id, {
+      completedAt: new Date().toISOString(),
+      durationMs: session.elapsedMs,
+      moves: session.stats.moves,
+      hints: session.stats.hintsUsed,
+    })
     if (recordCreator) onCreatorReplay?.(createReplay(session.frames, true))
   }, [onCreatorReplay, personalBest, project, recordCreator, session, sound])
 
