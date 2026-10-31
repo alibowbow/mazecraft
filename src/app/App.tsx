@@ -407,6 +407,11 @@ export function App() {
       void enter({ screen: 'home' })
       return
     }
+    if (target.screen === 'home' && location.hash.startsWith('#/') && location.hash !== hashFor(target)) {
+      // An address this version does not know opens the home under its own address.
+      history.replaceState(history.state, '', baseUrl() + hashFor(target))
+      lastHref.current = location.href
+    }
     void enter(target)
   }
   const followAddressRef = useRef(followAddress)
