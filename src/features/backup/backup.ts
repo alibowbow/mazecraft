@@ -2,6 +2,7 @@ import { migrateProject, serializeProject } from '../../core/maze/serialization'
 import type { MazeProject } from '../../core/maze/types'
 import type { ProjectRepository } from '../../storage/projectRepository'
 import { APP_VERSION } from '../../app/appInfo'
+import { DAILY_KEY, mergeDailyRecords, parseDailyRecord } from '../daily/dailyMaze'
 
 import { BACKUP_FORMAT, BACKUP_VERSION } from './backupFormat'
 
@@ -181,6 +182,11 @@ function restoreLocalData(data: Record<string, string>, storage = storageArea())
         const incoming = readChallengeData(value)
         if (!incoming) continue
         if (writeMerged(storage, key, current, JSON.stringify(mergeChallengeData(readChallengeData(current), incoming)))) restored++
+      } else if (key === DAILY_KEY) {
+        // Days finished on either device both count toward the streak.
+        const incoming = parseDailyRecord(value)
+        if (!incoming) continue
+        if (writeMerged(storage, key, current, JSON.stringify(mergeDailyRecords(parseDailyRecord(current), incoming)))) restored++
       } else if (current === null) {
         // Preferences already chosen on this device are kept.
         storage.setItem(key, value)
@@ -195,8 +201,8 @@ function restoreLocalData(data: Record<string, string>, storage = storageArea())
 
 /**
  * Restore without losing anything on this device: a project is replaced only
- * by a newer copy of itself, earned challenge stars are never lowered and
- * the faster stage times are kept.
+ * by a newer copy of itself, earned challenge stars are never lowered, the
+ * faster stage times are kept, and daily-maze days from both sides count.
  */
 export async function restoreBackup(backup: MazecraftBackup, repository: ProjectRepository): Promise<RestoreSummary> {
   const summary: RestoreSummary = { added: 0, updated: 0, kept: 0, invalid: 0, settings: 0 }

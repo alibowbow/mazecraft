@@ -1,11 +1,13 @@
 import {
   ArrowDownUp,
   ArrowRight,
+  CalendarDays,
   CircleHelp,
   Clock3,
   Copy,
   Download,
   FileText,
+  Flame,
   FolderOpen,
   Image as ImageIcon,
   MessageSquareText,
@@ -34,6 +36,8 @@ import draftingDesk from '../../assets/drafting-desk-v2.webp'
 import waterGarden from '../../assets/water-garden.jpg'
 import type { InfoTab } from '../info/InfoDialog'
 import type { CampaignSummary } from '../craft/campaignIndex'
+import type { DailyInfo } from '../daily/dailyMaze'
+import { formatDuration } from '../player/playerEngine'
 
 const PAGE_SIZE = 12
 
@@ -107,6 +111,9 @@ interface HomeScreenProps {
   onChallenges?: () => void
   /** Progress through the challenge campaign, for the water door. */
   challenge?: CampaignSummary
+  /** Today's maze: its setting, a preview once built, today's best and the streak. */
+  daily?: { info: DailyInfo; preview: MazeProject | null; best: number | null; streak: number }
+  onDaily?: () => void
   onDuplicate: (project: MazeProject) => void
   onDelete: (project: MazeProject) => void
   onExport: (project: MazeProject) => void
@@ -129,6 +136,8 @@ export function HomeScreen({
   onCraft,
   onChallenges,
   challenge,
+  daily,
+  onDaily,
   onDuplicate,
   onDelete,
   onExport,
@@ -273,6 +282,24 @@ export function HomeScreen({
           </article>
         </div>
       </section>
+
+      {daily && onDaily && (
+        <section className="daily-card" aria-labelledby="daily-title">
+          <button type="button" className="daily-preview" onClick={onDaily} aria-label="오늘의 미로 미리보기, 눌러서 풀기">
+            {daily.preview ? <ProjectMiniature project={daily.preview} /> : <span className="daily-preview-empty" aria-hidden="true" />}
+          </button>
+          <div className="daily-copy">
+            <span className="daily-kicker"><CalendarDays size={14} aria-hidden="true" />오늘의 미로 · {daily.info.dateLabel}</span>
+            <h2 id="daily-title">{daily.info.shapeLabel} 모양 · {daily.info.difficultyLabel}</h2>
+            <p>매일 자정에 새 미로가 하나 열려요. 오늘은 모두 같은 미로를 풀어요.</p>
+          </div>
+          <div className="daily-meta">
+            <span className={daily.streak ? 'is-lit' : ''}><Flame size={15} aria-hidden="true" />연속 {daily.streak}일</span>
+            <span>오늘 최고 {daily.best ? formatDuration(daily.best) : '—'}</span>
+            <button type="button" className="button daily-play" onClick={onDaily}>{daily.best ? '다시 도전' : '오늘의 미로 풀기'}<ArrowRight size={16} /></button>
+          </div>
+        </section>
+      )}
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">
         <div className="section-heading">

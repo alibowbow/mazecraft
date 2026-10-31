@@ -31,6 +31,7 @@ import { looksLikeBackup, MAX_BACKUP_FILE_SIZE } from '../features/backup/backup
 import type { InfoTab } from '../features/info/InfoDialog'
 import { resolveStudioQuality } from '../features/waterSimulation/graphics'
 import { summarizeCampaign } from '../features/craft/campaignIndex'
+import { createDailyMaze, dailyInfo, dailyKey, dailyStreak, readDailyRecord, recordDailyFinish } from '../features/daily/dailyMaze'
 import {
   createAutosave,
   describeStorageError,
@@ -241,6 +242,10 @@ export function App() {
   const [systemDark, setSystemDark] = useState(prefersDark)
   const [qualityPreference, setQualityPreference] = useState<EffectQuality>(() => readSettings().effectQuality)
   const [storageVolatile, setStorageVolatile] = useState(false)
+  // Today's maze: the day being played, its record, and a preview for the home.
+  const [daily, setDaily] = useState<string | null>(null)
+  const [dailyRecord, setDailyRecord] = useState(readDailyRecord)
+  const [dailyPreview, setDailyPreview] = useState<MazeProject | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const cancelGenerationRef = useRef<() => void>(() => undefined)
   const toastId = useRef(0)
@@ -261,6 +266,19 @@ export function App() {
   const [restores, setRestores] = useState(0)
   // route and restores are not read inside; they mark when the stored stars may have changed.
   const campaign = useMemo(() => summarizeCampaign(), [route, restores])
+  const today = dailyKey()
+  const dailyCard = useMemo(() => ({
+    info: dailyInfo(today), preview: dailyPreview?.id === `daily-${today}` ? dailyPreview : null,
+    best: dailyRecord.best[today] ?? null, streak: dailyStreak(dailyRecord, today),
+  }), [today, dailyPreview, dailyRecord])
+  // Build today's maze for the home preview after the home has painted.
+  useEffect(() => {
+    if (route !== 'home' || dailyPreview?.id === `daily-${today}`) return
+    const timer = window.setTimeout(() => {
+      try { setDailyPreview(createDailyMaze(today)) } catch { /* The card works without a preview. */ }
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [route, today, dailyPreview])
   const studioQuality = useMemo(() => resolveStudioQuality(qualityPreference), [qualityPreference])
   const autosave = useMemo(
     () =>
@@ -308,6 +326,19 @@ export function App() {
     }
   }
 
+  /** Open today's maze to play; it is never saved to the collection. */
+  const startDaily = () => {
+    const key = dailyKey()
+    const next = dailyPreview?.id === `daily-${key}` ? dailyPreview : createDailyMaze(key)
+    // The home card shows the same maze on the way back without building it again.
+    if (next !== dailyPreview) setDailyPreview(next)
+    setProject(next)
+    setSharedPlay(true)
+    setSharedSolution(null)
+    setRecordCreator(false)
+    setDaily(key)
+  }
+
   /** Arrive at a screen; the address bar is already pointing at it. */
   const enter = async (target: AppLocation) => {
     const id = ++navigationId.current
@@ -321,7 +352,9 @@ export function App() {
       setSharedSolution(null)
       setProject(null)
       setWaterProject(null)
+      setDaily(null)
     }
+    if (target.screen === 'play' && target.daily) startDaily()
     if (target.screen === 'home') {
       setGenerationTrace([])
       await refreshProjects()
@@ -438,6 +471,13 @@ export function App() {
     void (async () => {
       const target = parseLocation(location.hash)
       lastHref.current = location.href
+      if (target.daily) {
+        startDaily()
+        dispatch({ type: 'PLAY' })
+        setRoute('play')
+        void checkStorage()
+        return
+      }
       if (openShared(() => active)) {
         void checkStorage()
         return
@@ -654,7 +694,8 @@ export function App() {
         if (backup) {
           const summary = await restoreBackup(backup, localProjectRepository)
           await refreshProjects()
-          // Restored stars show on the home at once.
+          // Restored stars and daily days show on the home at once.
+          setDailyRecord(readDailyRecord())
           setRestores((count) => count + 1)
           toast(describeRestore(summary), summary.invalid > 0 && summary.added + summary.updated === 0)
           return
@@ -698,7 +739,18 @@ export function App() {
     navigate({ screen: 'play' })
   }
 
+  const openDaily = () => navigate({ screen: 'play', daily: true })
+
+  const finishDaily = useCallback((elapsedMs: number) => {
+    if (daily) setDailyRecord(recordDailyFinish(daily, elapsedMs))
+  }, [daily])
+
   const exitPlay = () => {
+    if (daily) {
+      // Back to where today's maze was opened from (normally the home).
+      navigate({ screen: 'home' })
+      return
+    }
     if (sharedPlay) {
       void home()
       return
@@ -720,6 +772,7 @@ export function App() {
       setSharedPlay(false)
       setSharedSolution(null)
       setRecordCreator(false)
+      setDaily(null)
       setProject(next)
       setGenerationTrace([])
       dispatch({ type: 'OPEN' })
@@ -795,6 +848,8 @@ export function App() {
             onCraft={() => openCraft('free')}
             onChallenges={() => openCraft('challenge')}
             challenge={campaign}
+            daily={dailyCard}
+            onDaily={openDaily}
             onDuplicate={(source) => void duplicate(source)}
             onDelete={(source) => void remove(source)}
             onExport={(source) => setExportProject(source)}
@@ -829,8 +884,17 @@ export function App() {
         {route === 'play' && project && (
           <Suspense fallback={<RouteFallback label="플레이를 준비하는 중…" />}>
             <PlayerScreen
+              key={daily ?? project.id}
               project={project}
               shared={sharedPlay}
+              daily={daily ? {
+                info: dailyInfo(daily),
+                streak: dailyStreak(dailyRecord, daily),
+                // Counted as if today were finished, so the clear card is right from its first paint.
+                finishedStreak: dailyStreak({ best: { ...dailyRecord.best, [daily]: 1 } }, daily),
+                best: dailyRecord.best[daily] ?? null,
+              } : undefined}
+              onFinish={daily ? finishDaily : undefined}
               allowSolution={!sharedPlay || Boolean(sharedSolution?.length)}
               recordCreator={recordCreator}
               onExit={exitPlay}

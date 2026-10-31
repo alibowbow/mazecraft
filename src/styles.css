@@ -1429,6 +1429,9 @@ svg {
   color: var(--ink);
   background: var(--surface);
   box-shadow: var(--shadow);
+  /* Korean lines break between words; long tokens such as links still wrap. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .completion-card h2 {
@@ -5358,3 +5361,44 @@ h1, h2, h3 { font-weight: 500; letter-spacing: -0.045em; }
 .hub-progress b { color: #c48c22; font-weight: 700; }
 .hub-progress-bar { position: relative; flex: 0 0 72px; height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .hub-progress-bar i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: linear-gradient(90deg, var(--primary), #e0a93a); }
+
+/* Today's maze */
+.daily-card {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 22px;
+  margin: 0 0 clamp(36px, 5vw, 56px);
+  padding: 16px 22px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--panel-shadow);
+  word-break: keep-all;
+}
+.daily-preview { display: block; width: 150px; height: 92px; padding: 0; border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.daily-preview svg { display: block; width: 100%; height: 100%; }
+.daily-preview-empty { display: block; width: 100%; height: 100%; background: linear-gradient(110deg, var(--surface-2) 30%, var(--surface-3) 50%, var(--surface-2) 70%); background-size: 200% 100%; animation: daily-shimmer 1.4s linear infinite; }
+.daily-copy { display: grid; gap: 4px; min-width: 0; }
+.daily-kicker { display: inline-flex; align-items: center; gap: 6px; color: var(--primary); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; }
+.daily-copy h2 { margin: 0; font-size: 1.2rem; font-weight: 600; }
+.daily-copy p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.6; }
+.daily-meta { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+.daily-meta > span { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.daily-meta > span.is-lit { color: #d9822b; font-weight: 650; }
+.daily-play { gap: 6px; }
+@keyframes daily-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (max-width: 900px) {
+  .daily-card { grid-template-columns: 120px minmax(0, 1fr); gap: 14px 16px; padding: 14px; }
+  .daily-preview { width: 120px; height: 80px; }
+  .daily-meta { grid-column: 1 / -1; flex-wrap: wrap; justify-content: space-between; }
+}
+@media (max-width: 540px) {
+  .daily-card { grid-template-columns: 96px minmax(0, 1fr); }
+  .daily-preview { width: 96px; height: 70px; }
+  .daily-copy h2 { font-size: 1.05rem; }
+  .daily-copy p { display: none; }
+  .daily-meta .daily-play { flex: 1 0 100%; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) { .daily-preview-empty { animation: none; } }
+.completion-daily { margin: -4px 0 4px; color: #d9822b; font-size: 0.85rem; font-weight: 650; }

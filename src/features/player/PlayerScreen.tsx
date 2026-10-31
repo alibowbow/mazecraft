@@ -29,6 +29,8 @@ import { downloadBlob } from '../export/download'
 import { createShareLink, createSharePayload } from '../share'
 import { compareReplayTimes, createReplay, sampleReplay } from '../replay/replay'
 import { revealProgress, safeSecretLink, secretText } from '../secretReveal/reveal'
+import { copyShareLink } from '../share/webShare'
+import { dailyLink, dailyShareText, type DailyInfo } from '../daily/dailyMaze'
 import {
   applyPlayerMove,
   createPlayerSession,
@@ -49,6 +51,14 @@ interface PlayerScreenProps {
   onExit: () => void
   onRemix?: (project: MazeProject) => void
   onCreatorReplay?: (replay: CreatorReplay) => void
+  /**
+   * Today's maze: its date and setting, the days in a row it was finished
+   * (now, and once today is finished) and today's best. Its records live in
+   * the daily store, not per maze.
+   */
+  daily?: { info: DailyInfo; streak: number; finishedStreak: number; best: number | null }
+  /** A finish, for records kept outside the player (the daily streak). */
+  onFinish?: (elapsedMs: number) => void
 }
 
 const parseVisited = (keys: string[]) =>
@@ -120,6 +130,8 @@ export function PlayerScreen({
   onExit,
   onRemix,
   onCreatorReplay,
+  daily,
+  onFinish,
 }: PlayerScreenProps) {
   const canvasRef = useRef<MazeCanvasHandle>(null)
   const [session, setSession] = useState<PlayerSession>(() => createPlayerSession(project.startCell))
@@ -133,9 +145,11 @@ export function PlayerScreen({
     useState<MazeAnimationSnapshot | null>(null)
   const [timedOut, setTimedOut] = useState(false)
   const [personalBest, setPersonalBest] = useState<number | null>(() => {
+    if (daily) return daily.best
     const value = Number(readStored(personalBestKey(project)) ?? Number.NaN)
     return Number.isFinite(value) && value > 0 ? value : null
   })
+  const [shareState, setShareState] = useState<'copied' | 'failed' | null>(null)
   const completionHandled = useRef(false)
   const timeoutHandled = useRef(false)
   const solutionControllerRef = useRef<MazeAnimationController | null>(null)
@@ -237,17 +251,28 @@ export function PlayerScreen({
     completionHandled.current = true
     if (sound) playTone('complete')
     if (personalBest === null || session.elapsedMs < personalBest) {
-      writeStored(personalBestKey(project), String(session.elapsedMs))
+      // A new maze every day would leave a key per day behind, so the daily
+      // best is kept by onFinish in its own bounded record instead.
+      if (!daily) writeStored(personalBestKey(project), String(session.elapsedMs))
       setPersonalBest(session.elapsedMs)
     }
-    recordAttempt(project.id, {
-      completedAt: new Date().toISOString(),
-      durationMs: session.elapsedMs,
-      moves: session.stats.moves,
-      hints: session.stats.hintsUsed,
-    })
+    if (!daily) {
+      recordAttempt(project.id, {
+        completedAt: new Date().toISOString(),
+        durationMs: session.elapsedMs,
+        moves: session.stats.moves,
+        hints: session.stats.hintsUsed,
+      })
+    }
     if (recordCreator) onCreatorReplay?.(createReplay(session.frames, true))
-  }, [onCreatorReplay, personalBest, project, recordCreator, session, sound])
+    onFinish?.(session.elapsedMs)
+  }, [daily, onCreatorReplay, onFinish, personalBest, project, recordCreator, session, sound])
+
+  useEffect(() => {
+    if (!shareState) return
+    const timer = window.setTimeout(() => setShareState(null), 2200)
+    return () => window.clearTimeout(timer)
+  }, [shareState])
 
   const move = useCallback(
     (direction: MoveDirection) => {
@@ -319,9 +344,37 @@ export function PlayerScreen({
   }
 
   const copyShare = async () => {
-    const link = createShareLink(createSharePayload(project))
-    if (!link.ok) return
-    await navigator.clipboard.writeText(link.url)
+    try {
+      if (daily) {
+        // Today's result with a link that opens the same maze for a friend today.
+        const text = dailyShareText(daily.info, {
+          time: formatDuration(session.elapsedMs),
+          hints: session.stats.hintsUsed,
+          streak: daily.finishedStreak,
+        })
+        const url = dailyLink()
+        const touch = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+        if (touch && typeof navigator.share === 'function') {
+          try {
+            await navigator.share({ title: project.title, text, url })
+            return
+          } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') return
+          }
+        }
+        await copyShareLink(`${text}\n${url}`)
+      } else {
+        const link = createShareLink(createSharePayload(project))
+        if (!link.ok) {
+          setShareState('failed')
+          return
+        }
+        await copyShareLink(link.url)
+      }
+      setShareState('copied')
+    } catch {
+      setShareState('failed')
+    }
   }
 
   const toggleSolutionPath = () => {
@@ -436,13 +489,17 @@ export function PlayerScreen({
       {!started && (
         <div className="completion-backdrop">
           <section className="completion-card" aria-labelledby="challenge-title">
-            <span className="completion-kicker">{shared ? 'SHARED CHALLENGE' : recordCreator ? 'CREATOR TEST' : 'PLAY TEST'}</span>
+            <span className="completion-kicker">{daily ? 'DAILY MAZE' : shared ? 'SHARED CHALLENGE' : recordCreator ? 'CREATOR TEST' : 'PLAY TEST'}</span>
             <h2 id="challenge-title">{project.title}</h2>
-            <p>{recordCreator ? '완주하면 이동 경로와 시간이 제작자 고스트로 저장됩니다.' : '시작점 S에서 종료점 E까지 길을 찾아보세요.'}</p>
+            <p>{daily
+              ? `${daily.info.weekday} · ${daily.info.shapeLabel} 모양 · ${daily.info.difficultyLabel}. 오늘은 모두 같은 미로를 풀어요. 월요일이 가장 쉽고 일요일이 가장 어려워요.`
+              : recordCreator ? '완주하면 이동 경로와 시간이 제작자 고스트로 저장됩니다.' : '시작점 S에서 종료점 E까지 길을 찾아보세요.'}</p>
             <div className="completion-stats">
               <div><span>난이도</span><strong>{project.mazeMetrics.difficultyScore}점</strong></div>
               <div><span>예상 시간</span><strong>약 {project.mazeMetrics.estimatedSeconds}초</strong></div>
               <div><span>힌트</span><strong>{project.gameRules.allowedHints}회</strong></div>
+              {daily && <div><span>연속 기록</span><strong>{daily.streak}일</strong></div>}
+              {daily && personalBest !== null && <div><span>오늘 최고</span><strong>{formatDuration(personalBest)}</strong></div>}
             </div>
             <div className="completion-actions">
               <button className="button" onClick={() => begin(false)}><Play size={17} />혼자 플레이</button>
@@ -492,8 +549,9 @@ export function PlayerScreen({
       {session.completed && (
         <div className="completion-backdrop">
           <section className="completion-card" aria-live="polite">
-            <span className="completion-kicker">UNLOCKED</span>
-            <h2>이야기가 열렸습니다</h2>
+            <span className="completion-kicker">{daily ? 'DAILY CLEAR' : secret.kind === 'none' ? 'CLEAR' : 'UNLOCKED'}</span>
+            <h2>{daily ? '오늘의 미로 완주!' : secret.kind === 'none' ? '완주했어요!' : '이야기가 열렸습니다'}</h2>
+            {daily && <p className="completion-daily">연속 {daily.finishedStreak}일째 · 내일 새 미로가 열려요</p>}
             {secretImage && <img className="completion-image" src={secretImage} alt={secret.kind === 'image' || secret.kind === 'image-message' ? secret.alt : ''} />}
             {secret.kind === 'link' ? (
               secretLink ? (
@@ -513,14 +571,16 @@ export function PlayerScreen({
               <div><span>잘못 든 길</span><strong>{session.stats.wrongTurns}회</strong></div>
               <div><span>힌트</span><strong>{session.stats.hintsUsed}회</strong></div>
               <div><span>힌트 패널티</span><strong>{session.stats.hintsUsed ? `+${session.stats.hintsUsed * 5}초` : '없음'}</strong></div>
-              <div><span>개인 최고</span><strong>{personalBest === null ? '—' : formatDuration(personalBest)}</strong></div>
-              <div><span>제작자 기록</span><strong>{project.creatorReplay?.completed ? formatDuration(project.creatorReplay.durationMs) : '—'}</strong></div>
-              <div><span>제작자 차이</span><strong>{creatorDifference === null ? '—' : `${Math.abs(creatorDifference / 1000).toFixed(2)}초 ${creatorDifference >= 0 ? '승리' : '뒤짐'}`}</strong></div>
+              <div><span>{daily ? '오늘 최고' : '개인 최고'}</span><strong>{formatDuration(Math.min(personalBest ?? Infinity, session.elapsedMs))}</strong></div>
+              {!daily && <>
+                <div><span>제작자 기록</span><strong>{project.creatorReplay?.completed ? formatDuration(project.creatorReplay.durationMs) : '—'}</strong></div>
+                <div><span>제작자 차이</span><strong>{creatorDifference === null ? '—' : `${Math.abs(creatorDifference / 1000).toFixed(2)}초 ${creatorDifference >= 0 ? '승리' : '뒤짐'}`}</strong></div>
+              </>}
             </div>
             <div className="completion-actions">
               <button className="button" onClick={restart}><RefreshCw size={17} />다시 도전</button>
               <button className="button secondary" onClick={saveResult}><Download size={17} />결과 이미지</button>
-              <button className="button secondary" onClick={copyShare}><Share2 size={17} />링크 복사</button>
+              <button className="button secondary" onClick={() => void copyShare()}><Share2 size={17} />{shareState === 'copied' ? '복사했어요' : shareState === 'failed' ? '복사하지 못했어요' : daily ? '결과 공유' : '링크 복사'}</button>
               {project.remixAllowed && onRemix && <button className="button secondary" onClick={() => onRemix(project)}>이 미로 리믹스</button>}
               <button className="button ghost" onClick={onExit}>나가기</button>
             </div>

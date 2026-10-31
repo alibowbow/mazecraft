@@ -9,6 +9,8 @@ export interface AppLocation {
   craftMode?: CraftMode
   /** The address carries a shared maze (#/play?data=… or #/water?data=…). */
   shared?: boolean
+  /** Today's maze (#/daily). */
+  daily?: boolean
 }
 
 /**
@@ -27,6 +29,7 @@ export function parseLocation(hash: string): AppLocation {
     case 'challenges': return { screen: 'craft', craftMode: 'challenge' }
     case 'studio': return { screen: 'studio' }
     case 'play': return shared ? { screen: 'play', shared } : { screen: 'play' }
+    case 'daily': return { screen: 'play', daily: true }
     default: return { screen: 'home' }
   }
 }
@@ -37,6 +40,6 @@ export function hashFor(location: AppLocation): string {
     case 'water': return '#/water'
     case 'craft': return location.craftMode === 'challenge' ? '#/challenges' : '#/craft'
     case 'studio': return '#/studio'
-    case 'play': return '#/play'
+    case 'play': return location.daily ? '#/daily' : '#/play'
   }
 }
