@@ -20,8 +20,8 @@ import type { MazeProject } from '../../core/maze'
 import type {
   ResolvedWaterQuality,
   WaterRuntimeMetrics,
-} from './waterSceneRuntime'
-import type { WaterSurfaceStyle } from './rendering'
+  WaterSurfaceStyle,
+} from './runtimeTypes'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from './freeSurface/runtime'
 import { describeGraphicsError } from './graphics'
 import {

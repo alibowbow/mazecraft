@@ -6,12 +6,7 @@ const ciSuite = process.env.PLAYWRIGHT_SUITE
 
 export default defineConfig({
   testDir: './e2e',
-  // The initial bootstrap file is retained for branch history but superseded by
-  // blender-water-runtime.spec.ts, which performs the awaited DOM assertions.
-  testIgnore: [
-    '**/blender-water.spec.ts',
-    ...(ciSuite === 'regression' ? ['**/water-studio.spec.ts', '**/water-garden.spec.ts'] : []),
-  ],
+  testIgnore: ciSuite === 'regression' ? ['**/water-studio.spec.ts', '**/water-garden.spec.ts'] : [],
   testMatch: ciSuite === 'studio' ? '**/water-studio.spec.ts'
     : ciSuite === 'garden' ? '**/water-garden.spec.ts' : undefined,
   // Studio/garden scenarios each own their page/context. Let sharding split each

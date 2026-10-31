@@ -1,6 +1,5 @@
 import type { MazeProject } from '../../../core/maze'
-import type { WaterSurfaceStyle } from '../rendering'
-import type { ResolvedWaterQuality, WaterPlaybackStatus, WaterRuntimeMetrics } from '../waterSceneRuntime'
+import type { ResolvedWaterQuality, WaterPlaybackStatus, WaterRuntimeMetrics, WaterSurfaceStyle } from '../runtimeTypes'
 import { buildFluidLayout } from './layout'
 import { FreeSurfaceRenderer } from './renderer'
 import { FreeSurfaceSolver } from './solver'

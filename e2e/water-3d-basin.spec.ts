@@ -5,17 +5,13 @@ import {
   openParticleWater, readWorkerProbe,
 } from './helpers/waterHarness'
 
-// The historical atlas UI was replaced by a conserved 3D basin.
-// Keep its real-browser shader/asset-loading gate on the current visible mode.
-test('고화질 3D 수조는 2D Worker를 보존하고 레거시 atlas 없이 렌더링된다', async ({ page }, testInfo) => {
+// The conserved 3D basin's real-browser shader gate: it runs beside the 2D
+// particle Worker without starting a second simulation Worker.
+test('고화질 3D 수조는 2D Worker를 보존하고 오류 없이 렌더링된다', async ({ page }, testInfo) => {
   test.setTimeout(e2eTimeout(60_000))
   const errors: string[] = []
-  const legacyRequests: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
-  page.on('request', request => {
-    if (/blender.*(?:atlas|water)|hydraulic\.worker/i.test(request.url())) legacyRequests.push(request.url())
-  })
   await installWorkerProbe(page)
   await importWaterProject(page, fallingWaterProject, 'high')
   const stage = await openParticleWater(page, 'surface-3d')
@@ -25,8 +21,6 @@ test('고화질 3D 수조는 2D Worker를 보존하고 레거시 atlas 없이 �
   const probe = await readWorkerProbe(page)
   expect(probe.fluidLayouts).toHaveLength(1)
   expect(probe.urls.filter(url => /fluid\.worker/.test(url))).toHaveLength(1)
-  expect(probe.urls.some(url => /hydraulic\.worker/.test(url))).toBe(false)
   await page.screenshot({ path: testInfo.outputPath('water-3d-runtime.png') })
-  expect(legacyRequests).toEqual([])
   expect(errors).toEqual([])
 })

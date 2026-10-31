@@ -88,7 +88,10 @@ Q_out = C_d A_open sqrt(2 g max(H_exit - H_boundary, 0))
 - 부피는 음수가 될 수 없으며 NaN 또는 Infinity가 발견되면 즉시 명확한 오류를 낸다.
 - topology와 CSR adjacency는 초기화할 때 한 번 만들고, step마다 객체·`Map`·`Set`·임시 배열을 만들지 않는다.
 
-물리는 Web Worker에서 실행하고 렌더러에는 20–30Hz snapshot을 보낸다. Worker를 사용할 수 없는 환경에서는 같은 네트워크·같은 방정식·같은 고정 step을 main thread에서 낮은 빈도로 실행한다. 저화질과 고화질은 시각 비용만 다르며 물리 결과는 같다.
+- 압력·중력 항은 명시적으로, 선형·2차 항력은 backward Euler로 푼다. 2차 방정식을 닫힌 형태로 풀기 때문에 step이나 저항이 커도 항력이 0을 넘어 유속 방향을 뒤집지 않는다.
+- 얇은 수막에는 수심에 따른 추가 저항을, 각 portal 유속에는 `Fr · sqrt(g h)` 기반 국소 상한을 적용해 젖고 마르는 경계를 안정화한다.
+
+3D 미로 수조(`freeSurface/basinSimulation.ts`)는 이 네트워크를 main thread에서 고정 1/120초 step으로 적분하고, 화면 프레임마다 밀린 시간만큼 step을 진행한다. 저화질과 고화질은 시각 비용만 다르며 물리 결과는 같다.
 
 ## 질량 보존 진단
 
@@ -107,29 +110,6 @@ relativeMassError = absoluteMassError
 
 일반 크기 fixture의 60초 상당 실행에서 `relativeMassError < 1e-5`를 유지한다. 저장량과 잔류량의 차이를 배출량으로 다시 정의해 보존을 증명하지 않는다.
 
-## 렌더링
+## 렌더링과 수명 주기
 
-정적 texture에는 통로 coverage, 벽/portal topology, source/outlet mask만 저장한다. 동적 texture는 미로 셀 크기로 유지하며 다음 채널을 snapshot마다 갱신한다.
-
-| 채널 | 값 |
-| --- | --- |
-| R | 정규화한 실제 수심 |
-| G | signed X velocity |
-| B | signed Y velocity |
-| A | 국소 유량·회전·압축에서 계산한 포말원 또는 포말 이력 |
-
-정적 고해상도 통로 mask가 닫힌 벽을 차단하고, 동적 깊이가 실제 물의 가시 영역을 결정한다. 고해상도 atlas 전체를 매 프레임 CPU에서 다시 만들지 않는다.
-
-수면은 넓은 방향성 파동, 중간 잔물결, 미세 디테일을 합성하고 실제 속도 방향에 정렬한다. 각 파장대는 미로 seed와 수면 스타일로부터 결정되는 고유한 위상과 횡방향 편차를 가진다. 같은 seed·스타일이면 항상 같은 수면을 만들고, Low와 High가 공유하는 파장대는 품질과 무관하게 같은 값을 사용한다. 각 파장대의 시간 위상에는 선형 중력파의 deep-water-normalized 유한 수심 계수 `sqrt(tanh(kh))`를 적용한다. 여기서 `k`는 셀 폭을 실제 미터로 환산한 파수이고 `h`는 셀 단위 동적 hydraulic depth다. 이는 전체 파동 solver가 아니라 렌더링 위상 보정이다. 따라서 정지한 웅덩이는 흐르는 줄무늬가 계속 지나가지 않고, 얕은 셀은 파동 진폭뿐 아니라 위상 속도도 작아진다.
-
-한 번 생성해 재사용하는 반복 가능 디테일 texture는 RG에 중앙 차분으로 구한 signed normal XY perturbation을, BA에 서로 다른 저주파·고주파 포말 구조를 담는다. fragment shader는 RG를 기존처럼 두 크기로 샘플해 변형된 수면 법선에 합성하고, BA는 포말 덩어리의 밝기 변화에만 쓴다. 동일한 두 texture sample의 채널을 재활용하므로 texture fetch, draw call, geometry는 추가하지 않는다.
-
-`flow-coupled multiband optics`는 변형된 수면 위치에서 법선을 다시 구해 파동 기하와 조명을 일치시킨다. 그 법선으로 Fresnel과 analytic studio-sky approximation을 계산하고, 햇빛을 향한 crest에는 스타일별 subsurface-scatter approximation을 더한다. 따라서 반사와 glitter가 평면 위를 따로 미끄러지지 않고 실제 파동의 방향과 crest를 따라 움직인다. 이 단계는 렌더 pass나 mesh를 추가하지 않는 shader 작업이며 수리 solver의 깊이·속도 상태를 변경하지 않는다.
-
-[Poseidon](https://github.com/owenyuwono/poseidon)은 넓고 주기적인 WebGPU FFT 해수면이므로 MazeCraft의 내부 유체 solver로 사용하지 않는다. 다중 파장, 방향성, Fresnel, analytic sky reflection, crest scatter, 잔류 포말이라는 시각 원리만 참고했다. 해당 저장소에는 명시적인 루트 라이선스 파일이 없으므로 Poseidon 소스 코드 재사용 없이 MazeCraft의 WebGL 경로와 hydraulic state에 맞춰 독자 구현했다.
-
-## 일시정지와 수명 주기
-
-일시정지는 solver, snapshot 보간, wave time, 포말 이력, particles, camera intro를 모두 멈춘다. 재시작은 simulation generation을 증가시켜 이전 Worker snapshot을 폐기하고 부피·누적량·동적 texture·포말·시각 clock을 함께 초기화한다. 탭이 숨겨지면 simulation을 멈추며 돌아온 시간을 한꺼번에 따라잡지 않는다.
-
-종료 시 Worker, message listener, RAF, texture, render target, material, geometry, controls, PMREM과 WebGL context를 모두 정리한다.
+물의 렌더링, 2D 입자 Worker, 일시정지·재시작·탭 숨김 처리와 자원 정리는 [자유수면 물 시뮬레이션](free-surface-water.md)에 정리되어 있다. 이 문서의 네트워크와 solver는 그 런타임의 3D 미로 수조가 사용한다. 물의 정원 프리셋과 크래프트는 `garden/physics`의 수심 평균 천수(shallow-water) 격자 모델을 따로 쓴다.
