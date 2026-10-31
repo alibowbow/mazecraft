@@ -24,6 +24,8 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { BottomSheet } from '../../components/BottomSheet'
 import { BrandMark } from '../../components/BrandMark'
 import type { MazeProject } from '../../core/maze/types'
+import draftingDesk from '../../assets/drafting-desk-v2.webp'
+import waterGarden from '../../assets/water-garden.jpg'
 
 export type ProjectTemplate = 'basic' | 'text' | 'image' | 'secret' | 'time-attack' | 'worksheet'
 
@@ -197,7 +199,7 @@ export function HomeScreen({
         </div>
         <div className="hub-doors">
           <article className="hub-door door-maze">
-            <figure><img src="/assets/drafting-desk-v2.webp" width="1536" height="1024" alt="제도용 종이 위에 손으로 그린 미로와 설계 도구" decoding="async" fetchPriority="high" /></figure>
+            <figure><img src={draftingDesk} width="1536" height="1024" alt="제도용 종이 위에 손으로 그린 미로와 설계 도구" decoding="async" fetchPriority="high" /></figure>
             <div className="hub-door-copy">
               <span className="hub-door-kicker"><PencilRuler size={15} /> 01 · MAZE STUDIO</span>
               <h2>미로 제작</h2>
@@ -213,7 +215,7 @@ export function HomeScreen({
             </div>
           </article>
           <article className="hub-door door-water">
-            <figure><img src="/assets/water-garden.jpg" width="1164" height="776" alt="도자기 미로 정원을 따라 흐르는 물과 수차" decoding="async" /></figure>
+            <figure><img src={waterGarden} width="1164" height="776" alt="도자기 미로 정원을 따라 흐르는 물과 수차" decoding="async" /></figure>
             <div className="hub-door-copy">
               <span className="hub-door-kicker"><Waves size={15} /> 02 · WATER GARDEN</span>
               <h2>물의 정원</h2>

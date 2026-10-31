@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request replaces the running checks.
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest

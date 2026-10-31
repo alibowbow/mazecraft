@@ -5,12 +5,16 @@ on:
     paths:
       - 'src/features/waterSimulation/**'
       - 'src/features/waterStudio/**'
-      - 'e2e/deep-basin.spec.ts'
-      - 'e2e/cascade-optics.spec.ts'
+      - 'e2e/free-surface-optics.spec.ts'
+      - 'e2e/water-garden.spec.ts'
       - '.github/workflows/basin-visual.yml'
 
 permissions:
   contents: read
+
+concurrency:
+  group: basin-visual-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   render:
@@ -21,11 +25,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # deep-basin and cascade-optics were replaced by the authored water
+          # gardens (water-garden.spec.ts) when the 3D presets were rebuilt.
           - scene: optics
-            specs: e2e/cascade-optics.spec.ts e2e/free-surface-optics.spec.ts
+            specs: e2e/free-surface-optics.spec.ts
+            suite: ''
           - scene: app
-            specs: e2e/deep-basin.spec.ts
-    timeout-minutes: 15
+            specs: e2e/water-garden.spec.ts
+            suite: garden
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,6 +44,8 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test ${{ matrix.specs }} --workers=1
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
