@@ -286,13 +286,13 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   return <main className={`water-studio${focus ? ' is-focused' : ''}${tuningOpen ? ' tuning-open' : ''}${mode === 'free-surface' ? ' is-2d' : ''}`} data-testid="water-studio" data-theme-name={preferences.look.theme}
     style={{ '--ws-scene': STUDIO_BACKGROUND, '--ws-material': selectedTheme.color } as CSSProperties}>
     <header className="ws-header">
-      <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome ?? onLibrary}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER ATELIER</span></div></button>
+      <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome ?? onLibrary}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER GARDEN</span></div></button>
       <nav className="ws-navigation" aria-label="주 메뉴"><button onClick={onHome ?? onLibrary}>홈</button><span aria-current="page">물의 정원</span>{onCraft && <button onClick={onCraft}>크래프트</button>}<button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
       <div className="ws-header-actions">{onHelp && <button className="ws-icon ws-help-button" aria-label="도움말과 설정" title="도움말과 설정" onClick={onHelp}><CircleHelp size={19} /></button>}<button className="ws-create-shortcut" aria-label="미로 만들기" onClick={openCreation}><Wand2 size={17} /><span>미로 만들기</span></button><button className="ws-icon" aria-label="몰입 화면" aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? <X size={19} /> : <Expand size={19} />}</button><button className="ws-save" aria-label={saveState === 'saved' ? '미로 저장 완료' : '미로 저장'} disabled={saveState === 'saving'} onClick={() => void save()}>{saveState === 'saved' ? <Check size={16} /> : <Save size={16} />}<span>{saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장 완료' : saveState === 'error' ? '다시 저장' : '미로 저장'}</span></button></div>
     </header>
     <div className="ws-workspace">
       <section className={`ws-view${cinematic && !paused && mode === 'surface-3d' && sculpture?.startsWith('garden:') ? ' is-cinematic' : ''}`} aria-label="물 미로 작업 공간">
-        <div className="ws-scene-heading"><span className="ws-eyebrow">WATER ATELIER / {project.mazeGraph.cols} × {project.mazeGraph.rows}</span><h1>{isDesigned ? project.title : selectedPreset.name}</h1><p>{isDesigned ? '나의 모양, 나의 물길' : selectedPreset.caption}</p></div>
+        <div className="ws-scene-heading"><span className="ws-eyebrow">WATER GARDEN / {project.mazeGraph.cols} × {project.mazeGraph.rows}</span><h1>{isDesigned ? project.title : selectedPreset.name}</h1><p>{isDesigned ? '나의 모양, 나의 물길' : selectedPreset.caption}</p></div>
         <div className="ws-status"><i className={paused ? 'is-paused' : ''} />{renderState === 'ready' ? sceneLabel : renderState === 'error' ? '실행 오류' : '준비 중'}</div>
         <div className="ws-canvas" ref={mountRef} data-testid="water-studio-canvas" data-renderer={renderState} data-view-mode={mode} data-particle-count={status?.particleCount ?? 0} data-simulation-time={status?.simulationTime ?? 0}
           onPointerDownCapture={event => {
