@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Blocks, Castle, ChartBarDecreasing, ChevronDown, CircleHelp, Cog, Cylinder, Drill, Droplets, Expand, Fan,
-  Flower2, Grid3x3, LayoutTemplate, Link, Lock, Map, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Shuffle, Sparkles, Spline, Tornado, Trash2, Video, Waves, X, type LucideIcon,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Blocks, ChevronDown, CircleHelp, Droplets, Expand,
+  LayoutTemplate, Lightbulb, Lock, Map, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Shuffle, Sparkles, Trash2, Video, Waves, X,
 } from 'lucide-react'
 import { BrandMark } from '../../components/BrandMark'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/freeSurface/runtime'
@@ -12,23 +12,24 @@ import { CinematicToggle, FLOATER_FAILED_MESSAGE, FloaterMenu, SoundToggle, Spee
 import { describeGraphicsError, GRAPHICS_LOST_MESSAGE, watchGraphicsContext } from '../waterSimulation/graphics'
 import {
   compileCraft, CRAFT_EXITS, CRAFT_MODULES, craftModule, craftTemplates, hasSpout,
-  type CraftCourse, type CraftExit, type CraftKind, type CraftModule, type CraftSize, type CraftTurn,
+  type CraftCourse, type CraftKind, type CraftModule, type CraftSize, type CraftTurn,
 } from '../waterSimulation/garden/craft'
 import { registerGardenDesign } from '../waterSimulation/garden/layout'
 import { adviseCraft, spareHeight, type CraftAdvice } from '../waterSimulation/garden/craftAdvisor'
 import { CraftPlanView } from './CraftPlanView'
-import { ChallengePanel, Stars } from './ChallengePanel'
-import { CRAFT_KEY, readCourse, readChallengeSave, writeChallengeSave, nextChallengeId, type ChallengeSave } from './craftStorage'
-import { CHALLENGES, challengeCourse, judgeGoals, starsFor, type Challenge } from '../waterSimulation/garden/challenges'
+import { ChallengePanel } from './ChallengePanel'
+import { DEVICE_ICONS, EXIT_ICONS } from './craftIcons'
+import { campaignCompletedBy, chapterCompletedBy, coachStep, missReason } from './challengeFlow'
+import { playCraftSound, primeCraftSounds } from './craftSounds'
+import {
+  campaignProgress, CRAFT_KEY, nextChallengeId, nextUnstarredStage, readChallengeSave, readCourse, writeChallengeSave, type ChallengeSave,
+} from './craftStorage'
+import { StageBriefing, StageClear, StageCoach, type ClearInfo } from './StageOverlays'
+import { CHALLENGES, CHAPTERS, challengeCourse, judgeGoals, stageNumber, starBreakdown, type Challenge } from '../waterSimulation/garden/challenges'
 import type { GardenSculpture } from '../waterSimulation/garden'
 import '../waterStudio/waterStudio.css'
 import './craft.css'
 
-const ICONS: Record<CraftKind, LucideIcon> = {
-  maze: Grid3x3, terraces: ChartBarDecreasing, pond: Flower2, noria: Cog, screw: Drill,
-  spiral: Tornado, zigzag: Spline, aqueduct: Castle, siphon: Cylinder,
-}
-const EXIT_ICONS: Record<CraftExit, LucideIcon> = { plain: Droplets, tipper: Link, wheel: Fan, chain: Link }
 const CATEGORY_NAMES = { basin: '수조', lift: '양수 장치', channel: '수로', special: '특수 장치' } as const
 
 /** A short, stable key for a course, so an unchanged course keeps its garden. */
@@ -37,6 +38,25 @@ function courseKey(course: CraftCourse): `craft-${string}` {
   let h = 2166136261
   for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) }
   return `craft-${(h >>> 0).toString(36)}`
+}
+
+let answerSerial = 0
+/** The stage's known solution with fresh ids, ready to drop into the course. */
+const answerFor = (stage: Challenge): CraftModule[] => stage.solution.map(module => ({ ...module, id: `answer-${module.kind}-${answerSerial++}` }))
+
+/** The scene before the first device: the source, an empty gap, and the pond the water must reach. */
+function EmptyCourse({ source }: { source: number }) {
+  return <svg className="craft-empty-art" viewBox="0 0 320 120" aria-hidden="true">
+    <rect x="18" y="20" width="44" height="78" rx="10" />
+    <path className="water" d="M40 34 v18" />
+    <path className="route" d="M66 70 C 120 70, 130 96, 160 96 S 210 74, 252 74" />
+    <rect className="slot" x="130" y="74" width="60" height="38" rx="12" />
+    <text x="160" y="98">?</text>
+    <ellipse cx="282" cy="80" rx="26" ry="15" />
+    <ellipse className="water" cx="282" cy="80" rx="15" ry="8" />
+    <text className="label" x="40" y="114">{`수원 ${source.toFixed(1)} m`}</text>
+    <text className="label" x="282" y="114">종착 연못</text>
+  </svg>
 }
 
 interface Props {
@@ -62,7 +82,11 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
   })
   // Free crafting, or a challenge stage with its own palette and goals.
   const [mode, setMode] = useState<'free' | 'challenge'>(initialMode)
-  const [cleared, setCleared] = useState<{ stage: string; stars: number; open: boolean } | null>(null)
+  const [cleared, setCleared] = useState<ClearInfo | null>(null)
+  // A stage opens on its briefing; hints and the answer are per stage.
+  const [briefing, setBriefing] = useState(initialMode === 'challenge')
+  const [hints, setHints] = useState(0)
+  const [assisted, setAssisted] = useState(false)
   const stage = CHALLENGES.find(item => item.id === stageId) ?? CHALLENGES[0]
   const challenge = mode === 'challenge' ? stage : null
   const [open, setOpen] = useState<string | null>(null)
@@ -77,6 +101,8 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
   const [inflow, setInflow] = useState(true)
   const [speed, setSpeed] = useState(1)
   const [flow, setFlow] = useState(1)
+  // Stages are judged at the standard flow, so par times mean the same for everyone.
+  const effectiveFlow = challenge ? 1 : flow
   const [follow, setFollow] = useState(false)
   const [focus, setFocus] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
@@ -88,6 +114,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
   const [notice, showNotice] = useStageNotice(7000)
   const mountRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<FreeSurfaceRuntime | null>(null)
+  const missSounded = useRef(false)
   const [cinematic, setCinematic] = useCinematicPreference(mountRef)
   const project = useMemo(() => createWaterStudioProject('atelier'), [])
   const issue = result.issues[0]
@@ -126,6 +153,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
     let runtime: FreeSurfaceRuntime | null = null
     let stopWatching: () => void = () => undefined
     setRenderState('loading'); setStatus(null); setPaused(true); setInflow(true)
+    missSounded.current = false
     try {
       runtime = new FreeSurfaceRuntime(mount, project, quality, 'natural',
         () => { if (!disposed) setRenderState('ready') },
@@ -135,7 +163,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
       runtime.setLook(DEFAULT_WATER_LOOK)
       runtime.setViewMode('surface-3d')
       runtime.setAppearance({ color: AQUA_WATER_APPEARANCE.color, profile: 'aqua', opacity: 0.72 })
-      runtime.setInflowRate(flow)
+      runtime.setInflowRate(effectiveFlow)
       runtime.setSpeed(speed)
       runtime.setPaused(true)
       runtime.setFollow(follow)
@@ -158,13 +186,17 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
     return () => { disposed = true; stopWatching(); runtime?.dispose(); if (runtimeRef.current === runtime) runtimeRef.current = null }
   }, [shown, retry, quality])
   useEffect(() => { runtimeRef.current?.setSpeed(speed) }, [speed])
-  useEffect(() => { runtimeRef.current?.setInflowRate(flow) }, [flow])
+  useEffect(() => { runtimeRef.current?.setInflowRate(effectiveFlow) }, [effectiveFlow])
   useEffect(() => { runtimeRef.current?.setFollow(follow) }, [follow])
   useEffect(() => { runtimeRef.current?.setCinematic(cinematic) }, [cinematic])
 
-  const update = (id: string, change: Partial<CraftModule>) => setCourse(previous => ({ ...previous, modules: previous.modules.map(item => item.id === id ? { ...item, ...change } : item) }))
+  /** Any edit by the player starts building, so the briefing gives way. */
+  const edit = (change: (previous: CraftCourse) => CraftCourse) => { setBriefing(false); setCourse(change) }
+  const update = (id: string, change: Partial<CraftModule>) => edit(previous => ({ ...previous, modules: previous.modules.map(item => item.id === id ? { ...item, ...change } : item) }))
   const enterStage = (next: Challenge) => {
-    setStageId(next.id); setCleared(null); setOpen(null)
+    setStageId(next.id); setCleared(null); setOpen(null); setHints(0); setAssisted(false); setBriefing(true)
+    // The previous stage's garden and its water do not carry over.
+    setShown(null); setStatus(null); setRenderState('loading')
     const draft = (save.drafts[next.id] ?? []) as CraftModule[]
     setCourse(challengeCourse(next, draft.filter(item => CRAFT_MODULES.some(info => info.kind === item?.kind))))
   }
@@ -172,7 +204,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
     if (next === mode) return
     setMode(next); setCleared(null); setOpen(null)
     if (next === 'challenge') enterStage(stage)
-    else setCourse(readCourse())
+    else { setBriefing(false); setCourse(readCourse()) }
     onModeChange?.(next)
   }
   // Back/Forward or an edited address can ask for the other mode.
@@ -180,41 +212,75 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
   /** Replace the whole course, with a moment to take it back. */
   const replaceCourse = (next: CraftCourse, message: string) => {
     const before = course
-    setCourse(next); setOpen(null)
+    setBriefing(false); setCourse(next); setOpen(null)
     showNotice({ message, action: { label: '되돌리기', run: () => { setCourse(before); setOpen(null) } } })
   }
   const lockedCount = challenge?.locked.length ?? 0
-  const goals = challenge ? judgeGoals(challenge, course, status?.garden ?? null, status?.simulationTime ?? 0) : []
+  // Only the water of the course on show counts: while an edited course is
+  // being rebuilt, the previous garden's run must not judge it.
+  const onShowCourse = shown === courseKey(course)
+  const time = onShowCourse ? status?.simulationTime ?? 0 : 0
+  const progress = onShowCourse ? status?.garden ?? null : null
+  const goals = challenge ? judgeGoals(challenge, course, progress, time) : []
   // A stage is cleared the moment every goal is met while its water runs.
   useEffect(() => {
-    if (!challenge || !result.design || !goals.length || cleared?.stage === challenge.id || !status?.garden) return
+    if (!challenge || !result.design || !goals.length || cleared?.stage === challenge.id || !progress) return
     if (!goals.every(state => state === 'met')) return
-    const stars = starsFor(challenge, course, status.garden, status.simulationTime)
-    setCleared({ stage: challenge.id, stars, open: true })
-    setSave(previous => {
-      const next = { ...previous, stars: { ...previous.stars, [challenge.id]: Math.max(stars, previous.stars[challenge.id] ?? 0) } }
-      writeChallengeSave(next)
-      return next
-    })
-  }, [goals.join(), challenge, result.design, status?.garden])
-  const move = (index: number, by: number) => setCourse(previous => {
+    const breakdown = starBreakdown(challenge, course, progress, time, assisted)
+    const before = save
+    const previous = before.stars[challenge.id] ?? 0
+    const previousBest = before.best[challenge.id] ?? null
+    const after: ChallengeSave = {
+      ...before,
+      stars: { ...before.stars, [challenge.id]: Math.max(breakdown.stars, previous) },
+      best: assisted ? before.best : { ...before.best, [challenge.id]: Math.min(breakdown.arrival, previousBest ?? Infinity) },
+    }
+    const chapter = chapterCompletedBy(challenge, before, after)
+    const campaign = campaignCompletedBy(before, after)
+    setSave(after)
+    writeChallengeSave(after)
+    setCleared({ stage: challenge.id, breakdown, previous, previousBest, chapter, campaign, open: true })
+    setBriefing(false)
+    playCraftSound('clear', sound)
+    for (let k = 0; k < breakdown.stars; k++) playCraftSound('star', sound, 0.55 + k * 0.32)
+    if (chapter !== null || campaign) playCraftSound('chapter', sound, 1.7)
+  }, [goals.join(), challenge, result.design, progress])
+  const miss = challenge && !issue && !cleared ? missReason(challenge, course, goals, progress, time) : null
+  useEffect(() => {
+    if (!miss || missSounded.current) return
+    missSounded.current = true
+    playCraftSound('fail', sound)
+  }, [miss])
+  const move = (index: number, by: number) => edit(previous => {
     const modules = previous.modules.slice(), target = index + by
     if (target < lockedCount || target >= modules.length || index < lockedCount) return previous
     ;[modules[index], modules[target]] = [modules[target], modules[index]]
     return { ...previous, modules }
   })
-  const remove = (id: string) => setCourse(previous => ({ ...previous, modules: previous.modules.filter(item => item.id !== id) }))
+  const remove = (id: string) => { playCraftSound('remove', sound); edit(previous => ({ ...previous, modules: previous.modules.filter(item => item.id !== id) })) }
   const add = (kind: CraftKind) => {
+    primeCraftSounds()
+    playCraftSound('add', sound)
     const next = craftModule(kind)
-    setCourse(previous => ({ ...previous, modules: [...previous.modules, next].slice(0, 12) }))
+    edit(previous => ({ ...previous, modules: [...previous.modules, next].slice(0, 12) }))
     setOpen(next.id)
   }
   // Browsers only start audio from a gesture: every play press (re)starts it.
-  const togglePlayback = () => { runtimeRef.current?.setSound(sound); runtimeRef.current?.setPaused(!paused); setPaused(!paused) }
+  const togglePlayback = () => { primeCraftSounds(); setBriefing(false); runtimeRef.current?.setSound(sound); runtimeRef.current?.setPaused(!paused); setPaused(!paused) }
   const toggleSound = () => { runtimeRef.current?.setSound(!sound); setSound(!sound) }
   const toggleInflow = () => { runtimeRef.current?.setInflow(!inflow); setInflow(!inflow) }
-  const restart = () => { runtimeRef.current?.restart(); setPaused(true); setInflow(true) }
+  const restart = () => {
+    runtimeRef.current?.restart(); setPaused(true); setInflow(true)
+    // A fresh pour is a fresh attempt at the stage.
+    missSounded.current = false
+    if (challenge) setCleared(null)
+  }
   const apply = (fix: CraftAdvice) => replaceCourse(fix.course, `‘${fix.title}’을 적용했습니다`)
+  const showAnswer = () => {
+    if (!challenge) return
+    setAssisted(true)
+    replaceCourse(challengeCourse(challenge, answerFor(challenge)), '정답 물길을 적용했어요. ▶ 물 흘려보내기로 확인해 보세요')
+  }
   // In a stage only the fixes its rules allow: no source change, its palette and exits.
   const allowedAdvice = challenge ? advice.filter(fix => fix.id !== 'source'
     && fix.course.modules.every(item => challenge.palette.includes(item.kind) || challenge.locked.some(locked => locked.id === item.id))
@@ -223,8 +289,84 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
   const stageOf = (index: number) => result.stages.find(stage => stage.module === index)
   const sceneLabel = paused ? '일시정지' : !inflow ? '배수 중' : status?.reachedExit ? '흐르는 중' : '물을 붓는 중'
   const working = !issue && result.design
+  const empty = issue?.problem === 'empty'
+  const onShow = renderState === 'ready' && onShowCourse
+  const coach = challenge ? coachStep(challenge, course, {
+    cleared: (save.stars[challenge.id] ?? 0) > 0, ready: onShow, started: !paused || time > 0, briefing,
+  }) : null
+  const campaign = campaignProgress(save)
+  const collect = nextUnstarredStage(save)
 
-  return <main className={`water-studio craft-studio${focus ? ' is-focused' : ''}${panelOpen ? ' tuning-open' : ''}`} data-testid="craft-studio"
+  const palette = <>
+    <div className="ws-section-label"><span>장치 추가</span><span>DEVICES</span></div>
+    {(['basin', 'lift', 'channel', 'special'] as const).filter(category => CRAFT_MODULES.some(info => info.category === category && (!challenge || challenge.palette.includes(info.kind)))).map(category => <div key={category} className="craft-palette-group">
+      <span className="craft-palette-label">{CATEGORY_NAMES[category]}</span>
+      <div className="craft-palette">
+        {CRAFT_MODULES.filter(info => info.category === category && (!challenge || challenge.palette.includes(info.kind))).map(info => {
+          const Icon = DEVICE_ICONS[info.kind]
+          const short = fits !== null && !fits.has(info.kind)
+          const fresh = challenge?.tip.device === info.kind
+          const coached = coach === 'add' && info.kind === 'pond'
+          return <button key={info.kind} className={[short ? 'is-short' : '', coached ? 'is-coached' : ''].filter(Boolean).join(' ') || undefined}
+            title={short ? `${info.description}\n지금 물길 끝에는 높이가 부족해요. 양수 장치를 먼저 넣어 보세요.` : info.description}
+            aria-label={`${info.name} 추가`} disabled={course.modules.length >= 12} onClick={() => add(info.kind)}>
+            <Icon size={20} /><strong>{info.name}</strong><small>{short ? '높이 부족' : info.height}</small>
+            {fresh && <em className="craft-palette-new">NEW</em>}
+          </button>
+        })}
+      </div>
+    </div>)}
+  </>
+
+  const courseList = <>
+    <div className="ws-section-label"><span>물길 순서</span><span>WATER COURSE</span></div>
+    <ol className="craft-course" aria-label="물길 순서">
+      <li className="craft-anchor"><Droplets size={15} /><span>수원 탑 · {course.source.toFixed(1)} m</span></li>
+      {course.modules.map((item, index) => {
+        const info = CRAFT_MODULES.find(entry => entry.kind === item.kind)!
+        const Icon = DEVICE_ICONS[item.kind]
+        const placed = stageOf(index)
+        const expanded = open === item.id
+        const failing = issue?.module === index
+        return <li key={item.id} className={`craft-step${expanded ? ' is-open' : ''}${failing ? ' has-issue' : ''}`}>
+          <div className="craft-step-head">
+            <button className="craft-step-title" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : item.id)}>
+              <span className="craft-step-index">{index + 1}</span><Icon size={17} /><strong>{info.name}</strong>
+              <small>{placed ? `${placed.top.toFixed(1)} m` : ''}</small>
+            </button>
+            {index < lockedCount ? <div className="craft-step-actions"><span className="craft-locked" title="스테이지에 놓여 있는 장치예요"><Lock size={13} /></span></div> : <div className="craft-step-actions">
+              <button aria-label={`${index + 1}번 위로`} disabled={index <= lockedCount} onClick={() => move(index, -1)}><ArrowUp size={14} /></button>
+              <button aria-label={`${index + 1}번 아래로`} disabled={index === course.modules.length - 1} onClick={() => move(index, 1)}><ArrowDown size={14} /></button>
+              <button aria-label={`${index + 1}번 빼기`} onClick={() => remove(item.id)}><Trash2 size={14} /></button>
+            </div>}
+          </div>
+          {expanded && index >= lockedCount && <div className="craft-step-options">
+            <p>{info.description}</p>
+            {info.sizes[0] !== '—' && <div className="craft-option"><span>크기</span><div className="ws-segment" role="group" aria-label="크기">
+              {(['small', 'medium', 'large'] as CraftSize[]).map((size, k) => <button key={size} aria-pressed={item.size === size} onClick={() => update(item.id, { size })}>{info.sizes[k]}</button>)}
+            </div></div>}
+            <div className="craft-option"><span>{item.kind === 'noria' ? '수로 방향' : '나가는 방향'}</span><div className="ws-segment" role="group" aria-label="방향">
+              {(['left', 'straight', 'right'] as CraftTurn[]).filter(turn => item.kind !== 'noria' || turn !== 'straight').map(turn =>
+                <button key={turn} aria-label={{ left: '왼쪽', straight: '직진', right: '오른쪽' }[turn]} aria-pressed={item.turn === turn || (item.kind === 'noria' && turn === 'left' && item.turn === 'straight')} onClick={() => update(item.id, { turn })}>
+                  {turn === 'left' ? <ArrowLeft size={14} /> : turn === 'right' ? <ArrowRight size={14} /> : <ArrowUp size={14} />}
+                </button>)}
+            </div></div>
+            {hasSpout(item.kind) && <div className="craft-option craft-exits"><span>출구 장치</span><div role="group" aria-label="출구 장치">
+              {CRAFT_EXITS.filter(({ exit }) => !challenge || challenge.exits.includes(exit)).map(({ exit, name, description }) => { const ExitIcon = EXIT_ICONS[exit]; return <button key={exit} title={description} aria-pressed={item.exit === exit} className={challenge?.tip.exit === exit ? 'is-new' : undefined} onClick={() => update(item.id, { exit })}><ExitIcon size={14} />{name}</button> })}
+            </div></div>}
+            {(item.kind === 'maze' || item.kind === 'terraces') && <div className="craft-option craft-toggles">
+              <label><input type="checkbox" checked={item.wheels} onChange={event => update(item.id, { wheels: event.target.checked })} /> 둑마다 물레</label>
+              {item.kind === 'maze' && <button onClick={() => update(item.id, { seed: Math.floor(Math.random() * 1000) })}><Shuffle size={14} /> 미로 다시 섞기</button>}
+            </div>}
+          </div>}
+          {failing && <p className="craft-issue">{issue!.message}</p>}
+        </li>
+      })}
+      <li className="craft-anchor"><Waves size={15} /><span>종착 연못과 배수구</span></li>
+    </ol>
+  </>
+
+  return <main className={`water-studio craft-studio${focus ? ' is-focused' : ''}${panelOpen ? ' tuning-open' : ''}${challenge ? ' is-challenge' : ''}`} data-testid="craft-studio"
     style={{ '--ws-scene': STUDIO_BACKGROUND } as CSSProperties}>
     <header className="ws-header">
       <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER CRAFT</span></div></button>
@@ -236,25 +378,29 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
     </header>
     <div className="ws-workspace">
       <section className={`ws-view${cinematic && !paused ? ' is-cinematic' : ''}`} aria-label="크래프트 물길 작업 공간">
-        <div className="ws-scene-heading"><span className="ws-eyebrow">WATER CRAFT / {course.modules.length} DEVICES</span><h1>{course.name || '나의 물길'}</h1><p>장치를 이어 붙여 물이 흐를 길을 짓습니다</p></div>
+        {challenge
+          ? <div className="ws-scene-heading"><span className="ws-eyebrow">CHALLENGE / STAGE {stageNumber(challenge)}</span><h1>{challenge.name}</h1><p>{challenge.chapter + 1}장 · {CHAPTERS[challenge.chapter].name}</p></div>
+          : <div className="ws-scene-heading"><span className="ws-eyebrow">WATER CRAFT / {course.modules.length} DEVICES</span><h1>{course.name || '나의 물길'}</h1><p>장치를 이어 붙여 물이 흐를 길을 지어요</p></div>}
         <div className="ws-status"><i className={paused ? 'is-paused' : ''} />{renderState === 'ready' ? sceneLabel : renderState === 'error' ? '실행 오류' : '준비 중'}</div>
         <div className="ws-canvas" ref={mountRef} data-testid="craft-canvas" data-renderer={renderState} data-garden={shown ?? ''} />
-        {renderState === 'ready' && paused && !(status?.simulationTime) && <button className="ws-start" onClick={togglePlayback}><Play size={18} fill="currentColor" /><span>물 흘려보내기</span></button>}
-        {renderState === 'loading' && <div className="ws-stage-message" role="status"><Blocks size={30} /><span>{shown ? '물길을 짓고 있습니다' : '장치를 이어 물길을 만들어 주세요'}</span></div>}
+        {renderState === 'ready' && paused && !time && !briefing && (onShowCourse || !challenge) && <button className={`ws-start${coach === 'pour' ? ' is-coached' : ''}`} onClick={togglePlayback}><Play size={18} fill="currentColor" /><span>물 흘려보내기</span></button>}
+        {renderState === 'loading' && <div className="ws-stage-message" role="status">
+          {shown ? <><Blocks size={30} /><span>물길을 짓고 있어요</span></>
+            : <><EmptyCourse source={course.source} /><span>{challenge ? '수원 탑과 종착 연못 사이를 장치로 이어 주세요' : '장치를 이어 물길을 만들어 주세요'}</span></>}
+        </div>}
         {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>{error === GRAPHICS_LOST_MESSAGE ? '그래픽 연결이 끊어졌습니다' : '화면을 시작하지 못했습니다'}</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
         <StageNoticeView notice={notice} onDismiss={() => showNotice(null)} />
-        {challenge && cleared?.stage === challenge.id && cleared.open && <div className="challenge-clear" role="dialog" aria-label="스테이지 클리어">
-          <span className="ws-eyebrow">STAGE CLEAR</span>
-          <strong>{challenge.name} 완성!</strong>
-          <Stars count={cleared.stars} size={26} />
-          <p>도착 {status?.garden?.arrival?.toFixed(0) ?? '—'}초 · 장치 {course.modules.length - challenge.locked.length}개</p>
+        {challenge && briefing && !cleared?.open && <StageBriefing stage={challenge} course={course} goals={goals} earned={save.stars[challenge.id] ?? 0} onStart={() => setBriefing(false)} />}
+        {coach && !notice && <StageCoach step={coach} onAdd={() => add('pond')} onFaster={() => setSpeed(4)} />}
+        {challenge && cleared?.stage === challenge.id && cleared.open && <StageClear stage={challenge} info={cleared} totalStars={campaign.stars}
+          onNext={enterStage} onRetry={restart} onClose={() => setCleared({ ...cleared, open: false })}
+          onFree={() => switchMode('free')} onCollect={collect ? () => enterStage(collect) : null} />}
+        {miss && <div className="challenge-miss" role="status">
+          <span>{miss}</span>
           <div>
-            <button className="ws-secondary" onClick={() => setCleared({ ...cleared, open: false })}>계속 보기</button>
-            {CHALLENGES[CHALLENGES.indexOf(challenge) + 1] && <button className="ws-primary" onClick={() => enterStage(CHALLENGES[CHALLENGES.indexOf(challenge) + 1])}>다음 스테이지</button>}
+            <button type="button" onClick={restart}><RotateCcw size={13} />물 다시 붓기</button>
+            {hints < 2 && <button type="button" onClick={() => { setHints(n => n + 1); setPanelOpen(true) }}><Lightbulb size={13} />힌트 보기</button>}
           </div>
-        </div>}
-        {challenge && goals.includes('failed') && !issue && status && <div className="challenge-miss" role="status">
-          아직 목표를 채우지 못했어요. 물길을 고치거나 <strong>물 다시 붓기</strong>로 다시 도전해 보세요.
         </div>}
         {(issue && issue.problem !== 'empty' || planOpen) && <div className={`craft-plan-card${issue ? ' has-issue' : ''}`} data-testid="craft-plan">
           <div className="craft-plan-head"><Map size={14} /><strong>배치도</strong>{issue && shown && <span>화면은 이전 물길이에요</span>}
@@ -271,7 +417,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
             <button className="ws-icon" aria-label="물 추적 모드" title="물 추적 모드" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button>
             <CinematicToggle cinematic={cinematic} onToggle={() => setCinematic(!cinematic)} />
             <FloaterMenu onDrop={kind => { runtimeRef.current?.setSound(sound); void runtimeRef.current?.dropFloater(kind).then(ok => { if (!ok) showNotice({ message: FLOATER_FAILED_MESSAGE }) }) }} />
-            <button className="ws-icon" aria-label="배치도" title="배치도" aria-pressed={planOpen || Boolean(issue)} onClick={() => setPlanOpen(!planOpen)}><Map size={17} /></button>
+            <button className="ws-icon" aria-label="배치도" title="배치도" aria-pressed={planOpen || Boolean(issue && !empty)} onClick={() => setPlanOpen(!planOpen)}><Map size={17} /></button>
           </div>
           <div className="ws-transport">
             <button className="ws-play" aria-label={paused ? '재생' : '일시정지'} disabled={renderState !== 'ready'} onClick={togglePlayback}>{paused ? <Play size={20} fill="currentColor" /> : <Pause size={20} fill="currentColor" />}</button>
@@ -280,7 +426,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
             <span className="ws-transport-divider" />
             <SoundToggle sound={sound} onToggle={toggleSound} />
             <button className="ws-pour" aria-label={inflow ? '물 붓기 켜짐' : '물 붓기 꺼짐'} aria-pressed={inflow} onClick={toggleInflow}><Droplets size={18} /><span>{inflow ? '물 붓기 켜짐' : '물 붓기 꺼짐'}</span></button>
-            <button className="ws-mobile-tune ws-icon" aria-label="장치 목록 열기" aria-expanded={panelOpen} onClick={() => setPanelOpen(!panelOpen)}><Blocks size={18} /></button>
+            <button className={`ws-mobile-tune ws-icon${coach === 'add' && !panelOpen ? ' is-coached' : ''}`} aria-label="장치 목록 열기" aria-expanded={panelOpen} onClick={() => setPanelOpen(!panelOpen)}><Blocks size={18} /></button>
           </div>
         </div>
         <span className="ws-camera-hint"><span className="hint-pointer">드래그하여 회전 · 오른쪽 버튼으로 이동 · 휠로 확대</span><span className="hint-touch">한 손가락으로 회전 · 두 손가락으로 확대와 이동</span></span>
@@ -290,97 +436,46 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', onM
         <div className="ws-panel-heading"><div><span className="ws-eyebrow">CRAFT YOUR FLOW</span><h2>물길 크래프트</h2></div><Blocks size={20} /><button className="ws-mobile-tune ws-icon" aria-label="장치 목록 닫기" onClick={() => setPanelOpen(false)}><X size={19} /></button></div>
         <div className="ws-segment craft-mode" role="group" aria-label="크래프트 모드">
           <button aria-pressed={mode === 'free'} onClick={() => switchMode('free')}>자유 제작</button>
-          <button aria-pressed={mode === 'challenge'} onClick={() => switchMode('challenge')}>챌린지 <small>{Object.values(save.stars).reduce((sum, count) => sum + count, 0)}/{CHALLENGES.length * 3}★</small></button>
+          <button aria-pressed={mode === 'challenge'} onClick={() => switchMode('challenge')}>챌린지 <small>{campaign.stars}/{campaign.maxStars}★</small></button>
         </div>
         <div className="ws-panel-content craft-content">
-          <div className={`craft-verdict${working ? ' is-working' : ' has-issue'}`} role="status" aria-live="polite" data-testid="craft-verdict">
+          {challenge && <ChallengePanel key={challenge.id} current={challenge} save={save} goals={goals} course={course} progress={progress} time={time}
+            hintsShown={hints} assisted={assisted} onSelect={enterStage} onHint={() => setHints(n => Math.min(2, n + 1))} onAnswer={showAnswer} onBriefing={() => { setBriefing(true); setPanelOpen(false) }} />}
+          <div className={`craft-verdict${working ? ' is-working' : empty ? ' is-empty' : ' has-issue'}`} role="status" aria-live="polite" data-testid="craft-verdict">
             {working
               ? <><Waves size={16} /><span>물이 끝까지 흐르는 물길이에요 · 장치 {course.modules.length}개<small>종착 연못까지 높이 여유 {spareHeight(result).toFixed(1)} m</small></span></>
-              : <><X size={16} /><span>{issue ? `${issue.module >= 0 && issue.module < course.modules.length ? `${issue.module + 1}번 장치: ` : ''}${issue.message}` : '물길을 만들어 주세요'}</span></>}
+              : empty ? <><Blocks size={16} /><span>{issue.message}<small>아래 장치 목록에서 골라 넣으면 물길이 이어져요</small></span></>
+                : <><X size={16} /><span>{issue ? `${issue.module >= 0 && issue.module < course.modules.length ? `${issue.module + 1}번 장치: ` : ''}${issue.message}` : '물길을 만들어 주세요'}</span></>}
           </div>
-          {challenge && <ChallengePanel stages={CHALLENGES} current={challenge} stars={save.stars} goals={goals} onSelect={enterStage} />}
           {!working && allowedAdvice.length > 0 && <div className="craft-advice" role="group" aria-label="추천 해결 방법">
             <span className="craft-advice-label"><Sparkles size={13} />이렇게 고쳐 보세요 · 눌러서 바로 적용</span>
             {allowedAdvice.map(fix => <button key={fix.id} onClick={() => apply(fix)}><strong>{fix.title}</strong><small>{fix.detail}</small></button>)}
           </div>}
 
-          {!challenge && <button className="craft-presets-toggle" aria-expanded={presetsOpen} onClick={() => setPresetsOpen(!presetsOpen)}>
-            <LayoutTemplate size={15} /><span>프리셋 둘러보기</span><small>{templates.length}개</small><ChevronDown size={14} />
-          </button>}
-          {presetsOpen && !challenge && <div className="craft-presets">
-            <div className="ws-segment" role="group" aria-label="난이도">
-              {(['전체', '입문', '중급', '대장정'] as const).map(value => <button key={value} aria-pressed={level === value} onClick={() => setLevel(value)}>{value}</button>)}
-            </div>
-            <div className="craft-preset-grid" role="group" aria-label="추천 조합">
-              {templates.filter(template => level === '전체' || template.level === level).map(template => <button key={template.id} aria-label={template.name}
-                onClick={() => { replaceCourse(template.course, `‘${template.name}’ 프리셋을 불러왔습니다`); setPresetsOpen(false) }}>
-                <span className="craft-preset-top"><strong>{template.name}</strong><em>{template.level}</em></span>
-                <small>{template.description}</small>
-                <span className="craft-preset-icons">{template.course.modules.map((module, k) => { const Icon = ICONS[module.kind]; return <Icon key={k} size={14} /> })}</span>
-              </button>)}
-            </div>
-          </div>}
-
-          <label className="ws-slider craft-source"><span>수원 높이<output>{course.source.toFixed(1)} m</output></span>
-            <input type="range" aria-label="수원 높이" min={2.5} max={6.5} step={0.1} value={course.source} disabled={Boolean(challenge)} onChange={event => setCourse(previous => ({ ...previous, source: Number(event.target.value) }))} /></label>
-          <label className="ws-slider craft-source"><span>유입량<output>{Math.round(flow * 40)} L/s</output></span>
-            <input type="range" aria-label="유입량" min={0.25} max={2} step={0.05} value={flow} onChange={event => setFlow(Number(event.target.value))} /></label>
-
-          <div className="ws-section-label"><span>물길 순서</span><span>WATER COURSE</span></div>
-          <ol className="craft-course" aria-label="물길 순서">
-            <li className="craft-anchor"><Droplets size={15} /><span>수원 탑 · {course.source.toFixed(1)} m</span></li>
-            {course.modules.map((item, index) => {
-              const info = CRAFT_MODULES.find(entry => entry.kind === item.kind)!
-              const Icon = ICONS[item.kind]
-              const stage = stageOf(index)
-              const expanded = open === item.id
-              const failing = issue?.module === index
-              return <li key={item.id} className={`craft-step${expanded ? ' is-open' : ''}${failing ? ' has-issue' : ''}`}>
-                <div className="craft-step-head">
-                  <button className="craft-step-title" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : item.id)}>
-                    <span className="craft-step-index">{index + 1}</span><Icon size={17} /><strong>{info.name}</strong>
-                    <small>{stage ? `${stage.top.toFixed(1)} m` : ''}</small>
-                  </button>
-                  {index < lockedCount ? <div className="craft-step-actions"><span className="craft-locked" title="스테이지에 놓여 있는 장치예요"><Lock size={13} /></span></div> : <div className="craft-step-actions">
-                    <button aria-label={`${index + 1}번 위로`} disabled={index <= lockedCount} onClick={() => move(index, -1)}><ArrowUp size={14} /></button>
-                    <button aria-label={`${index + 1}번 아래로`} disabled={index === course.modules.length - 1} onClick={() => move(index, 1)}><ArrowDown size={14} /></button>
-                    <button aria-label={`${index + 1}번 빼기`} onClick={() => remove(item.id)}><Trash2 size={14} /></button>
-                  </div>}
-                </div>
-                {expanded && index >= lockedCount && <div className="craft-step-options">
-                  <p>{info.description}</p>
-                  {info.sizes[0] !== '—' && <div className="craft-option"><span>크기</span><div className="ws-segment" role="group" aria-label="크기">
-                    {(['small', 'medium', 'large'] as CraftSize[]).map((size, k) => <button key={size} aria-pressed={item.size === size} onClick={() => update(item.id, { size })}>{info.sizes[k]}</button>)}
-                  </div></div>}
-                  <div className="craft-option"><span>{item.kind === 'noria' ? '수로 방향' : '나가는 방향'}</span><div className="ws-segment" role="group" aria-label="방향">
-                    {(['left', 'straight', 'right'] as CraftTurn[]).filter(turn => item.kind !== 'noria' || turn !== 'straight').map(turn =>
-                      <button key={turn} aria-label={{ left: '왼쪽', straight: '직진', right: '오른쪽' }[turn]} aria-pressed={item.turn === turn || (item.kind === 'noria' && turn === 'left' && item.turn === 'straight')} onClick={() => update(item.id, { turn })}>
-                        {turn === 'left' ? <ArrowLeft size={14} /> : turn === 'right' ? <ArrowRight size={14} /> : <ArrowUp size={14} />}
-                      </button>)}
-                  </div></div>
-                  {hasSpout(item.kind) && <div className="craft-option craft-exits"><span>출구 장치</span><div role="group" aria-label="출구 장치">
-                    {CRAFT_EXITS.filter(({ exit }) => !challenge || challenge.exits.includes(exit)).map(({ exit, name, description }) => { const ExitIcon = EXIT_ICONS[exit]; return <button key={exit} title={description} aria-pressed={item.exit === exit} onClick={() => update(item.id, { exit })}><ExitIcon size={14} />{name}</button> })}
-                  </div></div>}
-                  {(item.kind === 'maze' || item.kind === 'terraces') && <div className="craft-option craft-toggles">
-                    <label><input type="checkbox" checked={item.wheels} onChange={event => update(item.id, { wheels: event.target.checked })} /> 둑마다 물레</label>
-                    {item.kind === 'maze' && <button onClick={() => update(item.id, { seed: Math.floor(Math.random() * 1000) })}><Shuffle size={14} /> 미로 다시 섞기</button>}
-                  </div>}
-                </div>}
-                {failing && <p className="craft-issue">{issue!.message}</p>}
-              </li>
-            })}
-            <li className="craft-anchor"><Waves size={15} /><span>종착 연못과 배수구</span></li>
-          </ol>
-
-          <div className="ws-section-label"><span>장치 추가</span><span>DEVICES</span></div>
-          {(['basin', 'lift', 'channel', 'special'] as const).filter(category => CRAFT_MODULES.some(info => info.category === category && (!challenge || challenge.palette.includes(info.kind)))).map(category => <div key={category} className="craft-palette-group">
-            <span className="craft-palette-label">{CATEGORY_NAMES[category]}</span>
-            <div className="craft-palette">
-              {CRAFT_MODULES.filter(info => info.category === category && (!challenge || challenge.palette.includes(info.kind))).map(info => { const Icon = ICONS[info.kind]; const short = fits !== null && !fits.has(info.kind); return <button key={info.kind} className={short ? 'is-short' : undefined} title={short ? `${info.description}\n지금 물길 끝에는 높이가 부족해요. 양수 장치를 먼저 넣어 보세요.` : info.description} aria-label={`${info.name} 추가`} disabled={course.modules.length >= 12} onClick={() => add(info.kind)}>
-                <Icon size={20} /><strong>{info.name}</strong><small>{short ? '높이 부족' : info.height}</small>
-              </button> })}
-            </div>
-          </div>)}
+          {challenge ? <>{palette}{courseList}</> : <>
+            <button className="craft-presets-toggle" aria-expanded={presetsOpen} onClick={() => setPresetsOpen(!presetsOpen)}>
+              <LayoutTemplate size={15} /><span>프리셋 둘러보기</span><small>{templates.length}개</small><ChevronDown size={14} />
+            </button>
+            {presetsOpen && <div className="craft-presets">
+              <div className="ws-segment" role="group" aria-label="난이도">
+                {(['전체', '입문', '중급', '대장정'] as const).map(value => <button key={value} aria-pressed={level === value} onClick={() => setLevel(value)}>{value}</button>)}
+              </div>
+              <div className="craft-preset-grid" role="group" aria-label="추천 조합">
+                {templates.filter(template => level === '전체' || template.level === level).map(template => <button key={template.id} aria-label={template.name}
+                  onClick={() => { replaceCourse(template.course, `‘${template.name}’ 프리셋을 불러왔습니다`); setPresetsOpen(false) }}>
+                  <span className="craft-preset-top"><strong>{template.name}</strong><em>{template.level}</em></span>
+                  <small>{template.description}</small>
+                  <span className="craft-preset-icons">{template.course.modules.map((module, k) => { const Icon = DEVICE_ICONS[module.kind]; return <Icon key={k} size={14} /> })}</span>
+                </button>)}
+              </div>
+            </div>}
+            <label className="ws-slider craft-source"><span>수원 높이<output>{course.source.toFixed(1)} m</output></span>
+              <input type="range" aria-label="수원 높이" min={2.5} max={6.5} step={0.1} value={course.source} onChange={event => edit(previous => ({ ...previous, source: Number(event.target.value) }))} /></label>
+            <label className="ws-slider craft-source"><span>유입량<output>{Math.round(flow * 40)} L/s</output></span>
+              <input type="range" aria-label="유입량" min={0.25} max={2} step={0.05} value={flow} onChange={event => setFlow(Number(event.target.value))} /></label>
+            {courseList}
+            {palette}
+          </>}
           <button className="craft-clear" onClick={() => replaceCourse({ ...course, modules: course.modules.slice(0, lockedCount) }, '물길을 비웠습니다')}><Trash2 size={14} /> 모두 비우기</button>
         </div>
       </aside>

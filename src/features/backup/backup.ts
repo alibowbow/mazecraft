@@ -124,7 +124,12 @@ function timestamp(project: MazeProject): number {
   return Number.isFinite(value) ? value : 0
 }
 
-interface ChallengeData { stars: Record<string, number>; drafts: Record<string, unknown> }
+interface ChallengeData {
+  stars: Record<string, number>
+  drafts: Record<string, unknown>
+  /** Fastest arrival (s) per stage. */
+  best: Record<string, number>
+}
 
 function readChallengeData(text: string | null): ChallengeData | null {
   if (text === null) return null
@@ -137,18 +142,33 @@ function readChallengeData(text: string | null): ChallengeData | null {
         if (typeof count === 'number' && Number.isInteger(count) && count >= 0 && count <= 3) stars[stage] = count
       }
     }
-    return { stars, drafts: isRecord(value.drafts) ? value.drafts : {} }
+    const best: Record<string, number> = {}
+    if (isRecord(value.best)) {
+      for (const [stage, seconds] of Object.entries(value.best)) {
+        if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) best[stage] = seconds
+      }
+    }
+    return { stars, drafts: isRecord(value.drafts) ? value.drafts : {}, best }
   } catch {
     return null
   }
 }
 
-/** Stars only ever go up; a stage's draft on this device wins over the backup's. */
+/** Stars only go up and best times only down; a stage's draft on this device wins over the backup's. */
 function mergeChallengeData(local: ChallengeData | null, incoming: ChallengeData): ChallengeData {
   if (!local) return incoming
   const stars = { ...local.stars }
   for (const [stage, count] of Object.entries(incoming.stars)) stars[stage] = Math.max(count, stars[stage] ?? 0)
-  return { stars, drafts: { ...incoming.drafts, ...local.drafts } }
+  const best = { ...local.best }
+  for (const [stage, seconds] of Object.entries(incoming.best)) best[stage] = Math.min(seconds, best[stage] ?? Infinity)
+  return { stars, drafts: { ...incoming.drafts, ...local.drafts }, best }
+}
+
+/** Write a merged record when it differs from what is stored; true when written. */
+function writeMerged(storage: Storage, key: string, current: string | null, merged: string): boolean {
+  if (merged === current) return false
+  storage.setItem(key, merged)
+  return true
 }
 
 function restoreLocalData(data: Record<string, string>, storage = storageArea()): number {
@@ -160,11 +180,7 @@ function restoreLocalData(data: Record<string, string>, storage = storageArea())
       if (key.startsWith(CHALLENGE_PREFIX)) {
         const incoming = readChallengeData(value)
         if (!incoming) continue
-        const merged = JSON.stringify(mergeChallengeData(readChallengeData(current), incoming))
-        if (merged !== current) {
-          storage.setItem(key, merged)
-          restored++
-        }
+        if (writeMerged(storage, key, current, JSON.stringify(mergeChallengeData(readChallengeData(current), incoming)))) restored++
       } else if (current === null) {
         // Preferences already chosen on this device are kept.
         storage.setItem(key, value)
@@ -179,7 +195,8 @@ function restoreLocalData(data: Record<string, string>, storage = storageArea())
 
 /**
  * Restore without losing anything on this device: a project is replaced only
- * by a newer copy of itself, and earned challenge stars are never lowered.
+ * by a newer copy of itself, earned challenge stars are never lowered and
+ * the faster stage times are kept.
  */
 export async function restoreBackup(backup: MazecraftBackup, repository: ProjectRepository): Promise<RestoreSummary> {
   const summary: RestoreSummary = { added: 0, updated: 0, kept: 0, invalid: 0, settings: 0 }
