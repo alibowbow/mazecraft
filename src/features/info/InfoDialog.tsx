@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, HardDriveDownload, HardDriveUpload, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { Dialog } from '../dialogs/Dialog'
-import { FEEDBACK_URL, versionLabel } from '../../app/appInfo'
+import { versionLabel } from '../../app/appInfo'
 import { backupFileName, createBackup } from '../backup/backup'
 import { downloadBlob } from '../export/download'
 import {
@@ -229,11 +229,6 @@ function AboutTab() {
           <li>버전 <strong>{versionLabel()}</strong></li>
           <li>최신 Chrome·Edge·Firefox, Safari 16.4 이상, WebGL 2를 지원하는 브라우저에서 동작합니다.</li>
         </ul>
-        {FEEDBACK_URL && (
-          <a className="button secondary small" href={FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
-            <ExternalLink size={15} />의견과 오류 보내기
-          </a>
-        )}
       </section>
       <section>
         <h3>오픈소스</h3>
