@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { BrandMark } from '../../components/BrandMark'
-import { ArrowUpRight, Check, ChevronDown, Droplets, Expand, FolderOpen, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Save, Shuffle, SlidersHorizontal, Waves, X, Square, Circle, Heart, Hexagon, Star, Diamond, Wand2, Pencil, Video } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronDown, CircleHelp, Droplets, Expand, FolderOpen, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Save, Shuffle, SlidersHorizontal, Waves, X, Square, Circle, Heart, Hexagon, Star, Diamond, Wand2, Pencil, Video } from 'lucide-react'
 import { createDefaultProject, generateMaze, type MazeProject } from '../../core/maze'
 import { createImageMask, loadImageFile, DEFAULT_IMAGE_OPTIONS } from '../../core/masks/imageMask'
 import { editWaterMazeWall, resizeWaterMaze } from './liveEditing'
@@ -8,11 +8,13 @@ import type { FluidResume } from '../waterSimulation/freeSurface/types'
 import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/freeSurface/runtime'
 import { AQUA_WATER_APPEARANCE, upgradeWaterPresetColor, WATER_COLOR_PRESETS, type WaterAppearance } from '../waterSimulation/freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, STUDIO_BACKGROUND, WATER_THEMES, normalizeWaterLook, type WaterLook } from '../waterSimulation/freeSurface/lookdev'
-import type { WaterSurfaceStyle } from '../waterSimulation/rendering'
+import type { WaterSurfaceStyle } from '../waterSimulation/runtimeTypes'
 import { WATER_STUDIO_PRESETS, createWaterStudioProject, type WaterStudioPresetId } from './presets'
 import type { WaterSculpture } from '../waterSimulation/garden'
 import { createGeneratedWaterMaze, DEFAULT_WATER_MAZE, WATER_MAZE_SHAPES, type WaterMazeOptions } from './createMaze'
-import { CinematicToggle, FloaterMenu, PLAYBACK_SPEEDS, SoundToggle, SpeedSelect, useCinematicPreference, useGardenSoundPreference } from './studioControls'
+import { CinematicToggle, FLOATER_FAILED_MESSAGE, FloaterMenu, PLAYBACK_SPEEDS, SoundToggle, SpeedSelect, StageNoticeView, useCinematicPreference, useGardenSoundPreference, useStageNotice } from './studioControls'
+import { describeGraphicsError, GRAPHICS_LOST_MESSAGE, watchGraphicsContext } from '../waterSimulation/graphics'
+import { randomToken } from '../../core/id'
 import './waterStudio.css'
 
 const STORAGE_KEY = 'mazecraft.water-studio.v1'
@@ -78,6 +80,10 @@ interface Props {
   onShare(project: MazeProject): void
   /** Open the water craft studio. */
   onCraft?(): void
+  /** Open help and settings. */
+  onHelp?(): void
+  /** Drawing quality for this device (see resolveStudioQuality). */
+  quality?: 'low' | 'high'
 }
 
 /**
@@ -88,7 +94,7 @@ function speedFactor(mode: 'surface-3d' | 'free-surface', sculpture: string | un
   return mode === 'surface-3d' && sculpture?.startsWith('garden:') ? 1 : 2
 }
 
-export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onHome, onEdit, onSave, onShare, onCraft }: Props) {
+export default function WaterStudio({ initialProject, onProjectChange, onLibrary, onHome, onEdit, onSave, onShare, onCraft, onHelp, quality = 'high' }: Props) {
   const [customProject, setCustomProject] = useState<MazeProject | null>(initialProject ?? null)
   const [preferences, setPreferences] = useState(readPreferences)
   const [draft, setDraft] = useState<WaterMazeOptions>(() => readPreferences().generator)
@@ -118,6 +124,7 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   const [renderState, setRenderState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [notice, showNotice] = useStageNotice()
   const mountRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<FreeSurfaceRuntime | null>(null)
   const [cinematic, setCinematic] = useCinematicPreference(mountRef)
@@ -162,10 +169,11 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
     let runtime: FreeSurfaceRuntime | null = null
     const resume = flowResume.current
     flowResume.current = undefined
+    let stopWatching: () => void = () => undefined
     setRenderState('loading'); setStatus(null); setPaused(resume?.paused ?? true); setInflow(resume?.inflow ?? true); setSaveState('idle')
     try {
       const current = latest.current
-      runtime = new FreeSurfaceRuntime(mount, project, 'high', current.preferences.surface,
+      runtime = new FreeSurfaceRuntime(mount, project, quality, current.preferences.surface,
         () => { if (!disposed) setRenderState('ready') },
         next => { if (!disposed) setStatus(next) },
         message => { if (!disposed) { setError(message); setRenderState('error') } },
@@ -182,16 +190,21 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
       runtime.setSound(soundRef.current)
       runtime.setCinematic(cinematicRef.current)
       runtimeRef.current = runtime
+      const started = runtime
+      stopWatching = watchGraphicsContext(mount, {
+        lost: () => { if (!disposed) { started.setPaused(true); setPaused(true); setError(GRAPHICS_LOST_MESSAGE); setRenderState('error') } },
+        restored: () => { if (!disposed) setRetry(n => n + 1) },
+      })
     } catch (reason) {
       runtime?.dispose()
       const canvas = mount.querySelector('canvas')
       try { canvas?.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* Context unavailable. */ }
       mount.replaceChildren()
-      setError(reason instanceof Error ? reason.message : '물 시뮬레이션을 시작할 수 없습니다.')
+      setError(describeGraphicsError(reason, '물 시뮬레이션을 시작할 수 없습니다.'))
       setRenderState('error')
     }
-    return () => { disposed = true; runtime?.dispose(); if (runtimeRef.current === runtime) runtimeRef.current = null }
-  }, [project, retry, sculpture])
+    return () => { disposed = true; stopWatching(); runtime?.dispose(); if (runtimeRef.current === runtime) runtimeRef.current = null }
+  }, [project, retry, sculpture, quality])
   useEffect(() => { runtimeRef.current?.setLook(preferences.look) }, [preferences.look])
   useEffect(() => { runtimeRef.current?.setAppearance(appearance) }, [appearance])
   useEffect(() => { runtimeRef.current?.setInflowRate(preferences.flow) }, [preferences.flow])
@@ -273,13 +286,13 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
   return <main className={`water-studio${focus ? ' is-focused' : ''}${tuningOpen ? ' tuning-open' : ''}${mode === 'free-surface' ? ' is-2d' : ''}`} data-testid="water-studio" data-theme-name={preferences.look.theme}
     style={{ '--ws-scene': STUDIO_BACKGROUND, '--ws-material': selectedTheme.color } as CSSProperties}>
     <header className="ws-header">
-      <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome ?? onLibrary}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER ATELIER</span></div></button>
+      <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome ?? onLibrary}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER GARDEN</span></div></button>
       <nav className="ws-navigation" aria-label="주 메뉴"><button onClick={onHome ?? onLibrary}>홈</button><span aria-current="page">물의 정원</span>{onCraft && <button onClick={onCraft}>크래프트</button>}<button aria-label="내 미로" onClick={onLibrary}><FolderOpen size={16} /><span>내 미로</span></button></nav>
-      <div className="ws-header-actions"><button className="ws-create-shortcut" aria-label="미로 만들기" onClick={openCreation}><Wand2 size={17} /><span>미로 만들기</span></button><button className="ws-icon" aria-label="몰입 화면" aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? <X size={19} /> : <Expand size={19} />}</button><button className="ws-save" aria-label={saveState === 'saved' ? '미로 저장 완료' : '미로 저장'} disabled={saveState === 'saving'} onClick={() => void save()}>{saveState === 'saved' ? <Check size={16} /> : <Save size={16} />}<span>{saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장 완료' : saveState === 'error' ? '다시 저장' : '미로 저장'}</span></button></div>
+      <div className="ws-header-actions">{onHelp && <button className="ws-icon ws-help-button" aria-label="도움말과 설정" title="도움말과 설정" onClick={onHelp}><CircleHelp size={19} /></button>}<button className="ws-create-shortcut" aria-label="미로 만들기" onClick={openCreation}><Wand2 size={17} /><span>미로 만들기</span></button><button className="ws-icon" aria-label="몰입 화면" aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? <X size={19} /> : <Expand size={19} />}</button><button className="ws-save" aria-label={saveState === 'saved' ? '미로 저장 완료' : '미로 저장'} disabled={saveState === 'saving'} onClick={() => void save()}>{saveState === 'saved' ? <Check size={16} /> : <Save size={16} />}<span>{saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장 완료' : saveState === 'error' ? '다시 저장' : '미로 저장'}</span></button></div>
     </header>
     <div className="ws-workspace">
       <section className={`ws-view${cinematic && !paused && mode === 'surface-3d' && sculpture?.startsWith('garden:') ? ' is-cinematic' : ''}`} aria-label="물 미로 작업 공간">
-        <div className="ws-scene-heading"><span className="ws-eyebrow">WATER ATELIER / {project.mazeGraph.cols} × {project.mazeGraph.rows}</span><h1>{isDesigned ? project.title : selectedPreset.name}</h1><p>{isDesigned ? '나의 모양, 나의 물길' : selectedPreset.caption}</p></div>
+        <div className="ws-scene-heading"><span className="ws-eyebrow">WATER GARDEN / {project.mazeGraph.cols} × {project.mazeGraph.rows}</span><h1>{isDesigned ? project.title : selectedPreset.name}</h1><p>{isDesigned ? '나의 모양, 나의 물길' : selectedPreset.caption}</p></div>
         <div className="ws-status"><i className={paused ? 'is-paused' : ''} />{renderState === 'ready' ? sceneLabel : renderState === 'error' ? '실행 오류' : '준비 중'}</div>
         <div className="ws-canvas" ref={mountRef} data-testid="water-studio-canvas" data-renderer={renderState} data-view-mode={mode} data-particle-count={status?.particleCount ?? 0} data-simulation-time={status?.simulationTime ?? 0}
           onPointerDownCapture={event => {
@@ -290,10 +303,11 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
           }} />
         {renderState === 'ready' && paused && !(status?.simulationTime) && <button className="ws-start" onClick={togglePlayback}><Play size={18} fill="currentColor" /><span>물 흘려보내기</span></button>}
         {renderState === 'loading' && <div className="ws-stage-message" role="status"><Waves size={30} /><span>수로를 준비하고 있습니다</span></div>}
-        {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>화면을 시작하지 못했습니다</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
+        {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>{error === GRAPHICS_LOST_MESSAGE ? '그래픽 연결이 끊어졌습니다' : '화면을 시작하지 못했습니다'}</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
+        <StageNoticeView notice={notice} onDismiss={() => showNotice(null)} />
         {wallEditing && mode === 'free-surface' && <button className="ws-edit-done" onClick={() => setWallEditing(false)}>벽 편집 중 · 완료</button>}
         {mode === 'free-surface' && <label className="ws-resolution-bar"><span>해상도</span><input aria-label="미로 해상도" type="range" min={4} max={128} step={1} value={resolutionPreview ?? Math.max(project.mazeGraph.rows, project.mazeGraph.cols)} onChange={event => changeResolution(Number(event.target.value))} /><output>{resolutionPreview ? `${resolutionPreview}칸` : `${project.mazeGraph.cols} × ${project.mazeGraph.rows}`}</output></label>}
-        <div className="ws-control-dock"><div className="ws-view-controls"><div className="ws-segment" aria-label="보기 방식"><button aria-pressed={mode === 'surface-3d'} onClick={() => setMode('surface-3d')}>3D</button><button aria-pressed={mode === 'free-surface'} onClick={() => setMode('free-surface')}>2D</button></div><button className="ws-icon" aria-label="축소" onClick={() => runtimeRef.current?.zoomCamera(1 / 1.2)}><Minus size={17} /></button><button className="ws-icon" aria-label="확대" onClick={() => runtimeRef.current?.zoomCamera(1.2)}><Plus size={17} /></button><button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button>{mode === 'surface-3d' && sculpture?.startsWith('garden:') && <><button className="ws-icon" aria-label="물 추적 모드" title="물 추적 모드" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button><CinematicToggle cinematic={cinematic} onToggle={() => setCinematic(!cinematic)} /><FloaterMenu onDrop={kind => { void runtimeRef.current?.dropFloater(kind) }} /></>}</div>
+        <div className="ws-control-dock"><div className="ws-view-controls"><div className="ws-segment" aria-label="보기 방식"><button aria-pressed={mode === 'surface-3d'} onClick={() => setMode('surface-3d')}>3D</button><button aria-pressed={mode === 'free-surface'} onClick={() => setMode('free-surface')}>2D</button></div><button className="ws-icon" aria-label="축소" onClick={() => runtimeRef.current?.zoomCamera(1 / 1.2)}><Minus size={17} /></button><button className="ws-icon" aria-label="확대" onClick={() => runtimeRef.current?.zoomCamera(1.2)}><Plus size={17} /></button><button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button>{mode === 'surface-3d' && sculpture?.startsWith('garden:') && <><button className="ws-icon" aria-label="물 추적 모드" title="물 추적 모드" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button><CinematicToggle cinematic={cinematic} onToggle={() => setCinematic(!cinematic)} /><FloaterMenu onDrop={kind => { void runtimeRef.current?.dropFloater(kind).then(ok => { if (!ok) showNotice({ message: FLOATER_FAILED_MESSAGE }) }) }} /></>}</div>
         <div className="ws-transport">
           <button className="ws-play" aria-label={paused ? '재생' : '일시정지'} disabled={renderState !== 'ready'} onClick={togglePlayback}>{paused ? <Play size={20} fill="currentColor" /> : <Pause size={20} fill="currentColor" />}</button>
           <button className="ws-icon" aria-label="물 다시 붓기" disabled={renderState !== 'ready'} onClick={restart}><RotateCcw size={19} /></button>
@@ -352,13 +366,13 @@ export default function WaterStudio({ initialProject, onProjectChange, onLibrary
             <div className="ws-quick-sizes">{[8, 12, 16, 24].map(size => <button key={size} aria-pressed={draft.cols === size && draft.rows === size} onClick={() => setDraft(p => ({ ...p, rows: size, cols: size }))}>{size} × {size}</button>)}</div>
             <div className="ws-section-label"><span>물길의 구조</span></div><div className="ws-algorithms">{([['dfs', 'DFS', '긴 통로'], ['prim', 'Prim', '많은 갈림길'], ['kruskal', 'Kruskal', '고른 분기']] as const).map(([id, name, detail]) => <button key={id} aria-pressed={draft.algorithm === id} onClick={() => setDraft(p => ({ ...p, algorithm: id }))}><strong>{name}</strong><small>{detail}</small></button>)}</div>
             <label className="ws-generator-field">복잡도<select value={draft.difficulty} onChange={e => setDraft(p => ({ ...p, difficulty: e.target.value as WaterMazeOptions['difficulty'] }))}><option value="easy">가볍게</option><option value="normal">균형 있게</option><option value="hard">복잡하게</option><option value="expert">아주 복잡하게</option></select></label>
-            <label className="ws-generator-field">시드<span className="ws-seed-input"><input value={draft.seed} maxLength={120} onChange={e => setDraft(p => ({ ...p, seed: e.target.value }))} /><button aria-label="새 시드" onClick={() => setDraft(p => ({ ...p, seed: crypto.randomUUID().slice(0, 8) }))}><Shuffle size={17} /></button></span></label>
+            <label className="ws-generator-field">시드<span className="ws-seed-input"><input value={draft.seed} maxLength={120} onChange={e => setDraft(p => ({ ...p, seed: e.target.value }))} /><button aria-label="새 시드" onClick={() => setDraft(p => ({ ...p, seed: randomToken(8) }))}><Shuffle size={17} /></button></span></label>
 
           </>}
 
         </div>
         {tab === 'maze' && <div className="ws-generator-cta"><button className="ws-generate" onClick={generate}><Wand2 size={18} />이 설정으로 미로 생성</button><button className="ws-editor-link" onClick={() => onEdit(project)}><Pencil size={15} /><span>전체 제작기 · 글자 / 이미지 / 벽 편집</span><ArrowUpRight size={15} /></button></div>}
-        <div className="ws-panel-footer"><span>{selectedTheme.label}</span><button onClick={() => { update({ look: DEFAULT_WATER_LOOK, color: defaults.color, opacity: defaults.opacity, flow: defaults.flow, surface: defaults.surface, speed: defaults.speed }) }}>튜닝 초기화</button></div>
+        <div className="ws-panel-footer"><span>{selectedTheme.label}</span><div className="ws-panel-footer-actions">{onHelp && <button className="ws-panel-help" onClick={onHelp}>도움말</button>}<button className="ws-panel-share" onClick={() => onShare(project)}>공유</button><button onClick={() => { update({ look: DEFAULT_WATER_LOOK, color: defaults.color, opacity: defaults.opacity, flow: defaults.flow, surface: defaults.surface, speed: defaults.speed }) }}>튜닝 초기화</button></div></div>
       </aside>
     </div>
     <footer className="ws-collection"><div className="ws-collection-title"><span className="ws-eyebrow">FLOW COLLECTION</span><strong>수로 컬렉션</strong></div><div className="ws-presets" role="group" aria-label="미로 프리셋">{WATER_STUDIO_PRESETS.map((preset, index) => <button key={preset.id} className="ws-preset" aria-pressed={!customProject && preferences.source === 'flow' && preferences.preset === preset.id} onClick={() => { setCustomProject(null); update({ source: 'flow', preset: preset.id, size: 0 }) }}><span className="ws-miniature"><MazeMiniature project={miniatureProjects[index]} /></span><span><small>0{index + 1}</small><strong>{preset.name}</strong></span>{!customProject && preferences.source === 'flow' && preferences.preset === preset.id && <i />}</button>)}</div><button className="ws-share" onClick={() => onShare(project)} aria-label="현재 미로 공유"><ArrowUpRight size={21} /><span>공유</span></button></footer>

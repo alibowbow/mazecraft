@@ -87,8 +87,7 @@ test('water studio opens dry, flows once started, and tunes appearance without r
   await page.screenshot({ path: testInfo.outputPath('water-studio-tuned.png') })
 
   await page.reload()
-  // A reload lands on the home; the water garden keeps the tuned look.
-  await page.getByRole('button', { name: '물의 정원 열기', exact: true }).click()
+  // A reload returns to the water garden, which keeps the tuned look.
   await waitForStudio(page)
   await pause(page)
   await expect(page.getByTestId('water-studio')).toHaveAttribute('data-theme-name', 'glacier')

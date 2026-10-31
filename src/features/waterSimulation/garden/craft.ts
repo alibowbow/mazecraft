@@ -76,22 +76,22 @@ export interface CraftModuleInfo {
 }
 
 export const CRAFT_MODULES: CraftModuleInfo[] = [
-  { kind: 'maze', name: '미로 수조', description: '벽 사이로 물이 길을 찾아 흐르는 도자기 미로. 계단 둑마다 물이 넘어갑니다.', category: 'basin', spout: true, sizes: ['3×3', '4×3', '5×4'], height: '−1.0 m' },
-  { kind: 'terraces', name: '계단 폭포', description: '층층이 낮아지는 수로. 둑마다 얇은 물막이 떨어지고 물레가 돌 수 있어요.', category: 'basin', spout: true, sizes: ['2단', '3단', '4단'], height: '−0.9~1.2 m' },
-  { kind: 'pond', name: '연꽃 연못', description: '가운데 화분 섬을 두른 둥근 연못. 물이 잔잔히 머물다 흘러갑니다.', category: 'basin', spout: true, sizes: ['작게', '보통', '크게'], height: '−0.8 m' },
-  { kind: 'noria', name: '노리아 물레방아', description: '모터가 돌리는 거대한 물레. 통이 물을 떠 올려 옆 수로로 붓습니다. 좌·우로 수로 방향을 고릅니다.', category: 'lift', spout: false, sizes: ['R 1.5 m', 'R 1.85 m', 'R 2.2 m'], height: '+2~3 m' },
-  { kind: 'screw', name: '아르키메데스 스크류', description: '기울어진 나선이 돌며 물 주머니를 한 칸씩 밀어 올립니다.', category: 'lift', spout: false, sizes: ['3.5 m', '4.5 m', '5.5 m'], height: '+1.5~2.5 m' },
-  { kind: 'spiral', name: '나선 활강로 탑', description: '탑 꼭대기 탱크에서 나선 수로를 따라 빙글빙글 내려옵니다.', category: 'channel', spout: false, sizes: ['¾바퀴', '1¼바퀴', '2바퀴'], height: '−1.0~1.4 m' },
-  { kind: 'zigzag', name: '지그재그 수로', description: '좌우로 꺾이며 내려가는 경사 수로. 물살이 모서리를 타고 돕니다.', category: 'channel', spout: false, sizes: ['3굽이', '4굽이', '5굽이'], height: '−0.8~1.1 m' },
-  { kind: 'aqueduct', name: '수도교', description: '기둥 위로 길게 뻗은 수로. 물이 높은 곳을 가로질러 건너갑니다.', category: 'channel', spout: false, sizes: ['3 m', '5 m', '7 m'], height: '−0.8 m' },
-  { kind: 'siphon', name: '벨 사이펀', description: '물이 차오르다 어느 순간 사이펀이 걸려 한꺼번에 쏟아냅니다.', category: 'special', spout: false, sizes: ['—', '—', '—'], height: '−1.3 m' },
+  { kind: 'maze', name: '미로 수조', description: '벽 사이로 물이 길을 찾아 흐르는 도자기 미로예요. 계단 둑을 넘을 때마다 조금씩 낮아져요.', category: 'basin', spout: true, sizes: ['3×3', '4×3', '5×4'], height: '−1.0 m' },
+  { kind: 'terraces', name: '계단 폭포', description: '층층이 낮아지는 수로예요. 둑마다 얇은 물막이 떨어지고, 둑마다 물레를 달 수 있어요.', category: 'basin', spout: true, sizes: ['2단', '3단', '4단'], height: '−0.9~1.2 m' },
+  { kind: 'pond', name: '연꽃 연못', description: '가운데 화분 섬을 두른 둥근 연못이에요. 물이 잔잔히 머물다 흘러가고, 높이를 가장 적게 써요.', category: 'basin', spout: true, sizes: ['작게', '보통', '크게'], height: '−0.8 m' },
+  { kind: 'noria', name: '노리아 물레방아', description: '모터가 돌리는 커다란 물레예요. 통이 물을 떠 올려 꼭대기 수로로 부어요. 수로가 나갈 쪽을 왼쪽·오른쪽 중에 골라요.', category: 'lift', spout: false, sizes: ['R 1.5 m', 'R 1.85 m', 'R 2.2 m'], height: '+2~3 m' },
+  { kind: 'screw', name: '아르키메데스 스크류', description: '기울어진 나선이 돌며 물 주머니를 한 칸씩 밀어 올려요.', category: 'lift', spout: false, sizes: ['3.5 m', '4.5 m', '5.5 m'], height: '+1.5~2.5 m' },
+  { kind: 'spiral', name: '나선 활강로 탑', description: '탑 꼭대기 탱크에서 나선 수로를 따라 빙글빙글 내려와요.', category: 'channel', spout: false, sizes: ['¾바퀴', '1¼바퀴', '2바퀴'], height: '−1.0~1.4 m' },
+  { kind: 'zigzag', name: '지그재그 수로', description: '좌우로 꺾이며 내려가는 경사 수로예요. 물살이 모서리를 타고 돌아요.', category: 'channel', spout: false, sizes: ['3굽이', '4굽이', '5굽이'], height: '−0.8~1.1 m' },
+  { kind: 'aqueduct', name: '수도교', description: '기둥 위로 길게 뻗은 수로예요. 높이를 조금만 쓰고 물을 빠르게 멀리 보내요.', category: 'channel', spout: false, sizes: ['3 m', '5 m', '7 m'], height: '−0.8 m' },
+  { kind: 'siphon', name: '벨 사이펀', description: '물이 차오르다 어느 순간 사이펀이 걸려 한꺼번에 쏟아내요. 높이를 넉넉히 써요.', category: 'special', spout: false, sizes: ['—', '—', '—'], height: '−1.3 m' },
 ]
 
 export const CRAFT_EXITS: { exit: CraftExit; name: string; description: string }[] = [
-  { exit: 'plain', name: '물길', description: '곧게 떨어지는 물막이' },
-  { exit: 'tipper', name: '시시오도시', description: '대나무 통이 차면 기울어 쏟고 “딱” 돌아옵니다 (넓은 수조 앞에만)' },
-  { exit: 'wheel', name: '물레바퀴', description: '떨어지는 물이 바퀴 통을 채워 돌립니다' },
-  { exit: 'chain', name: '빗물 사슬', description: '구리 컵 사슬을 따라 졸졸 흘러내립니다' },
+  { exit: 'plain', name: '물길', description: '곧게 떨어지는 물막이예요' },
+  { exit: 'tipper', name: '시시오도시', description: '대나무 통이 차면 기울어 쏟고 “딱” 돌아와요 (넓은 수조 앞에만)' },
+  { exit: 'wheel', name: '물레바퀴', description: '떨어지는 물이 바퀴 통을 채워 돌려요' },
+  { exit: 'chain', name: '빗물 사슬', description: '구리 컵 사슬을 따라 졸졸 흘러내려요' },
 ]
 
 const DIRS: Vec2[] = [[0, -1], [1, 0], [0, 1], [-1, 0]]
@@ -534,7 +534,7 @@ const m = (kind: CraftKind, overrides: Partial<CraftModule> = {}): CraftModule =
 export function craftTemplates(): CraftTemplate[] {
   return [
     {
-      id: 'terraced', name: '계단 정원', level: '입문', description: '미로에서 시작해 시시오도시, 계단 폭포, 빗물 사슬로 이어지는 차분한 정원',
+      id: 'terraced', name: '계단 정원', level: '입문', description: '미로에서 시작해 시시오도시, 계단 폭포, 빗물 사슬로 이어지는 차분한 정원이에요',
       course: { version: 1, name: '계단 정원', source: 4.3, modules: [
         m('maze', { size: 'medium', exit: 'tipper', seed: 11 }),
         m('terraces', { size: 'medium', wheels: true, turn: 'left' }),
@@ -542,7 +542,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'grand-tour', name: '물의 대장정', level: '대장정', description: '미로 → 계단 → 노리아가 끌어올린 물이 나선 탑을 돌아 사이펀으로 쏟아지는 긴 여정',
+      id: 'grand-tour', name: '물의 대장정', level: '대장정', description: '미로와 계단을 지나 노리아가 끌어올린 물이 나선 탑을 돌아 사이펀으로 쏟아지는 긴 여정이에요',
       course: { version: 1, name: '물의 대장정', source: 4.3, modules: [
         m('maze', { size: 'medium', exit: 'tipper', seed: 3 }),
         m('terraces', { size: 'small', wheels: true, exit: 'wheel' }),
@@ -552,7 +552,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'screw-aqueduct', name: '스크류와 수도교', level: '중급', description: '스크류가 들어 올린 물이 긴 수도교를 건너 지그재그로 내려옵니다',
+      id: 'screw-aqueduct', name: '스크류와 수도교', level: '중급', description: '스크류가 들어 올린 물이 긴 수도교를 건너 지그재그로 내려와요',
       course: { version: 1, name: '스크류와 수도교', source: 3.4, modules: [
         m('maze', { size: 'small', seed: 5 }),
         m('screw', { size: 'large' }),
@@ -561,13 +561,13 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'first-pond', name: '첫 연못', level: '입문', description: '연못 하나와 빗물 사슬. 처음 만들어 보기 좋은 가장 작은 물길',
+      id: 'first-pond', name: '첫 연못', level: '입문', description: '연못 하나와 빗물 사슬. 처음 만들어 보기 좋은 가장 작은 물길이에요',
       course: { version: 1, name: '첫 연못', source: 2.6, modules: [
         m('pond', { size: 'small', exit: 'chain' }),
       ] },
     },
     {
-      id: 'zen', name: '시시오도시 정원', level: '입문', description: '연못과 미로 사이로 대나무 통이 “딱” 소리를 내며 물을 옮기는 고요한 정원',
+      id: 'zen', name: '시시오도시 정원', level: '입문', description: '연못과 미로 사이로 대나무 통이 “딱” 소리를 내며 물을 옮기는 고요한 정원이에요',
       course: { version: 1, name: '시시오도시 정원', source: 3.8, modules: [
         m('pond', { size: 'medium', exit: 'tipper' }),
         m('maze', { size: 'small', exit: 'tipper', seed: 21, turn: 'right' }),
@@ -575,7 +575,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'rain-chains', name: '빗물 사슬 계단', level: '입문', description: '계단 폭포마다 구리 컵 사슬을 타고 물이 졸졸 내려옵니다',
+      id: 'rain-chains', name: '빗물 사슬 계단', level: '입문', description: '계단 폭포마다 구리 컵 사슬을 타고 물이 졸졸 내려와요',
       course: { version: 1, name: '빗물 사슬 계단', source: 4.0, modules: [
         m('terraces', { size: 'small', exit: 'chain' }),
         m('terraces', { size: 'small', exit: 'chain', turn: 'left' }),
@@ -583,7 +583,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'wheel-village', name: '물레바퀴 마을', level: '중급', description: '둑마다 물레가 돌고, 출구의 물레바퀴가 떨어지는 물로 힘차게 돕니다',
+      id: 'wheel-village', name: '물레바퀴 마을', level: '중급', description: '둑마다 물레가 돌고, 출구의 물레바퀴가 떨어지는 물로 힘차게 돌아요',
       course: { version: 1, name: '물레바퀴 마을', source: 4.4, modules: [
         m('terraces', { size: 'medium', wheels: true, exit: 'wheel' }),
         m('maze', { size: 'small', wheels: true, exit: 'wheel', seed: 9, turn: 'right' }),
@@ -591,7 +591,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'labyrinths', name: '미로 삼부작', level: '중급', description: '크고 작은 미로 수조 세 개를 차례로 지나는, 길 찾기 좋아하는 물의 여행',
+      id: 'labyrinths', name: '미로 삼부작', level: '중급', description: '크고 작은 미로 수조 세 개를 차례로 지나는, 길 찾기 좋아하는 물의 여행이에요',
       course: { version: 1, name: '미로 삼부작', source: 5.4, modules: [
         m('maze', { size: 'large', seed: 31 }),
         m('maze', { size: 'medium', seed: 32, turn: 'left' }),
@@ -599,14 +599,14 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'spiral-siphon', name: '나선 탑과 사이펀', level: '중급', description: '높은 탑을 빙글빙글 돌아 내려온 물이 사이펀에 모였다가 한꺼번에 쏟아집니다',
+      id: 'spiral-siphon', name: '나선 탑과 사이펀', level: '중급', description: '높은 탑을 빙글빙글 돌아 내려온 물이 사이펀에 모였다가 한꺼번에 쏟아져요',
       course: { version: 1, name: '나선 탑과 사이펀', source: 5.2, modules: [
         m('spiral', { size: 'large' }),
         m('siphon'),
       ] },
     },
     {
-      id: 'twin-lifts', name: '두 번 끌어올리기', level: '대장정', description: '스크류와 노리아가 차례로 물을 끌어올려, 낮은 수원에서도 긴 여정을 이어 갑니다',
+      id: 'twin-lifts', name: '두 번 끌어올리기', level: '대장정', description: '스크류와 노리아가 차례로 물을 끌어올려, 낮은 수원에서도 긴 여정을 이어 가요',
       course: { version: 1, name: '두 번 끌어올리기', source: 3.0, modules: [
         m('maze', { size: 'small', seed: 41 }),
         m('screw', { size: 'medium' }),
@@ -616,7 +616,7 @@ export function craftTemplates(): CraftTemplate[] {
       ] },
     },
     {
-      id: 'aqueduct-journey', name: '수도교 여행', level: '대장정', description: '두 개의 수도교와 지그재그 수로를 건너 연못에 닿는, 멀리 가는 물길',
+      id: 'aqueduct-journey', name: '수도교 여행', level: '대장정', description: '두 개의 수도교와 지그재그 수로를 건너 연못에 닿는, 멀리 가는 물길이에요',
       course: { version: 1, name: '수도교 여행', source: 4.6, modules: [
         m('aqueduct', { size: 'large' }),
         m('zigzag', { size: 'small', turn: 'left' }),

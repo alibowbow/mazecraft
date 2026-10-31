@@ -1,10 +1,13 @@
 import {
   ArrowDownUp,
   ArrowRight,
+  CalendarDays,
+  CircleHelp,
   Clock3,
   Copy,
   Download,
   FileText,
+  Flame,
   FolderOpen,
   Image as ImageIcon,
   MessageSquareText,
@@ -16,14 +19,27 @@ import {
   Shapes,
   Sun,
   Trash2,
+  TriangleAlert,
+  Trophy,
   Type,
   Waves,
   PencilRuler,
- Blocks } from 'lucide-react'
+  Blocks,
+  HardDriveDownload,
+} from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { BottomSheet } from '../../components/BottomSheet'
 import { BrandMark } from '../../components/BrandMark'
 import type { MazeProject } from '../../core/maze/types'
+import { versionLabel } from '../../app/appInfo'
+import draftingDesk from '../../assets/drafting-desk-v2.webp'
+import waterGarden from '../../assets/water-garden.jpg'
+import type { InfoTab } from '../info/InfoDialog'
+import type { CampaignSummary } from '../craft/campaignIndex'
+import type { DailyInfo } from '../daily/dailyMaze'
+import { formatDuration } from '../player/playerEngine'
+
+const PAGE_SIZE = 12
 
 export type ProjectTemplate = 'basic' | 'text' | 'image' | 'secret' | 'time-attack' | 'worksheet'
 
@@ -91,11 +107,22 @@ interface HomeScreenProps {
   onWater: () => void
   /** Open the water craft studio. */
   onCraft?: () => void
+  /** Open the craft studio's challenge stages. */
+  onChallenges?: () => void
+  /** Progress through the challenge campaign, for the water door. */
+  challenge?: CampaignSummary
+  /** Today's maze: its setting, a preview once built, today's best and the streak. */
+  daily?: { info: DailyInfo; preview: MazeProject | null; best: number | null; streak: number }
+  onDaily?: () => void
   onDuplicate: (project: MazeProject) => void
   onDelete: (project: MazeProject) => void
   onExport: (project: MazeProject) => void
   onImport: (file: File) => void
   onThemeToggle: () => void
+  /** Help, settings, data and app information. */
+  onInfo?: (tab?: InfoTab) => void
+  /** The browser refused persistent storage: work lasts only for this tab. */
+  storageVolatile?: boolean
   dark: boolean
   loading?: boolean
 }
@@ -107,11 +134,17 @@ export function HomeScreen({
   onEdit,
   onWater,
   onCraft,
+  onChallenges,
+  challenge,
+  daily,
+  onDaily,
   onDuplicate,
   onDelete,
   onExport,
   onImport,
   onThemeToggle,
+  onInfo,
+  storageVolatile = false,
   dark,
   loading,
 }: HomeScreenProps) {
@@ -119,6 +152,7 @@ export function HomeScreen({
   const [actionProject, setActionProject] = useState<MazeProject | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [projectSort, setProjectSort] = useState<'recent' | 'title' | 'size'>('recent')
+  const [shownCount, setShownCount] = useState(PAGE_SIZE)
   const latestProject = projects[0] ?? null
   const visibleProjects = useMemo(() => {
     const query = projectQuery.trim().toLocaleLowerCase('ko-KR')
@@ -182,12 +216,27 @@ export function HomeScreen({
           <a href="#projects">내 미로</a>
         </nav>
         <div className="home-header-actions">
-          <span className="local-badge"><i /> 이 기기에 자동 저장</span>
+          <span className={`local-badge${storageVolatile ? ' is-volatile' : ''}`}><i /> {storageVolatile ? '임시 저장 중' : '이 기기에 자동 저장'}</span>
+          {onInfo && (
+            <button className="icon-button" aria-label="도움말과 설정" title="도움말과 설정" onClick={() => onInfo('help')}>
+              <CircleHelp size={18} />
+            </button>
+          )}
           <button className="icon-button" aria-label={dark ? '라이트 모드' : '다크 모드'} onClick={onThemeToggle}>
             {dark ? <Sun size={18} /> : <Moon size={18} />}
           </button>
         </div>
       </header>
+
+      {storageVolatile && (
+        <div className="storage-warning" role="alert">
+          <TriangleAlert size={18} aria-hidden="true" />
+          <p>
+            <strong>이 브라우저는 작업을 기기에 저장하지 못합니다.</strong>
+            사생활 보호 모드이거나 저장소가 꺼져 있어 탭을 닫으면 작업이 사라집니다. 보관할 미로는 프로젝트 파일로 내보내 주세요.
+          </p>
+        </div>
+      )}
 
       <section className="hub-hero" aria-labelledby="home-hero-title">
         <div className="hub-intro">
@@ -197,7 +246,7 @@ export function HomeScreen({
         </div>
         <div className="hub-doors">
           <article className="hub-door door-maze">
-            <figure><img src="/assets/drafting-desk-v2.webp" width="1536" height="1024" alt="제도용 종이 위에 손으로 그린 미로와 설계 도구" decoding="async" fetchPriority="high" /></figure>
+            <figure><img src={draftingDesk} width="1536" height="1024" alt="제도용 종이 위에 손으로 그린 미로와 설계 도구" decoding="async" fetchPriority="high" /></figure>
             <div className="hub-door-copy">
               <span className="hub-door-kicker"><PencilRuler size={15} /> 01 · MAZE STUDIO</span>
               <h2>미로 제작</h2>
@@ -213,19 +262,44 @@ export function HomeScreen({
             </div>
           </article>
           <article className="hub-door door-water">
-            <figure><img src="/assets/water-garden.jpg" width="1164" height="776" alt="도자기 미로 정원을 따라 흐르는 물과 수차" decoding="async" /></figure>
+            <figure><img src={waterGarden} width="1164" height="776" alt="도자기 미로 정원을 따라 흐르는 물과 수차" decoding="async" /></figure>
             <div className="hub-door-copy">
               <span className="hub-door-kicker"><Waves size={15} /> 02 · WATER GARDEN</span>
               <h2>물의 정원</h2>
-              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 물리 법칙대로 움직입니다. 크래프트에서 장치를 이어 나만의 물길도 지어 보세요.</p>
+              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 물리 법칙대로 움직입니다. 크래프트에서 장치를 이어 물길을 짓고, 20단계 챌린지에 도전해 보세요.</p>
               <div className="hub-door-actions">
                 <button className="button water-primary" onClick={onWater}>물의 정원 열기 <ArrowRight size={17} /></button>
                 {onCraft && <button className="button secondary" onClick={onCraft}><Blocks size={16} /> 물길 크래프트</button>}
+                {onChallenges && <button className="button secondary" onClick={onChallenges}><Trophy size={16} /> {challenge?.cleared ? (challenge.complete ? '챌린지 별 모으기' : '챌린지 이어하기') : '챌린지 시작'}</button>}
               </div>
+              {onChallenges && challenge && <div className="hub-progress" aria-label="챌린지 진행">
+                <span className="hub-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(challenge.cleared / challenge.total * 100)}%` }} /></span>
+                <span>{challenge.cleared
+                  ? <>{challenge.cleared}/{challenge.total}단계 · <b>★ {challenge.stars}</b>/{challenge.maxStars}{challenge.complete ? ' · 모든 물길 완성' : <> · 다음 {challenge.next.number}. {challenge.next.name}</>}</>
+                  : <>4장 20단계 · 첫 단계는 1분이면 충분해요</>}</span>
+              </div>}
             </div>
           </article>
         </div>
       </section>
+
+      {daily && onDaily && (
+        <section className="daily-card" aria-labelledby="daily-title">
+          <button type="button" className="daily-preview" onClick={onDaily} aria-label="오늘의 미로 미리보기, 눌러서 풀기">
+            {daily.preview ? <ProjectMiniature project={daily.preview} /> : <span className="daily-preview-empty" aria-hidden="true" />}
+          </button>
+          <div className="daily-copy">
+            <span className="daily-kicker"><CalendarDays size={14} aria-hidden="true" />오늘의 미로 · {daily.info.dateLabel}</span>
+            <h2 id="daily-title">{daily.info.shapeLabel} 모양 · {daily.info.difficultyLabel}</h2>
+            <p>매일 자정에 새 미로가 하나 열려요. 오늘은 모두 같은 미로를 풀어요.</p>
+          </div>
+          <div className="daily-meta">
+            <span className={daily.streak ? 'is-lit' : ''}><Flame size={15} aria-hidden="true" />연속 {daily.streak}일</span>
+            <span>오늘 최고 {daily.best ? formatDuration(daily.best) : '—'}</span>
+            <button type="button" className="button daily-play" onClick={onDaily}>{daily.best ? '다시 도전' : '오늘의 미로 풀기'}<ArrowRight size={16} /></button>
+          </div>
+        </section>
+      )}
 
       <section className="home-section" id="templates" aria-labelledby="new-maze-title">
         <div className="section-heading">
@@ -284,6 +358,12 @@ export function HomeScreen({
               <FolderOpen size={17} />
               파일 열기
             </button>
+            {onInfo && (
+              <button className="button secondary" onClick={() => onInfo('data')}>
+                <HardDriveDownload size={17} />
+                백업
+              </button>
+            )}
           </div>
         </div>
 
@@ -291,7 +371,7 @@ export function HomeScreen({
           <div className="empty-projects" aria-live="polite">프로젝트를 불러오는 중입니다…</div>
         ) : visibleProjects.length ? (
           <div className="project-grid">
-            {visibleProjects.slice(0, 12).map((project) => (
+            {visibleProjects.slice(0, shownCount).map((project) => (
               <article className="project-card" key={project.id}>
                 <button className="project-preview" aria-label={`${project.title} 편집`} onClick={() => onEdit(project)}>
                   <ProjectMiniature project={project} />
@@ -316,6 +396,11 @@ export function HomeScreen({
                 </div>
               </article>
             ))}
+            {visibleProjects.length > shownCount && (
+              <button className="button secondary project-more" onClick={() => setShownCount((count) => count + PAGE_SIZE * 2)}>
+                프로젝트 {visibleProjects.length - shownCount}개 더 보기
+              </button>
+            )}
           </div>
         ) : (
           <div className="empty-projects">
@@ -325,7 +410,16 @@ export function HomeScreen({
           </div>
         )}
       </section>
-      <footer className="home-footer"><BrandMark size={22} /> MazeCraft · 이 기기에 자동 저장 · 회원가입 없이 링크로 공유</footer>
+      <footer className="home-footer">
+        <span><BrandMark size={22} /> MazeCraft {versionLabel()} · 이 기기에 자동 저장 · 회원가입 없이 링크로 공유</span>
+        {onInfo && (
+          <nav aria-label="도움말과 정보">
+            <button type="button" onClick={() => onInfo('help')}>사용 방법</button>
+            <button type="button" onClick={() => onInfo('data')}>저장과 개인정보</button>
+            <button type="button" onClick={() => onInfo('about')}>앱 정보</button>
+          </nav>
+        )}
+      </footer>
 
       <BottomSheet
         open={Boolean(actionProject)}

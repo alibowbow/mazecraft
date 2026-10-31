@@ -53,7 +53,6 @@ import {
 import {
   useCallback,
   useEffect,
-  lazy,
   useMemo,
   useRef,
   useState,
@@ -92,8 +91,10 @@ import { renderModelFromProject } from '../../renderer/types'
 import { createRandomSeed, difficultyLabel, scoreLabel } from '../../app/projectFactory'
 import type { AutosaveStatus } from '../../storage'
 import { type EditorTool } from '../editor/editor'
+import { lazyScreen } from '../../app/chunkRecovery'
+import { createId } from '../../core/id'
 
-const WaterSimulationDialog = lazy(
+const WaterSimulationDialog = lazyScreen(
   () => import('../waterSimulation/WaterSimulationDialog'),
 )
 
@@ -745,10 +746,10 @@ export function StudioScreen({
     else if (tool === 'set-end') commit({ ...project, endCell: position })
     else if (tool === 'collectible') {
       const exists = project.collectibles.some((item) => item.row === position.row && item.col === position.col)
-      if (!exists) commit({ ...project, collectibles: [...project.collectibles, { ...position, id: crypto.randomUUID(), label: '수집 아이템' }] })
+      if (!exists) commit({ ...project, collectibles: [...project.collectibles, { ...position, id: createId('item'), label: '수집 아이템' }] })
     } else if (tool === 'checkpoint') {
       const exists = project.checkpoints.some((item) => item.row === position.row && item.col === position.col)
-      if (!exists) commit({ ...project, checkpoints: [...project.checkpoints, { ...position, id: crypto.randomUUID(), label: `체크포인트 ${project.checkpoints.length + 1}` }] })
+      if (!exists) commit({ ...project, checkpoints: [...project.checkpoints, { ...position, id: createId('item'), label: `체크포인트 ${project.checkpoints.length + 1}` }] })
     } else if (tool === 'eraser') {
       commit({
         ...project,

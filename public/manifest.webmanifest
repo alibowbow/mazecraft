@@ -1,0 +1,17 @@
+{
+  "name": "MazeCraft · 메이즈크래프트",
+  "short_name": "MazeCraft",
+  "description": "미로를 설계하고 그 길 위로 물을 흘려보내는 미로와 물의 아틀리에",
+  "lang": "ko",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#faf9f5",
+  "theme_color": "#f4f2ec",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

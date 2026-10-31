@@ -132,6 +132,11 @@ export class IndexedDbProjectRepository
     return this.degraded
   }
 
+  /** Resolves once the database opened (true) or the session-only fallback took over (false). */
+  async isPersistent(): Promise<boolean> {
+    return (await this.database) !== null
+  }
+
   private async db(): Promise<IDBDatabase | null> {
     return this.database
   }

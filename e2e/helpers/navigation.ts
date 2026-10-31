@@ -30,11 +30,15 @@ export async function enterProjectEditor(page: Page): Promise<void> {
   const editor = page.getByLabel('프로젝트 제목')
   const studio = page.getByTestId('water-studio')
   const resume = page.getByRole('button', { name: '최근 미로 이어서', exact: true })
-  await expect(editor.or(studio).or(resume)).toBeVisible({ timeout: process.env.CI ? waterStartupTimeout : 5_000 })
+  const timeout = process.env.CI ? waterStartupTimeout : 5_000
+  await expect(editor.or(studio).or(resume)).toBeVisible({ timeout })
   if (await editor.isVisible()) return
-  // A reload lands on the home, which offers the recovered project.
-  if (await resume.isVisible()) {
-    await resume.click()
+  if (!(await studio.isVisible())) {
+    // The home. An opened file is still on its way to the editor, so give it
+    // a moment before deciding; a reload with no screen in the address offers
+    // the recovered project instead.
+    if (await editor.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true, () => false)) return
+    await resume.click({ timeout })
     await expect(editor).toBeVisible()
     return
   }
