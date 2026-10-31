@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Blocks, Castle, ChartBarDecreasing, ChevronDown, Cog, Cylinder, Drill, Droplets, Expand, Fan,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Blocks, Castle, ChartBarDecreasing, ChevronDown, CircleHelp, Cog, Cylinder, Drill, Droplets, Expand, Fan,
   Flower2, Grid3x3, LayoutTemplate, Link, Lock, Map, Maximize2, Minus, Pause, Play, Plus, RotateCcw, Shuffle, Sparkles, Spline, Tornado, Trash2, Video, Waves, X, type LucideIcon,
 } from 'lucide-react'
 import { BrandMark } from '../../components/BrandMark'
@@ -8,7 +8,8 @@ import { FreeSurfaceRuntime, type FreeSurfaceStatus } from '../waterSimulation/f
 import { AQUA_WATER_APPEARANCE } from '../waterSimulation/freeSurface/appearance'
 import { DEFAULT_WATER_LOOK, STUDIO_BACKGROUND } from '../waterSimulation/freeSurface/lookdev'
 import { createWaterStudioProject } from '../waterStudio/presets'
-import { CinematicToggle, FloaterMenu, SoundToggle, SpeedSelect, useCinematicPreference, useGardenSoundPreference } from '../waterStudio/studioControls'
+import { CinematicToggle, FLOATER_FAILED_MESSAGE, FloaterMenu, SoundToggle, SpeedSelect, StageNoticeView, useCinematicPreference, useGardenSoundPreference, useStageNotice } from '../waterStudio/studioControls'
+import { describeGraphicsError, GRAPHICS_LOST_MESSAGE, watchGraphicsContext } from '../waterSimulation/graphics'
 import {
   compileCraft, CRAFT_EXITS, CRAFT_MODULES, craftModule, craftTemplates, hasSpout,
   type CraftCourse, type CraftExit, type CraftKind, type CraftModule, type CraftSize, type CraftTurn,
@@ -41,11 +42,18 @@ function courseKey(course: CraftCourse): `craft-${string}` {
 interface Props {
   onHome(): void
   onWater(): void
+  /** The mode to show; a later change (Back, an edited address) switches to it. */
   initialMode?: 'free' | 'challenge'
   exhibition?: boolean
+  /** Reports a mode chosen in the studio, so the address can follow it. */
+  onModeChange?(mode: 'free' | 'challenge'): void
+  /** Open help and settings. */
+  onHelp?(): void
+  /** Drawing quality for this device (see resolveStudioQuality). */
+  quality?: 'low' | 'high'
 }
 
-export default function CraftStudio({ onHome, onWater, initialMode = 'free', exhibition = false }: Props) {
+export default function CraftStudio({ onHome, onWater, initialMode = 'free', exhibition = false, onModeChange, onHelp, quality = 'high' }: Props) {
   const courseStorageKey = exhibition ? `${CRAFT_KEY}.tripothon` : CRAFT_KEY
   const challengeStorageKey = exhibition ? `${CHALLENGE_KEY}.tripothon` : CHALLENGE_KEY
   const [save, setSave] = useState<ChallengeSave>(() => readChallengeSave(challengeStorageKey))
@@ -80,6 +88,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
   const [status, setStatus] = useState<FreeSurfaceStatus | null>(null)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [notice, showNotice] = useStageNotice(7000)
   const mountRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<FreeSurfaceRuntime | null>(null)
   const [cinematic, setCinematic] = useCinematicPreference(mountRef)
@@ -118,9 +127,10 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
     if (!mount || !shown) return
     let disposed = false
     let runtime: FreeSurfaceRuntime | null = null
+    let stopWatching: () => void = () => undefined
     setRenderState('loading'); setStatus(null); setPaused(true); setInflow(true)
     try {
-      runtime = new FreeSurfaceRuntime(mount, project, 'high', 'natural',
+      runtime = new FreeSurfaceRuntime(mount, project, quality, 'natural',
         () => { if (!disposed) setRenderState('ready') },
         next => { if (!disposed) setStatus(next) },
         message => { if (!disposed) { setError(message); setRenderState('error') } },
@@ -135,14 +145,21 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
       runtime.setSound(sound)
       runtime.setCinematic(cinematic)
       runtimeRef.current = runtime
+      const started = runtime
+      stopWatching = watchGraphicsContext(mount, {
+        lost: () => { if (!disposed) { started.setPaused(true); setPaused(true); setError(GRAPHICS_LOST_MESSAGE); setRenderState('error') } },
+        restored: () => { if (!disposed) setRetry(n => n + 1) },
+      })
     } catch (reason) {
       runtime?.dispose()
+      // A renderer that failed part-way still holds a GPU context: release it.
+      try { mount.querySelector('canvas')?.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* Context unavailable. */ }
       mount.replaceChildren()
-      setError(reason instanceof Error ? reason.message : '물길을 시작할 수 없습니다.')
+      setError(describeGraphicsError(reason, '물길을 시작할 수 없습니다.'))
       setRenderState('error')
     }
-    return () => { disposed = true; runtime?.dispose(); if (runtimeRef.current === runtime) runtimeRef.current = null }
-  }, [shown, retry])
+    return () => { disposed = true; stopWatching(); runtime?.dispose(); if (runtimeRef.current === runtime) runtimeRef.current = null }
+  }, [shown, retry, quality])
   useEffect(() => { runtimeRef.current?.setSpeed(speed) }, [speed])
   useEffect(() => { runtimeRef.current?.setInflowRate(flow) }, [flow])
   useEffect(() => { runtimeRef.current?.setFollow(follow) }, [follow])
@@ -159,6 +176,15 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
     setMode(next); setCleared(null); setOpen(null)
     if (next === 'challenge') enterStage(stage)
     else setCourse(readCourse(courseStorageKey, exhibition ? craftTemplates()[0].course : undefined))
+    onModeChange?.(next)
+  }
+  // Back/Forward or an edited address can ask for the other mode.
+  useEffect(() => { if (initialMode !== mode) switchMode(initialMode) }, [initialMode])
+  /** Replace the whole course, with a moment to take it back. */
+  const replaceCourse = (next: CraftCourse, message: string) => {
+    const before = course
+    setCourse(next); setOpen(null)
+    showNotice({ message, action: { label: '되돌리기', run: () => { setCourse(before); setOpen(null) } } })
   }
   const lockedCount = challenge?.locked.length ?? 0
   const goals = challenge ? judgeGoals(challenge, course, status?.garden ?? null, status?.simulationTime ?? 0) : []
@@ -191,7 +217,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
   const toggleSound = () => { runtimeRef.current?.setSound(!sound); setSound(!sound) }
   const toggleInflow = () => { runtimeRef.current?.setInflow(!inflow); setInflow(!inflow) }
   const restart = () => { runtimeRef.current?.restart(); setPaused(true); setInflow(true) }
-  const apply = (fix: CraftAdvice) => { setCourse(fix.course); setOpen(null) }
+  const apply = (fix: CraftAdvice) => replaceCourse(fix.course, `‘${fix.title}’을 적용했습니다`)
   // In a stage only the fixes its rules allow: no source change, its palette and exits.
   const allowedAdvice = challenge ? advice.filter(fix => fix.id !== 'source'
     && fix.course.modules.every(item => challenge.palette.includes(item.kind) || challenge.locked.some(locked => locked.id === item.id))
@@ -207,6 +233,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
       <button className="ws-brand" aria-label="메이즈크래프트 홈" onClick={onHome}><BrandMark /><div><strong>MAZECRAFT</strong><span>WATER CRAFT</span></div></button>
       <nav className="ws-navigation" aria-label="주 메뉴"><button onClick={onHome}>홈</button><button onClick={onWater}>물의 정원</button><span aria-current="page">크래프트</span></nav>
       <div className="ws-header-actions">
+        {onHelp && <button className="ws-icon" aria-label="도움말과 설정" title="도움말과 설정" onClick={onHelp}><CircleHelp size={19} /></button>}
         <button className="ws-icon" aria-label="몰입 화면" aria-pressed={focus} onClick={() => setFocus(!focus)}>{focus ? <X size={19} /> : <Expand size={19} />}</button>
       </div>
     </header>
@@ -217,7 +244,8 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
         <div className="ws-canvas" ref={mountRef} data-testid="craft-canvas" data-renderer={renderState} data-garden={shown ?? ''} />
         {renderState === 'ready' && paused && !(status?.simulationTime) && <button className="ws-start" onClick={togglePlayback}><Play size={18} fill="currentColor" /><span>물 흘려보내기</span></button>}
         {renderState === 'loading' && <div className="ws-stage-message" role="status"><Blocks size={30} /><span>{shown ? '물길을 짓고 있습니다' : '장치를 이어 물길을 만들어 주세요'}</span></div>}
-        {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>화면을 시작하지 못했습니다</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
+        {renderState === 'error' && <div className="ws-stage-message" role="alert"><strong>{error === GRAPHICS_LOST_MESSAGE ? '그래픽 연결이 끊어졌습니다' : '화면을 시작하지 못했습니다'}</strong><p>{error}</p><button onClick={() => setRetry(n => n + 1)}>다시 시작</button></div>}
+        <StageNoticeView notice={notice} onDismiss={() => showNotice(null)} />
         {challenge && cleared?.stage === challenge.id && cleared.open && <div className="challenge-clear" role="dialog" aria-label="스테이지 클리어">
           <span className="ws-eyebrow">STAGE CLEAR</span>
           <strong>{challenge.name} 완성!</strong>
@@ -245,7 +273,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
             <button className="ws-icon" aria-label="시점 초기화" onClick={() => runtimeRef.current?.resetCamera()}><Maximize2 size={17} /></button>
             <button className="ws-icon" aria-label="물 추적 모드" title="물 추적 모드" aria-pressed={follow} onClick={() => setFollow(!follow)}><Video size={17} /></button>
             <CinematicToggle cinematic={cinematic} onToggle={() => setCinematic(!cinematic)} />
-            <FloaterMenu onDrop={kind => { runtimeRef.current?.setSound(sound); void runtimeRef.current?.dropFloater(kind) }} />
+            <FloaterMenu onDrop={kind => { runtimeRef.current?.setSound(sound); void runtimeRef.current?.dropFloater(kind).then(ok => { if (!ok) showNotice({ message: FLOATER_FAILED_MESSAGE }) }) }} />
             <button className="ws-icon" aria-label="배치도" title="배치도" aria-pressed={planOpen || Boolean(issue)} onClick={() => setPlanOpen(!planOpen)}><Map size={17} /></button>
           </div>
           <div className="ws-transport">
@@ -258,7 +286,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
             <button className="ws-mobile-tune ws-icon" aria-label="장치 목록 열기" aria-expanded={panelOpen} onClick={() => setPanelOpen(!panelOpen)}><Blocks size={18} /></button>
           </div>
         </div>
-        <span className="ws-camera-hint">드래그하여 회전 · 오른쪽 버튼으로 이동 · 두 손가락으로 확대</span>
+        <span className="ws-camera-hint"><span className="hint-pointer">드래그하여 회전 · 오른쪽 버튼으로 이동 · 휠로 확대</span><span className="hint-touch">한 손가락으로 회전 · 두 손가락으로 확대와 이동</span></span>
         {focus && <button className="ws-focus-exit" onClick={() => setFocus(false)}><X size={16} />몰입 화면 닫기</button>}
       </section>
       <aside className="ws-tuning craft-panel" aria-label="물길 크래프트">
@@ -288,7 +316,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
             </div>
             <div className="craft-preset-grid" role="group" aria-label="추천 조합">
               {templates.filter(template => level === '전체' || template.level === level).map(template => <button key={template.id} aria-label={template.name}
-                onClick={() => { setCourse(template.course); setOpen(null); setPresetsOpen(false) }}>
+                onClick={() => { replaceCourse(template.course, `‘${template.name}’ 프리셋을 불러왔습니다`); setPresetsOpen(false) }}>
                 <span className="craft-preset-top"><strong>{template.name}</strong><em>{template.level}</em></span>
                 <small>{template.description}</small>
                 <span className="craft-preset-icons">{template.course.modules.map((module, k) => { const Icon = ICONS[module.kind]; return <Icon key={k} size={14} /> })}</span>
@@ -356,7 +384,7 @@ export default function CraftStudio({ onHome, onWater, initialMode = 'free', exh
               </button> })}
             </div>
           </div>)}
-          <button className="craft-clear" onClick={() => { setCourse(previous => ({ ...previous, modules: previous.modules.slice(0, lockedCount) })); setOpen(null) }}><Trash2 size={14} /> 모두 비우기</button>
+          <button className="craft-clear" onClick={() => replaceCourse({ ...course, modules: course.modules.slice(0, lockedCount) }, '물길을 비웠습니다')}><Trash2 size={14} /> 모두 비우기</button>
         </div>
       </aside>
     </div>

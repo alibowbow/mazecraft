@@ -178,7 +178,8 @@ export class FreeSurfaceRuntime {
     this.announcedReady = true
     // Reveal the scene only once its shaders are compiled.
     const warming = this.renderer.sceneWarming?.()
-    if (warming) void warming.then(() => { if (!this.disposed) this.onReady() })
+    // A failed warm-up still reveals the scene: shaders then compile on first draw.
+    if (warming) void warming.catch(() => undefined).then(() => { if (!this.disposed) this.onReady() })
     else this.onReady()
   }
 
@@ -340,11 +341,17 @@ export class FreeSurfaceRuntime {
   }
   /**
    * Drop a floating body (Rapier) into the garden; the physics engine loads
-   * on first use. Resolves false outside a water garden.
+   * on first use. Resolves false outside a water garden or when the engine
+   * cannot load; it never rejects.
    */
   async dropFloater(kind: FloaterKind): Promise<boolean> {
     if (!(this.basin instanceof GardenSimulation)) return false
-    const rapier = await loadRapier()
+    let rapier: Awaited<ReturnType<typeof loadRapier>>
+    try {
+      rapier = await loadRapier()
+    } catch {
+      return false
+    }
     if (this.disposed) return false
     this.basin.enableFloaters(rapier)
     this.basin.dropFloater(kind)

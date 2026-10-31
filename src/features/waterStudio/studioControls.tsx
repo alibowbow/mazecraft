@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { ChevronDown, Clapperboard, Sailboat, Volume2, VolumeX } from 'lucide-react'
 
 const SOUND_KEY = 'mazecraft.sound.v1'
@@ -40,7 +40,14 @@ const CINEMATIC_KEY = 'mazecraft.cinematic.v1'
  * garden is filmed in shots; grabbing the view by hand turns it off.
  */
 export function useCinematicPreference(mount: RefObject<HTMLElement | null>): [boolean, (value: boolean) => void] {
-  const [cinematic, setCinematic] = useState(() => { try { return localStorage.getItem(CINEMATIC_KEY) !== 'off' } catch { return true } })
+  const [cinematic, setCinematic] = useState(() => {
+    // Moving camera shots stay off for visitors who ask the system for less motion.
+    const calm = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    try {
+      const stored = localStorage.getItem(CINEMATIC_KEY)
+      return stored === null ? !calm : stored !== 'off'
+    } catch { return !calm }
+  })
   const update = (value: boolean) => {
     setCinematic(value)
     try { localStorage.setItem(CINEMATIC_KEY, value ? 'on' : 'off') } catch { /* Storage may be disabled. */ }
@@ -74,3 +81,28 @@ export function FloaterMenu({ onDrop }: { onDrop(kind: FloaterChoice): void }) {
     </div>}
   </div>
 }
+
+export interface StageNotice { message: string; action?: { label: string; run(): void } }
+
+/** A short message over the scene (a failed drop, an undoable change). */
+export function useStageNotice(duration = 5000): [StageNotice | null, (notice: StageNotice | null) => void] {
+  const [notice, setNotice] = useState<StageNotice | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const show = useCallback((next: StageNotice | null) => {
+    clearTimeout(timer.current)
+    setNotice(next)
+    if (next) timer.current = setTimeout(() => setNotice(null), duration)
+  }, [duration])
+  useEffect(() => () => clearTimeout(timer.current), [])
+  return [notice, show]
+}
+
+export function StageNoticeView({ notice, onDismiss }: { notice: StageNotice | null; onDismiss(): void }) {
+  if (!notice) return null
+  return <div className="ws-notice" role="status">
+    <span>{notice.message}</span>
+    {notice.action && <button onClick={() => { notice.action!.run(); onDismiss() }}>{notice.action.label}</button>}
+  </div>
+}
+
+export const FLOATER_FAILED_MESSAGE = '물에 띄울 물리 엔진을 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.'

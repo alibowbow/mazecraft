@@ -472,3 +472,26 @@
 .ws-floater-menu { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-radius: 12px; background: #fffef9; border: 1px solid #e1e4dc; box-shadow: 0 12px 30px #1d302c26; min-width: 132px; }
 .water-studio .ws-floater-menu button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px; text-align: left; white-space: nowrap; }
 .water-studio .ws-floater-menu button:hover { background: #eef6f3; }
+
+/* Short notices over the scene (a failed drop, an undoable course change). */
+.ws-notice { position: absolute; z-index: 4; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: min(520px, calc(100% - 28px)); padding: 9px 10px 9px 15px; border-radius: 12px; border: 1px solid #d6dfd9; background: #fffffff2; box-shadow: 0 10px 26px #31463e1f; font-size: 12.5px; line-height: 1.45; color: var(--ws-ink); word-break: keep-all; }
+.water-studio .ws-notice button { flex-shrink: 0; padding: 7px 12px; border-radius: 8px; background: #e7f2f4; color: #1f6b73; font-size: 12px; font-weight: 650; }
+.water-studio .ws-notice button:hover { background-color: #d5eaed; }
+/* Panel footer: help and sharing reach phones, where the header and collection bar have no room. */
+.ws-panel-footer-actions { display: flex; align-items: center; gap: 14px; }
+.water-studio .ws-panel-share, .water-studio .ws-panel-help { display: none; }
+@media (max-width: 800px) { .water-studio .ws-panel-share { display: inline; } }
+@media (max-width: 540px) {
+  .water-studio .ws-panel-help { display: inline; }
+  .water-studio .ws-help-button { display: none; }
+  /* A 6px subtitle could not be read; the brand name alone fits better. */
+  .ws-brand span { display: none; }
+  .ws-eyebrow { font-size: 9px; }
+  .ws-camera-hint { font-size: 10px; }
+}
+/* Camera hints match the input in use. */
+.ws-camera-hint .hint-touch { display: none; }
+@media (pointer: coarse) {
+  .ws-camera-hint .hint-pointer { display: none; }
+  .ws-camera-hint .hint-touch { display: inline; }
+}

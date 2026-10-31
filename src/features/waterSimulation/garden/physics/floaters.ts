@@ -40,12 +40,18 @@ const G = 9.81
 const MAX_FLOATERS = 40
 
 let loading: Promise<Rapier> | null = null
-/** Load and initialise Rapier (WebAssembly) once, on first use. */
+/**
+ * Load and initialise Rapier (WebAssembly) once, on first use. A failed load
+ * (offline, blocked WebAssembly) is not cached, so the next drop retries.
+ */
 export function loadRapier(): Promise<Rapier> {
   loading ??= import('@dimforge/rapier3d-compat').then(async module => {
     const rapier = ((module as unknown as { default?: Rapier }).default ?? module) as Rapier
     await rapier.init()
     return rapier
+  }).catch((error: unknown) => {
+    loading = null
+    throw error
   })
   return loading
 }
