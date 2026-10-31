@@ -98,19 +98,28 @@ const recordAttempt = (projectId: string, attempt: Record<string, unknown>): voi
   writeStored(key, JSON.stringify([attempt, ...recent].slice(0, 10)))
 }
 
+// One audio context for every tone: a context per move runs into the
+// browser's limit on open contexts when moves come quickly.
+let toneContext: AudioContext | null = null
+
 const playTone = (kind: 'move' | 'complete') => {
   if (typeof AudioContext === 'undefined') return
-  const context = new AudioContext()
-  const oscillator = context.createOscillator()
-  const gain = context.createGain()
-  oscillator.type = 'sine'
-  oscillator.frequency.value = kind === 'complete' ? 660 : 280
-  gain.gain.setValueAtTime(0.035, context.currentTime)
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (kind === 'complete' ? 0.35 : 0.06))
-  oscillator.connect(gain).connect(context.destination)
-  oscillator.start()
-  oscillator.stop(context.currentTime + (kind === 'complete' ? 0.36 : 0.07))
-  oscillator.addEventListener('ended', () => void context.close(), { once: true })
+  try {
+    toneContext ??= new AudioContext()
+    const context = toneContext
+    if (context.state === 'suspended') void context.resume().catch(() => undefined)
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    oscillator.type = 'sine'
+    oscillator.frequency.value = kind === 'complete' ? 660 : 280
+    gain.gain.setValueAtTime(0.035, context.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (kind === 'complete' ? 0.35 : 0.06))
+    oscillator.connect(gain).connect(context.destination)
+    oscillator.start()
+    oscillator.stop(context.currentTime + (kind === 'complete' ? 0.36 : 0.07))
+  } catch {
+    // Sound is optional; an unavailable audio device must not stop play.
+  }
 }
 
 const revealStyle = (progress: number, animation: MazeProject['secretReveal']['animation']) => {
