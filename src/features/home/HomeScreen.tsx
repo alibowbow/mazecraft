@@ -33,6 +33,7 @@ import { versionLabel } from '../../app/appInfo'
 import draftingDesk from '../../assets/drafting-desk-v2.webp'
 import waterGarden from '../../assets/water-garden.jpg'
 import type { InfoTab } from '../info/InfoDialog'
+import type { CampaignSummary } from '../craft/campaignIndex'
 
 const PAGE_SIZE = 12
 
@@ -104,6 +105,8 @@ interface HomeScreenProps {
   onCraft?: () => void
   /** Open the craft studio's challenge stages. */
   onChallenges?: () => void
+  /** Progress through the challenge campaign, for the water door. */
+  challenge?: CampaignSummary
   onDuplicate: (project: MazeProject) => void
   onDelete: (project: MazeProject) => void
   onExport: (project: MazeProject) => void
@@ -125,6 +128,7 @@ export function HomeScreen({
   onWater,
   onCraft,
   onChallenges,
+  challenge,
   onDuplicate,
   onDelete,
   onExport,
@@ -253,12 +257,18 @@ export function HomeScreen({
             <div className="hub-door-copy">
               <span className="hub-door-kicker"><Waves size={15} /> 02 · WATER GARDEN</span>
               <h2>물의 정원</h2>
-              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 물리 법칙대로 움직입니다. 크래프트에서 장치를 이어 나만의 물길도 지어 보세요.</p>
+              <p>미로를 따라 물이 흐르고, 물레방아와 시시오도시, 사이펀이 물리 법칙대로 움직입니다. 크래프트에서 장치를 이어 물길을 짓고, 20단계 챌린지에 도전해 보세요.</p>
               <div className="hub-door-actions">
                 <button className="button water-primary" onClick={onWater}>물의 정원 열기 <ArrowRight size={17} /></button>
                 {onCraft && <button className="button secondary" onClick={onCraft}><Blocks size={16} /> 물길 크래프트</button>}
-                {onChallenges && <button className="button secondary" onClick={onChallenges}><Trophy size={16} /> 챌린지 도전</button>}
+                {onChallenges && <button className="button secondary" onClick={onChallenges}><Trophy size={16} /> {challenge?.cleared ? (challenge.complete ? '챌린지 별 모으기' : '챌린지 이어하기') : '챌린지 시작'}</button>}
               </div>
+              {onChallenges && challenge && <div className="hub-progress" aria-label="챌린지 진행">
+                <span className="hub-progress-bar" aria-hidden="true"><i style={{ width: `${Math.round(challenge.cleared / challenge.total * 100)}%` }} /></span>
+                <span>{challenge.cleared
+                  ? <>{challenge.cleared}/{challenge.total}단계 · <b>★ {challenge.stars}</b>/{challenge.maxStars}{challenge.complete ? ' · 모든 물길 완성' : <> · 다음 {challenge.next.number}. {challenge.next.name}</>}</>
+                  : <>4장 20단계 · 첫 단계는 1분이면 충분해요</>}</span>
+              </div>}
             </div>
           </article>
         </div>

@@ -30,6 +30,7 @@ import { createRemixProject } from '../features/share/remix'
 import { looksLikeBackup, MAX_BACKUP_FILE_SIZE } from '../features/backup/backupFormat'
 import type { InfoTab } from '../features/info/InfoDialog'
 import { resolveStudioQuality } from '../features/waterSimulation/graphics'
+import { summarizeCampaign } from '../features/craft/campaignIndex'
 import {
   createAutosave,
   describeStorageError,
@@ -255,6 +256,11 @@ export function App() {
   const setProject = useCallback((next: MazeProject | null) => { projectRef.current = next; setProjectState(next) }, [])
   const setSharedPlay = useCallback((next: boolean) => { sharedPlayRef.current = next; setSharedPlayState(next) }, [])
   const dark = theme === 'dark' || (theme === 'system' && systemDark)
+  // Re-read whenever the home is shown (a stage cleared in the studio counts at
+  // once) and after a backup is restored.
+  const [restores, setRestores] = useState(0)
+  // route and restores are not read inside; they mark when the stored stars may have changed.
+  const campaign = useMemo(() => summarizeCampaign(), [route, restores])
   const studioQuality = useMemo(() => resolveStudioQuality(qualityPreference), [qualityPreference])
   const autosave = useMemo(
     () =>
@@ -648,6 +654,8 @@ export function App() {
         if (backup) {
           const summary = await restoreBackup(backup, localProjectRepository)
           await refreshProjects()
+          // Restored stars show on the home at once.
+          setRestores((count) => count + 1)
           toast(describeRestore(summary), summary.invalid > 0 && summary.added + summary.updated === 0)
           return
         }
@@ -786,6 +794,7 @@ export function App() {
             onWater={openWater}
             onCraft={() => openCraft('free')}
             onChallenges={() => openCraft('challenge')}
+            challenge={campaign}
             onDuplicate={(source) => void duplicate(source)}
             onDelete={(source) => void remove(source)}
             onExport={(source) => setExportProject(source)}
